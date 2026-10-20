@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from apps.node.services.internal.transport_identity import PLATFORM_TRANSPORT_NAMESPACE
+
 import io
 import json
 from unittest import mock
@@ -13,7 +15,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIRequestFactory
 
 from apps.lens_bridge.models import LensGatewayLink
-from apps.lens_bridge.services import platform_lens, provisioning
+from apps.lens_bridge.services import provisioning
 from apps.node.api.views.node import NodeViewSet
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
@@ -223,20 +225,20 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         second = ensure_local_platform_gateway_token()
 
         self.assertEqual(first.pk, second.pk)
-        self.assertEqual(first.organization.key, platform_lens.PLATFORM_ORG_KEY)
+        self.assertIsNone(first.organization_id)
+        self.assertEqual(first.transport_key, PLATFORM_TRANSPORT_NAMESPACE)
         self.assertEqual(first.role, NodeRole.GATEWAY)
         self.assertEqual(first.gateway_scope, LensGatewayLink.GatewayScope.PLATFORM)
 
     def test_management_command_emits_machine_readable_enrollment(self):
-        org = platform_lens.get_or_create_platform_org()
         managed = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="managed-gateway",
             role=NodeRole.GATEWAY,
             metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
         )
         Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="partial-metadata-gateway",
             role=NodeRole.GATEWAY,
             metadata={"install_key": LOCAL_PLATFORM_GATEWAY_INSTALL_KEY},
@@ -249,7 +251,7 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         prefix = "HFL_LOCAL_PLATFORM_GATEWAY_ENROLLMENT="
         self.assertTrue(line.startswith(prefix))
         payload = json.loads(line.removeprefix(prefix))
-        self.assertEqual(payload["org_key"], platform_lens.PLATFORM_ORG_KEY)
+        self.assertEqual(payload["org_key"], PLATFORM_TRANSPORT_NAMESPACE)
         self.assertEqual(payload["api_base"], "https://console.example.com:11443")
         self.assertEqual(
             payload["wss_url"],
@@ -274,7 +276,7 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
                 "metadata": {"hostname": "gateway-host"},
             },
             format="json",
-            HTTP_X_ORG_KEY=token.organization.key,
+            HTTP_X_ORG_KEY=token.transport_key,
             HTTP_X_NODE_TOKEN=token.token,
         )
         first_response = NodeViewSet.as_view({"post": "heartbeat"})(first_request)
@@ -296,7 +298,7 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
                 "metadata": {"hostname": "gateway-host", "agent_version": "1.0.0"},
             },
             format="json",
-            HTTP_X_ORG_KEY=token.organization.key,
+            HTTP_X_ORG_KEY=token.transport_key,
             HTTP_X_NODE_TOKEN=node_credential,
         )
         second_response = NodeViewSet.as_view({"post": "heartbeat"})(second_request)
@@ -313,7 +315,9 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         self.assertIsNone(mock_provision.call_args_list[1].kwargs["scope"])
 
     def test_unknown_scope_preserves_existing_non_platform_identity(self):
-        org = platform_lens.get_or_create_platform_org()
+        from apps.iam.models import Organization
+
+        org = Organization.objects.create(key="external-private", name="Private")
         gateway = Node.objects.create(
             organization=org,
             name="external-gateway",
@@ -339,9 +343,9 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         self.assertEqual(result.origin, LensGatewayLink.Origin.EXTERNAL)
 
     def test_platform_to_private_conversion_is_rejected(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="converted-private-gateway",
             role=NodeRole.GATEWAY,
         )
@@ -375,9 +379,9 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         },
     )
     def test_first_installer_gateway_becomes_platform_default(self, _mock_sl):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="gateway-host",
             role=NodeRole.GATEWAY,
             metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
@@ -401,9 +405,9 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
     def test_installer_gateway_does_not_override_existing_platform_default(
         self, _mock_sl
     ):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         current_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="current-default",
             role=NodeRole.GATEWAY,
         )
@@ -416,7 +420,7 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
             is_platform_default=True,
         )
         local_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="gateway-host",
             role=NodeRole.GATEWAY,
             metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
@@ -433,16 +437,16 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         self.assertFalse(local_link.is_platform_default)
 
     def test_reconcile_promotes_online_local_gateway_over_stale_default(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         stale_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="stale-local-gateway",
             role=NodeRole.GATEWAY,
             availability=Node.Availability.OFFLINE,
             metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
         )
         online_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="online-local-gateway",
             role=NodeRole.GATEWAY,
             availability=Node.Availability.ONLINE,
@@ -472,16 +476,16 @@ class LocalPlatformGatewayEnrollmentTests(TestCase):
         self.assertTrue(online.is_platform_default)
 
     def test_reconcile_clears_newer_default_before_promoting_older_link(self):
-        org = platform_lens.get_or_create_platform_org()
+        org = None
         online_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="online-local-gateway",
             role=NodeRole.GATEWAY,
             availability=Node.Availability.ONLINE,
             metadata=dict(LOCAL_PLATFORM_GATEWAY_METADATA),
         )
         stale_gateway = Node.objects.create(
-            organization=org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="stale-local-gateway",
             role=NodeRole.GATEWAY,
             availability=Node.Availability.OFFLINE,

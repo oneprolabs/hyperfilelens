@@ -28,7 +28,7 @@ class RestoreRecord(models.Model):
 
     organization_id = models.BigIntegerField(db_index=True)
     requesting_organization_id = models.BigIntegerField(db_index=True)
-    target_execution_organization_id = models.BigIntegerField(db_index=True)
+    target_execution_organization_id = models.BigIntegerField(db_index=True, null=True, blank=True)
     target_execution_node_id = models.BigIntegerField(db_index=True)
     purpose = models.CharField(
         max_length=24,
@@ -73,6 +73,13 @@ class RestoreRecord(models.Model):
             ),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(target_execution_organization_id__isnull=False)
+                    | models.Q(purpose="lens_workspace", workspace_binding_id__isnull=False)
+                ),
+                name="restore_platform_executor_ck",
+            ),
             models.UniqueConstraint(
                 fields=["organization_id", "restore_uid"],
                 name="uniq_restore_record_uid",
@@ -162,7 +169,7 @@ class RestoreRecordItem(models.Model):
 class DirectNASMount(models.Model):
     """Control-plane aggregate for one Agent-local NAS mount identity."""
 
-    execution_organization_id = models.BigIntegerField(db_index=True)
+    execution_organization_id = models.BigIntegerField(db_index=True, null=True, blank=True)
     requesting_organization_id = models.BigIntegerField(db_index=True)
     repository_id = models.BigIntegerField(db_index=True)
     reader_node_id = models.BigIntegerField(db_index=True)
@@ -177,6 +184,11 @@ class DirectNASMount(models.Model):
     class Meta:
         db_table = "restore_direct_nas_mount"
         constraints = [
+            models.UniqueConstraint(
+                fields=["repository_id", "reader_node_id", "mount_key"],
+                condition=models.Q(execution_organization_id__isnull=True),
+                name="uniq_platform_direct_nas_mount",
+            ),
             models.UniqueConstraint(
                 fields=[
                     "execution_organization_id",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from django.db.models import Q
 from rest_framework.exceptions import ValidationError
 
 from apps.iam.models import Organization
@@ -18,14 +19,14 @@ from apps.lens_bridge.services.gateway_ownership import (
     PRIVATE_GATEWAY_SCOPES,
     is_private_gateway,
 )
+from common.resource_scope import ResourceScope
 
 
 @dataclass(frozen=True)
 class GatewayExecutionContext:
     """Separates tenant data ownership from the Agent execution identity."""
 
-    tenant_organization: Organization
-    execution_organization: Organization
+    tenant_organization: Organization | None
     gateway_link: LensGatewayLink
 
     @property
@@ -35,6 +36,16 @@ class GatewayExecutionContext:
     @property
     def is_platform(self) -> bool:
         return self.gateway_link.scope == LensGatewayLink.GatewayScope.PLATFORM
+
+    @property
+    def execution_scope(self) -> ResourceScope:
+        """Describe the executor's ownership independently of the requesting tenant."""
+        return ResourceScope.PLATFORM if self.is_platform else ResourceScope.ORGANIZATION
+
+    @property
+    def execution_organization_id(self) -> int | None:
+        """Return the execution Node's persisted ownership, never a caller override."""
+        return self.gateway.organization_id
 
 
 def workspace_identity_payload(binding: LensWorkspaceBinding) -> dict[str, object]:
@@ -51,7 +62,7 @@ def workspace_identity_payload(binding: LensWorkspaceBinding) -> dict[str, objec
 
 def context_for_gateway_link(
     *,
-    tenant_organization: Organization,
+    tenant_organization: Organization | None,
     gateway_link: LensGatewayLink,
     require_ready: bool = True,
 ) -> GatewayExecutionContext:
@@ -62,7 +73,9 @@ def context_for_gateway_link(
     """
 
     link = (
-        LensGatewayLink.objects.select_related("organization", "gateway")
+        LensGatewayLink.objects.select_related(
+            "organization", "gateway", "gateway__organization",
+        )
         .filter(pk=gateway_link.pk)
         .first()
     )
@@ -72,12 +85,14 @@ def context_for_gateway_link(
         raise ValidationError({"gateway_link_id": "Data gateway ownership is inconsistent."})
 
     if link.scope == LensGatewayLink.GatewayScope.PLATFORM:
-        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
-
-        if link.organization.key != PLATFORM_ORG_KEY or link.owner_user_id is not None:
+        if (
+            link.organization_id is not None
+            or link.gateway.scope != link.gateway.Scope.PLATFORM
+            or link.owner_user_id is not None
+        ):
             raise ValidationError({"gateway_link_id": "Public Data Gateway identity is invalid."})
     elif is_private_gateway(link):
-        if link.organization_id != tenant_organization.id:
+        if tenant_organization is None or link.organization_id != tenant_organization.id:
             raise ValidationError({"gateway_link_id": "Private Data Gateway belongs to another organization."})
     else:
         raise ValidationError({"gateway_link_id": "Unsupported data gateway scope."})
@@ -87,7 +102,6 @@ def context_for_gateway_link(
 
     return GatewayExecutionContext(
         tenant_organization=tenant_organization,
-        execution_organization=link.organization,
         gateway_link=link,
     )
 
@@ -98,22 +112,33 @@ def require_organization_gateway_link(
     gateway_id: int,
     require_ready: bool = True,
     lock: bool = False,
+    include_platform: bool = False,
 ) -> LensGatewayLink:
-    """Resolve one Private Data Gateway through its organization boundary."""
+    """Resolve a private Gateway, or an explicitly allowed shared platform Gateway."""
 
+    if tenant_organization is None:
+        raise ValidationError({"organization": "A real tenant is required for business data."})
+    if lock and include_platform:
+        Organization.objects.select_for_update().get(pk=tenant_organization.pk)
     queryset = LensGatewayLink.objects.select_related("organization", "gateway")
     if lock:
-        queryset = queryset.select_for_update()
+        queryset = queryset.select_for_update(of=("self", "gateway"))
+    ownership = Q(organization=tenant_organization, scope__in=PRIVATE_GATEWAY_SCOPES)
+    if include_platform:
+        ownership |= Q(
+            organization__isnull=True, scope=LensGatewayLink.GatewayScope.PLATFORM,
+        )
     link = queryset.filter(
-        organization=tenant_organization,
+        ownership,
         gateway_id=gateway_id,
-        scope__in=PRIVATE_GATEWAY_SCOPES,
         is_deleted=False,
     ).first()
     if link is None:
         raise ValidationError(
             {"gateway_id": "Private Data Gateway is not available in this organization."}
         )
+    if lock and not include_platform:
+        Organization.objects.select_for_update().get(pk=tenant_organization.pk)
     context_for_gateway_link(
         tenant_organization=tenant_organization,
         gateway_link=link,
@@ -128,6 +153,8 @@ def context_for_knowledge_source(
     knowledge_source,
     require_ready: bool = True,
 ):
+    if tenant_organization is None:
+        raise ValidationError({"organization": "A real tenant is required for business data."})
     if knowledge_source.organization_id != tenant_organization.id:
         raise ValidationError(
             {"knowledge_source": "Knowledge source belongs to another organization."}
@@ -194,7 +221,7 @@ def create_workspace_binding(
         knowledge_source=knowledge_source,
         defaults={
             "gateway_link": context.gateway_link,
-            "execution_organization_id": context.execution_organization.id,
+            "execution_organization_id": context.execution_organization_id,
             "execution_node_id": context.gateway.id,
             "workspace_kind": kind,
             "workspace_root": root,
@@ -213,7 +240,7 @@ def create_workspace_binding(
     if not created:
         expected = (
             context.gateway_link.id,
-            context.execution_organization.id,
+            context.execution_organization_id,
             context.gateway.id,
             kind,
             root,
@@ -288,7 +315,7 @@ def context_for_workspace_binding(
     )
     expected = (
         context.gateway_link.id,
-        context.execution_organization.id,
+        context.execution_organization_id,
         context.gateway.id,
         context.gateway_link.resolved_workspace_root(),
     )

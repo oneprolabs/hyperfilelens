@@ -1039,7 +1039,7 @@ if grep -F 'compose_in_root down' <<<"${upgrade_body}" >/dev/null; then
 fi
 worker_stop_line="$(grep -n -F 'compose_in_root stop --timeout 600 worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
 worker_stopped_line="$(grep -n -F 'compose_in_root ps --status running -q worker' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
-migration_line="$(grep -n -F 'compose_in_root --profile tools run --rm --no-deps migration' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
+migration_line="$(grep -n -F 'run_upgrade_database_migration' <<<"${upgrade_body}" | head -1 | cut -d: -f1)"
 if [[ -z "${worker_stop_line}" \
 	|| -z "${worker_stopped_line}" \
 	|| -z "${migration_line}" \
@@ -1103,6 +1103,7 @@ fi
 grep -F 'compose_color "${recovery_color}" start' <<<"${recovery_body}" >/dev/null
 grep -F 'compose_in_root start worker scheduler' <<<"${recovery_body}" >/dev/null
 grep -F './tools/quality/test-blue-green-recovery.sh' "${workflow}" >/dev/null
+grep -F './tools/quality/test-exclusive-ownership-upgrade.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-compose-lifecycle-reconcile.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-nginx-startup-readiness.sh' "${workflow}" >/dev/null
 grep -F './tools/quality/test-sourcelens-runtime-sync.sh' "${workflow}" >/dev/null

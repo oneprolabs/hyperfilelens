@@ -31,4 +31,14 @@ def is_installation_admin(user: AbstractBaseUser) -> bool:
 
     return Profile.objects.filter(
         user_id=user.pk, is_installation_admin=True,
+        user__is_active=True, user__is_staff=True,
     ).exists()
+
+
+def has_installation_identity(user: AbstractBaseUser) -> bool:
+    """Persistent identity for mutation guards, including disabled accounts."""
+    from apps.iam.profile_models import Profile
+
+    return bool(user and user.pk and Profile.objects.filter(
+        user_id=user.pk, is_installation_admin=True,
+    ).exists())

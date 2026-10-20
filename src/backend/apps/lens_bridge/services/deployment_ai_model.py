@@ -15,8 +15,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 from django.db import transaction
 
-from apps.iam.models import Organization
-from apps.lens_bridge.services import org_models, platform_lens, provisioning, sl_client
+from apps.lens_bridge.models import LensOrgModelLink
+from apps.lens_bridge.services import org_models, sl_client
+from apps.lens_bridge.services.model_defaults import get_model_defaults
 
 AiModelRole = Literal["agent", "multimodal"]
 
@@ -170,14 +171,31 @@ def _list_source_lens_models() -> list[dict[str, Any]]:
 
 def _find_existing_model(
     *,
-    org: Organization,
     config: DeploymentAiModelConfig,
     role: AiModelRole,
 ) -> dict[str, Any] | None:
-    rows = [row for row in _list_source_lens_models() if _model_matches_config(row, config)]
+    candidates: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for row in _list_source_lens_models():
+        if not _model_matches_config(row, config):
+            continue
+        try:
+            reference = uuid.UUID(str(row.get("uuid") or ""))
+        except ValueError:
+            continue
+        candidates.append((reference, row))
+    if not candidates:
+        return None
+    foreign_refs = set(
+        LensOrgModelLink.all_objects.filter(
+            sl_config_uuid__in=[reference for reference, _ in candidates],
+        ).exclude(
+            **org_models.model_scope_filter(None),
+        ).values_list("sl_config_uuid", flat=True),
+    )
+    rows = [row for reference, row in candidates if reference not in foreign_refs]
     if not rows:
         return None
-    defaults = provisioning.get_or_create_org_link(org)
+    defaults = get_model_defaults(None)
     preferred_ref = (
         defaults.default_multimodal_model_ref
         if role == "multimodal"
@@ -211,8 +229,7 @@ def ensure_platform_ai_model(
 ) -> DeploymentAiModelResult:
     """Ensure one configured model exists, is active, and is the role default."""
 
-    org = platform_lens.get_or_create_platform_org()
-    existing = _find_existing_model(org=org, config=config, role=role)
+    existing = _find_existing_model(config=config, role=role)
     if not _test_connection(config):
         return DeploymentAiModelResult(
             action="updated" if existing else "created",
@@ -243,12 +260,12 @@ def ensure_platform_ai_model(
         action = "created"
 
     link = org_models.register_org_model(
-        org=org,
+        org=None,
         sl_config_uuid=config_uuid,
         ensure_agent_default=role == "agent",
     )
     org_models.set_model_display_name(link, config.display_name)
-    defaults = provisioning.get_or_create_org_link(org)
+    defaults = get_model_defaults(None)
     field_name = (
         "default_agent_model_ref" if role == "agent" else "default_multimodal_model_ref"
     )

@@ -492,6 +492,7 @@ def _dispatch_group(*, mount_id: int) -> bool:
     )
     handle = run_agent_task_async(
         organization_id=mount.execution_organization_id,
+        **({"platform": True} if mount.execution_organization_id is None else {}),
         node_id=mount.reader_node_id,
         kind="nas.unmount",
         payload={"mount_point": mount.mount_point},

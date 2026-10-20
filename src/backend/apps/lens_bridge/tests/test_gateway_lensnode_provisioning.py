@@ -211,12 +211,9 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
     @mock.patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
     def test_platform_gateway_create_defaults_capacity_bytes(self, request_json):
         """Regression: DB NOT NULL capacity_bytes is set when creating the link."""
-        platform_org = Organization.objects.create(
-            key="__platform_lens__",
-            name="Platform Lens",
-        )
+        platform_org = None
         gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="Local platform gateway",
             role=NodeRole.GATEWAY,
             metadata={
@@ -245,5 +242,5 @@ class DurableGatewayLensNodeProvisioningTests(TestCase):
         self.assertEqual(result.sl_lensnode_uuid, remote_uuid)
         self.assertEqual(
             result.workspace_root,
-            f"/opt/hyperfilelens-agent/workspace/org-{platform_org.id}/data",
+            "/opt/hyperfilelens-agent/workspace/platform/data",
         )

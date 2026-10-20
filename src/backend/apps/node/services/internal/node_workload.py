@@ -70,7 +70,7 @@ def _backup_tasks_for_agent(*, organization_id: int, node_id: int):
     )
 
 
-def _restore_tasks_for_execution_node(*, organization_id: int, node_id: int):
+def _restore_tasks_for_execution_node(*, organization_id: int | None, node_id: int):
     from apps.restore.models import RestoreRecord
 
     task_ids = RestoreRecord.objects.filter(

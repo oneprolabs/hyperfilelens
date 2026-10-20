@@ -5,8 +5,9 @@ from unittest.mock import patch
 
 from django.test import TestCase
 
-from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink
-from apps.lens_bridge.services import deployment_ai_model, platform_lens
+from apps.iam.models import Organization
+from apps.lens_bridge.models import LensOrgModelLink, PlatformAISettings
+from apps.lens_bridge.services import deployment_ai_model
 
 
 class DeploymentAiModelConfigTests(TestCase):
@@ -89,21 +90,19 @@ class DeploymentAiModelServiceTests(TestCase):
         self.assertEqual(result.action, "created")
         self.assertTrue(result.connectivity_ok)
         link = LensOrgModelLink.objects.get(sl_config_uuid=self.config_uuid)
-        defaults = LensOrgLink.objects.get(organization=link.organization)
+        defaults = PlatformAISettings.objects.get(pk=1)
         self.assertEqual(defaults.default_agent_model_ref, self.config_uuid)
         self.assertEqual(link.display_name, "Model One")
         self.assertEqual(request_json.call_args_list[0].args[:2], ("GET", "/api/v1/admin/llm-config/"))
 
     @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
     def test_updates_matching_model_including_rotated_api_key(self, request_json):
-        org = platform_lens.get_or_create_platform_org()
         LensOrgModelLink.objects.create(
-            organization=org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=self.config_uuid,
             display_name="Old name",
         )
-        LensOrgLink.objects.create(
-            organization=org,
+        PlatformAISettings.objects.create(
             default_agent_model_ref=self.config_uuid,
         )
         request_json.side_effect = [
@@ -137,9 +136,8 @@ class DeploymentAiModelServiceTests(TestCase):
     def test_reuses_soft_deleted_hfl_link_when_model_is_reconciled(
         self, request_json
     ):
-        org = platform_lens.get_or_create_platform_org()
         LensOrgModelLink.all_objects.create(
-            organization=org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=self.config_uuid,
             is_deleted=True,
         )
@@ -162,3 +160,43 @@ class DeploymentAiModelServiceTests(TestCase):
 
         link = LensOrgModelLink.objects.get(sl_config_uuid=self.config_uuid)
         self.assertFalse(link.is_deleted)
+
+    @patch("apps.lens_bridge.services.deployment_ai_model.sl_client.request_json")
+    def test_matching_tenant_models_are_never_adopted_or_updated(self, request_json):
+        for deleted in (False, True):
+            with self.subTest(deleted=deleted):
+                tenant = Organization.objects.create(
+                    key=f"tenant-{deleted}", name="Tenant",
+                )
+                private = LensOrgModelLink.all_objects.create(
+                    organization=tenant, sl_config_uuid=uuid.uuid4(), is_deleted=deleted,
+                )
+                created_uuid = uuid.uuid4()
+                request_json.reset_mock()
+                request_json.side_effect = [
+                    [{
+                        "uuid": str(private.sl_config_uuid).upper(),
+                        "provider": self.config.provider,
+                        "config": {
+                            "model": self.config.model_id,
+                            "api_base": self.config.api_base,
+                        },
+                    }],
+                    {"ok": True},
+                    {"uuid": str(created_uuid)},
+                ]
+
+                result = deployment_ai_model.ensure_platform_ai_model(self.config)
+
+                self.assertEqual(result.action, "created")
+                self.assertEqual(
+                    request_json.call_args_list[-1].args[:2],
+                    ("POST", "/api/v1/admin/llm-config/"),
+                )
+                private.refresh_from_db()
+                self.assertEqual(private.organization_id, tenant.pk)
+                self.assertEqual(private.scope, LensOrgModelLink.Scope.ORGANIZATION)
+                self.assertEqual(private.is_deleted, deleted)
+                platform = LensOrgModelLink.objects.get(sl_config_uuid=created_uuid)
+                self.assertEqual(platform.scope, LensOrgModelLink.Scope.PLATFORM)
+                self.assertIsNone(platform.organization_id)

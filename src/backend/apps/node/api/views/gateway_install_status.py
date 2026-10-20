@@ -7,12 +7,11 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.iam.models import Organization
 from apps.lens_bridge.services import provisioning
 from apps.node.api import permissions as node_permissions
-from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
+from apps.node.services.internal.transport_identity import node_for_transport
 
 
 class GatewayInstallStatusView(APIView):
@@ -58,26 +57,17 @@ class GatewayInstallStatusView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            node_id = int(node_id_raw)
-        except ValueError:
+        if (
+            not node_id_raw.isascii() or not node_id_raw.isdigit()
+            or len(node_id_raw) > 19
+            or not 0 < int(node_id_raw) <= 9_223_372_036_854_775_807
+        ):
             return Response(
                 {"error": "invalid node_id"}, status=status.HTTP_400_BAD_REQUEST
             )
 
-        org = Organization.objects.filter(key=org_key, is_active=True).first()
-        if org is None:
-            return Response(
-                {"error": "organization not found"}, status=status.HTTP_404_NOT_FOUND
-            )
-
-        node = Node.objects.filter(
-            organization=org,
-            pk=node_id,
-            role=NodeRole.GATEWAY,
-            is_deleted=False,
-        ).first()
-        if node is None:
+        node = node_for_transport(namespace=org_key, node_id=int(node_id_raw))
+        if node is None or node.role != NodeRole.GATEWAY:
             return Response(
                 {"error": "gateway not found"}, status=status.HTTP_404_NOT_FOUND
             )
@@ -92,7 +82,7 @@ class GatewayInstallStatusView(APIView):
             )
 
         link = provisioning.record_gateway_install_status(
-            org=org,
+            org=node.organization,
             gateway=node,
             status=install_status,
             error_message=error_message,

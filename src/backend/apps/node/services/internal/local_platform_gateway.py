@@ -7,13 +7,13 @@ from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 
-from apps.iam.models import Organization
 from apps.lens_bridge.models import LensGatewayLink
-from apps.lens_bridge.services import platform_lens
-from apps.node.models import NodeToken
+from apps.node.services.internal.ownership import lock_platform_infrastructure
+from apps.node.models import Node, NodeToken
+from apps.node.services.internal.transport_identity import PLATFORM_TRANSPORT_NAMESPACE
 from apps.node.models.base import NodeRole
 from common.deploy.site import enrollment_tls_verify
 
@@ -78,9 +78,16 @@ def platform_gateway_api_base(*, require_remote: bool = False) -> str:
 @transaction.atomic
 def ensure_local_platform_gateway_token() -> NodeToken:
     """Return a reusable enrollment token for the installer-managed Gateway."""
-    org = platform_lens.get_or_create_platform_org()
-    Organization.objects.select_for_update().get(pk=org.pk)
+    lock_platform_infrastructure()
+    org = None
     now = timezone.now()
+    installed = Node.objects.filter(
+        organization__isnull=True, scope=Node.Scope.PLATFORM, role=NodeRole.GATEWAY,
+        metadata__managed_by=LOCAL_PLATFORM_GATEWAY_METADATA["managed_by"],
+        metadata__deployment_mode=LOCAL_PLATFORM_GATEWAY_METADATA["deployment_mode"],
+        metadata__install_key=LOCAL_PLATFORM_GATEWAY_METADATA["install_key"],
+    ).order_by(F("last_seen_at").desc(nulls_last=True), "-id").first()
+    namespace = installed.transport_key if installed else PLATFORM_TRANSPORT_NAMESPACE
     token = (
         NodeToken.objects.select_for_update()
         .filter(
@@ -88,6 +95,7 @@ def ensure_local_platform_gateway_token() -> NodeToken:
             role=NodeRole.GATEWAY,
             note=LOCAL_PLATFORM_GATEWAY_TOKEN_NOTE,
             gateway_scope=LensGatewayLink.GatewayScope.PLATFORM,
+            transport_namespace=namespace,
             is_active=True,
         )
         .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
@@ -101,6 +109,7 @@ def ensure_local_platform_gateway_token() -> NodeToken:
         role=NodeRole.GATEWAY,
         note=LOCAL_PLATFORM_GATEWAY_TOKEN_NOTE,
         gateway_scope=LensGatewayLink.GatewayScope.PLATFORM,
+        transport_namespace=namespace,
     )
 
 
@@ -277,11 +286,12 @@ def reconcile_local_platform_gateway_links() -> int:
     """Repair installer-managed Gateway links without changing user Gateways."""
     from apps.node.models import Node
 
-    org = platform_lens.get_or_create_platform_org()
-    Organization.objects.select_for_update().get(pk=org.pk)
+    lock_platform_infrastructure()
+    org = None
     managed_gateway_ids = list(
         Node.objects.filter(
             organization=org,
+            scope=Node.Scope.PLATFORM,
             role=NodeRole.GATEWAY,
             is_deleted=False,
             metadata__managed_by=LOCAL_PLATFORM_GATEWAY_METADATA["managed_by"],

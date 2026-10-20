@@ -31,6 +31,8 @@ class NodeToken(OrganizationScopedModel):
         "iam.Organization",
         on_delete=models.CASCADE,
         related_name="node_tokens",
+        null=True,
+        blank=True,
     )
     token = models.CharField(max_length=64, unique=True, db_index=True)
     role = models.CharField(max_length=20, choices=NodeRole.choices)
@@ -76,6 +78,10 @@ class NodeToken(OrganizationScopedModel):
         related_name="node_tokens_created",
     )
     gateway_scope = models.CharField(max_length=16, blank=True, default="")
+    transport_namespace = models.CharField(
+        max_length=128, blank=True, default="", db_index=True, editable=False,
+        help_text="Stable control-plane routing namespace authorized by this token.",
+    )
 
     class Meta:
         db_table = "node_tokens"
@@ -87,6 +93,23 @@ class NodeToken(OrganizationScopedModel):
             ),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(organization__isnull=False) & ~models.Q(gateway_scope="platform")
+                    | (
+                        models.Q(organization__isnull=True, gateway_scope="platform", role="gateway")
+                        & ~models.Q(transport_namespace="")
+                    )
+                ),
+                name="node_token_resource_owner_ck",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(transport_namespace="")
+                    | models.Q(role=NodeRole.GATEWAY, gateway_scope="platform")
+                ),
+                name="node_token_transport_platform",
+            ),
             models.CheckConstraint(
                 condition=(
                     models.Q(installation_mode=NodeInstallationMode.SYSTEM)
@@ -114,7 +137,20 @@ class NodeToken(OrganizationScopedModel):
     def generate_token() -> str:
         return secrets.token_hex(32)
 
+    @property
+    def transport_key(self) -> str:
+        """Keep install commands and signed URLs stable across ownership changes."""
+        return self.transport_namespace or self.organization.key
+
     def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.token:
             self.token = self.generate_token()
+        if self.gateway_scope == "platform" and not self.transport_namespace:
+            from apps.node.services.internal.transport_identity import PLATFORM_TRANSPORT_NAMESPACE
+
+            self.transport_namespace = PLATFORM_TRANSPORT_NAMESPACE
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {
+                    "transport_namespace",
+                }
         super().save(*args, **kwargs)

@@ -22,6 +22,9 @@ const productEdition = ref<'community' | 'enterprise'>('community')
 const username = computed(() => user.value?.username || '—')
 const email = computed(() => user.value?.email || '—')
 const role = computed(() => {
+  if (user.value?.access_profile?.authority_source === 'installation_admin') {
+    return t('platformOps.roles.installationAdmin')
+  }
   const r = user.value?.access_profile?.role
   if (!r) return '—'
   const roleMap: Record<string, string> = {

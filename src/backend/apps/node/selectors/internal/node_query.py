@@ -6,6 +6,7 @@ from django.db.models import Q, QuerySet
 
 from apps.iam.models import Organization
 from apps.node.models import Node
+from apps.node.services.internal.ownership import node_owner_filter
 
 
 def nodes_queryset(
@@ -27,11 +28,11 @@ def nodes_queryset(
     return queryset.order_by("organization_id", "name", "id")
 
 
-def nodes_for_org(*, org: Organization) -> QuerySet[Node]:
-    return nodes_queryset(organization_id=org.id)
+def nodes_for_org(*, org: Organization | None) -> QuerySet[Node]:
+    return Node.objects.select_related("organization").filter(**node_owner_filter(org))
 
 
-def node_by_id(*, org: Organization, node_id: int) -> Node | None:
+def node_by_id(*, org: Organization | None, node_id: int) -> Node | None:
     return nodes_for_org(org=org).filter(pk=node_id).first()
 
 

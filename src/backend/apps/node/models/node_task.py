@@ -26,8 +26,10 @@ class NodeTask(OrganizationScopedModel):
         "iam.Organization",
         on_delete=models.CASCADE,
         related_name="node_tasks",
+        null=True,
+        blank=True,
     )
-    requesting_organization_id = models.BigIntegerField(db_index=True)
+    requesting_organization_id = models.BigIntegerField(db_index=True, null=True, blank=True)
     node = models.ForeignKey(
         "node.Node",
         on_delete=models.CASCADE,
@@ -76,6 +78,12 @@ class NodeTask(OrganizationScopedModel):
 
     class Meta:
         db_table = "node_tasks"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(organization__isnull=True) | models.Q(requesting_organization_id__isnull=False),
+                name="node_task_tenant_requester_ck",
+            ),
+        ]
         ordering = ["-created_at", "-id"]
         indexes = [
             models.Index(fields=["created_at"], name="node_tasks_created_at_idx"),

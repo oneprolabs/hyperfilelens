@@ -34,24 +34,27 @@ def agent_control_plane_ws_url(api_base: str) -> str:
 
 def get_valid_enrollment_token(
     *,
-    org: Organization,
+    org: Organization | None,
     token: str,
     role: str,
+    namespace: str | None = None,
 ) -> NodeToken | None:
     """Return the token authorizing an enrollment token or active session."""
     authorization = resolve_enrollment_authorization(
         org=org,
         secret=token,
         role=role,
+        namespace=namespace,
     )
     return authorization.token if authorization is not None else None
 
 
 def token_usable_for_artifact_download(
     *,
-    org: Organization,
+    org: Organization | None,
     token: str,
     role: str,
+    namespace: str | None = None,
 ) -> bool:
     """
     True when token may download signed agent artifacts.
@@ -65,6 +68,7 @@ def token_usable_for_artifact_download(
             org=org,
             token=token,
             role=role,
+            namespace=namespace,
         )
         is not None
     )
@@ -72,15 +76,17 @@ def token_usable_for_artifact_download(
 
 def _resolve_enrollment_artifact_authorization(
     *,
-    org: Organization,
+    org: Organization | None,
     token: str,
     role: str,
+    namespace: str | None = None,
 ) -> ArtifactDownloadAuthorization | None:
     """Enrollment/session/legacy-only resolution (no NodeCredential)."""
     authorization = resolve_enrollment_authorization(
         org=org,
         secret=token,
         role=role,
+        namespace=namespace,
     )
     if authorization is not None:
         return ArtifactDownloadAuthorization(
@@ -93,10 +99,9 @@ def _resolve_enrollment_artifact_authorization(
         organization=org,
         role=role,
         enrollment_mode=NodeToken.EnrollmentMode.LEGACY,
-    ).only(
-        "token",
-        "used_at",
-    ):
+    ).select_related("organization"):
+        if namespace is not None and row.transport_key != namespace:
+            continue
         if secrets.compare_digest(row.token, token) and row.used_at is not None:
             return ArtifactDownloadAuthorization(token=row)
     return None
@@ -104,21 +109,25 @@ def _resolve_enrollment_artifact_authorization(
 
 def resolve_artifact_download_authorization(
     *,
-    org: Organization,
+    org: Organization | None,
     token: str,
     role: str,
+    namespace: str | None = None,
 ) -> ArtifactDownloadAuthorization | None:
     """Resolve enrollment sessions/tokens, used legacy links, or node credentials."""
     authorization = _resolve_enrollment_artifact_authorization(
         org=org,
         token=token,
         role=role,
+        namespace=namespace,
     )
     if authorization is not None:
         return authorization
     if not token:
         return None
-    credential = active_node_credential(org=org, secret=token, role=role)
+    credential = active_node_credential(
+        org=org, secret=token, role=role, namespace=namespace,
+    )
     if credential is not None:
         return ArtifactDownloadAuthorization(credential=credential)
     return None
@@ -126,9 +135,10 @@ def resolve_artifact_download_authorization(
 
 def token_usable_for_bootstrap(
     *,
-    org: Organization,
+    org: Organization | None,
     token: str,
     role: str,
+    namespace: str | None = None,
 ) -> bool:
     """
     True when bootstrap stub may be served (active token or legacy used link).
@@ -142,6 +152,7 @@ def token_usable_for_bootstrap(
             org=org,
             token=token,
             role=role,
+            namespace=namespace,
         )
         is not None
     )
@@ -149,14 +160,16 @@ def token_usable_for_bootstrap(
 
 def resolve_bootstrap_enrollment_token(
     *,
-    org: Organization,
+    org: Organization | None,
     token: str,
     role: str,
+    namespace: str | None = None,
 ) -> NodeToken | None:
     """Resolve the token that authoritatively defines bootstrap settings."""
     authorization = _resolve_enrollment_artifact_authorization(
         org=org,
         token=token,
         role=role,
+        namespace=namespace,
     )
     return authorization.token if authorization is not None else None

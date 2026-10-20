@@ -398,12 +398,12 @@ class CopilotRetryTests(TestCase):
 
     def ready_source(self) -> LensKnowledgeSource:
         gateway = Node.objects.create(
-            organization=self.organization, name="ready-gateway",
+            organization=None, scope=Node.Scope.PLATFORM, name="ready-gateway",
             role=Node.Role.GATEWAY, status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
-            organization=self.organization, gateway=gateway,
+            organization=None, gateway=gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
         )
@@ -561,18 +561,16 @@ class CopilotRetryTests(TestCase):
 
     def create_public_gateway_session(self) -> LensSessionLink:
         """Create a failed tenant chat reserved on a platform Gateway."""
-        from apps.lens_bridge.services import platform_lens
 
-        platform_org = platform_lens.get_or_create_platform_org()
         gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="public-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
         )
         gateway_link = LensGatewayLink.objects.create(
-            organization=platform_org,
+            organization=None,
             gateway=gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
@@ -1060,10 +1058,10 @@ class CopilotReadyWakeupConcurrencyTests(TransactionTestCase):
             username="wake-concurrency", email="wake-concurrency@example.test",
         )
         gateway = Node.objects.create(
-            organization=organization, name="wake-gateway", role=Node.Role.GATEWAY,
+            organization=None, scope=Node.Scope.PLATFORM, name="wake-gateway", role=Node.Role.GATEWAY,
         )
         gateway_link = LensGatewayLink.objects.create(
-            organization=organization, gateway=gateway,
+            organization=None, gateway=gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
         )
@@ -1170,17 +1168,13 @@ class CopilotCapacityReservationTests(TestCase):
         get_quota_provider.return_value = SimpleNamespace(
             get_limits=lambda _organization: {},
         )
-        platform_organization = Organization.objects.create(
-            key="capacity-meter-platform",
-            name="Capacity Meter Platform",
-        )
         platform_gateway = Node.objects.create(
-            organization=platform_organization,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="capacity-meter-platform-gateway",
             role=Node.Role.GATEWAY,
         )
         platform_gateway_link = LensGatewayLink.objects.create(
-            organization=platform_organization,
+            organization=None,
             gateway=platform_gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
@@ -1227,17 +1221,13 @@ class CopilotCapacityReservationConcurrencyTests(TransactionTestCase):
     reset_sequences = True
 
     def test_same_public_gateway_capacity_cannot_be_oversubscribed(self):
-        platform_org = Organization.objects.create(
-            key="capacity-platform",
-            name="Capacity Platform",
-        )
         gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="shared-capacity-gateway",
             role=Node.Role.GATEWAY,
         )
         gateway_link = LensGatewayLink.objects.create(
-            organization=platform_org,
+            organization=None,
             gateway=gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,

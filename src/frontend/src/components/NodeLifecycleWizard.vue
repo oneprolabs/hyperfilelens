@@ -364,7 +364,8 @@ function selectRole(next: NodeRole) {
 }
 
 async function refreshInstallCommand(gen: number) {
-  if (!props.orgKey || !roleSupportedOnOs(props.role, props.os)) {
+  const platformEnrollment = props.role === 'gateway' && props.gatewayScope === 'platform'
+  if ((!platformEnrollment && !props.orgKey) || !roleSupportedOnOs(props.role, props.os)) {
     installCommand.value = roleSupportedOnOs(props.role, props.os)
       ? ''
       : t('nodeLifecycle.linuxOnlyRoleBlocked')
@@ -372,7 +373,6 @@ async function refreshInstallCommand(gen: number) {
   }
   loading.value = true
   installCommand.value = ''
-  const platformEnrollment = props.role === 'gateway' && props.gatewayScope === 'platform'
   try {
     const issued =
       props.role === 'gateway' && props.os === 'linux'

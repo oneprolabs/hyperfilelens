@@ -14,7 +14,6 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.lens_bridge.models import LensGatewayLink, LensKnowledgeSource
-from apps.lens_bridge.services import platform_lens
 from apps.lens_bridge.services.gateway_execution import create_workspace_binding
 from apps.node.models import Node, NodeTask
 from apps.protection.models import (
@@ -318,9 +317,9 @@ class RestoreApiTests(TestCase):
         "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
     )
     def test_lens_workspace_restore_uses_platform_execution_identity(self, _ready):
-        platform_org = platform_lens.get_or_create_platform_org()
+        platform_org = None
         platform_gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-restore-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
@@ -358,7 +357,7 @@ class RestoreApiTests(TestCase):
 
         self.assertEqual(record.organization_id, self.org.id)
         self.assertEqual(record.purpose, RestoreRecord.Purpose.LENS_WORKSPACE)
-        self.assertEqual(record.target_execution_organization_id, platform_org.id)
+        self.assertEqual(record.target_execution_organization_id, None)
         self.assertEqual(record.target_execution_node_id, platform_gateway.id)
         product_task = Task.objects.get(pk=record.task_id)
         self.assertEqual(product_task.organization_id, self.org.id)
@@ -371,7 +370,7 @@ class RestoreApiTests(TestCase):
             kind="restore.run",
             correlation_id=str(record.task_uuid),
         )
-        self.assertEqual(node_task.organization_id, platform_org.id)
+        self.assertEqual(node_task.organization_id, None)
         self.assertEqual(node_task.requesting_organization_id, self.org.id)
         self.assertEqual(
             node_task.payload["insight_content_policy"],
@@ -615,9 +614,9 @@ class RestoreApiTests(TestCase):
         "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
     )
     def test_legacy_active_lens_restore_is_classified_after_failure(self, _ready):
-        platform_org = platform_lens.get_or_create_platform_org()
+        platform_org = None
         platform_gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-failed-restore-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
@@ -722,9 +721,8 @@ class RestoreApiTests(TestCase):
         )
 
     def test_public_restore_cannot_target_platform_gateway(self):
-        platform_org = platform_lens.get_or_create_platform_org()
         platform_gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="forbidden-platform-target",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
@@ -747,9 +745,9 @@ class RestoreApiTests(TestCase):
         "apps.lens_bridge.services.gateway_execution.gateway_readiness.require_copilot_gateway"
     )
     def test_lens_workspace_restore_rejects_nonbinding_target_path(self, _ready):
-        platform_org = platform_lens.get_or_create_platform_org()
+        platform_org = None
         platform_gateway = Node.objects.create(
-            organization=platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-path-boundary-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,

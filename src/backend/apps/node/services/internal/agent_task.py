@@ -116,8 +116,12 @@ def _resolve_org_and_node(
     organization_id: int | None = None,
     org: Organization | None = None,
     node_id: int,
-) -> tuple[Organization, Node]:
-    if org is None:
+    platform: bool = False,
+) -> tuple[Organization | None, Node]:
+    if platform:
+        if org is not None or organization_id is not None:
+            raise ValueError("Platform execution cannot specify a tenant owner")
+    elif org is None:
         if organization_id is None:
             raise ValueError("org or organization_id is required")
         org = Organization.objects.filter(
@@ -144,6 +148,7 @@ def run_agent_task_async(
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
     parent_task: Task | None = None,
+    platform: bool = False,
 ) -> AgentTaskHandle:
     """
     Long-running work: dispatch and return immediately; caller polls status.
@@ -155,6 +160,7 @@ def run_agent_task_async(
         organization_id=organization_id,
         org=org,
         node_id=node_id,
+        platform=platform,
     )
     payload = _attach_node_kopia_cache_policy(node=node, payload=payload)
     persisted_payload = _attach_node_kopia_cache_policy(
@@ -319,6 +325,7 @@ def run_agent_task_sync(
     parent_task: Task | None = None,
     wait_timeout_seconds: int | None = None,
     on_stream_message: Callable[[dict[str, Any]], None] | None = None,
+    platform: bool = False,
 ) -> AgentTaskSyncResult:
     """
     Short tasks (e.g. browse directory): dispatch then block on ``task_stream``.
@@ -330,6 +337,7 @@ def run_agent_task_sync(
         organization_id=organization_id,
         org=org,
         node_id=node_id,
+        platform=platform,
     )
     payload = _attach_node_kopia_cache_policy(node=node, payload=payload)
     persisted_payload = _attach_node_kopia_cache_policy(

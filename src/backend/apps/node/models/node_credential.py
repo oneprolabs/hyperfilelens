@@ -23,6 +23,8 @@ class NodeCredential(OrganizationScopedModel):
         "iam.Organization",
         on_delete=models.CASCADE,
         related_name="node_credentials",
+        null=True,
+        blank=True,
     )
     node = models.OneToOneField(
         "node.Node",
@@ -48,6 +50,12 @@ class NodeCredential(OrganizationScopedModel):
 
     class Meta:
         db_table = "node_credentials"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(organization__isnull=False) | models.Q(role="gateway"),
+                name="node_credential_platform_role",
+            ),
+        ]
         ordering = ["organization_id", "node_id"]
 
     @staticmethod
@@ -76,6 +84,8 @@ class NodeInstallationSession(OrganizationScopedModel):
         "iam.Organization",
         on_delete=models.CASCADE,
         related_name="node_installation_sessions",
+        null=True,
+        blank=True,
     )
     enrollment_token = models.ForeignKey(
         "node.NodeToken",
@@ -107,6 +117,10 @@ class NodeInstallationSession(OrganizationScopedModel):
             ),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=models.Q(organization__isnull=False) | models.Q(role="gateway"),
+                name="node_session_platform_role",
+            ),
             models.UniqueConstraint(
                 fields=["enrollment_token", "role", "installation_id"],
                 condition=models.Q(status="active"),

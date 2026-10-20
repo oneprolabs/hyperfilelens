@@ -1,4 +1,4 @@
-"""Organization-scoped SourceLens LLM config ownership."""
+"""AI model ownership for real organizations and the platform."""
 
 from __future__ import annotations
 
@@ -6,18 +6,33 @@ import uuid
 from typing import Any
 
 from django.contrib.auth import get_user_model
+from django.db.models import QuerySet
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink
-from apps.lens_bridge.services import provisioning, sl_client
+from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink, PlatformAISettings
+from apps.lens_bridge.services import sl_client
+from apps.lens_bridge.services.model_defaults import get_model_defaults
 
 User = get_user_model()
 
 
-def org_model_links(org: Organization):
+def model_scope_filter(org: Organization | None) -> dict[str, Any]:
+    """Build an exact ownership selector; None is the internal platform scope."""
+    return {
+        "scope": (
+            LensOrgModelLink.Scope.PLATFORM
+            if org is None
+            else LensOrgModelLink.Scope.ORGANIZATION
+        ),
+        "organization": org,
+    }
+
+
+def org_model_links(org: Organization | None) -> QuerySet[LensOrgModelLink]:
+    """Select models owned by the given scope, never by inferred membership."""
     return LensOrgModelLink.objects.filter(
-        organization=org,
+        **model_scope_filter(org),
         is_deleted=False,
     ).order_by("created_at", "id")
 
@@ -33,7 +48,7 @@ def merge_model_display_name(
     data: dict[str, Any],
     link: LensOrgModelLink | None,
     *,
-    defaults: LensOrgLink | None = None,
+    defaults: LensOrgLink | PlatformAISettings | None = None,
 ) -> dict[str, Any]:
     if not isinstance(data, dict):
         return data
@@ -41,7 +56,7 @@ def merge_model_display_name(
     stored = (link.display_name if link else "") or ""
     out["name"] = stored.strip() or default_model_display_name(out)
     if defaults is None and link is not None:
-        defaults = provisioning.get_or_create_org_link(link.organization)
+        defaults = get_model_defaults(link.organization)
     out["is_default_agent"] = bool(
         link
         and defaults
@@ -67,13 +82,13 @@ def set_model_display_name(link: LensOrgModelLink, name: str | None) -> None:
 
 def register_org_model(
     *,
-    org: Organization,
+    org: Organization | None,
     sl_config_uuid: uuid.UUID,
     created_by: User | None = None,
     ensure_agent_default: bool = True,
 ) -> LensOrgModelLink:
     link, created = LensOrgModelLink.all_objects.get_or_create(
-        organization=org,
+        **model_scope_filter(org),
         sl_config_uuid=sl_config_uuid,
         defaults={"created_by": created_by},
     )
@@ -88,15 +103,19 @@ def register_org_model(
     return link
 
 
-def require_org_model(org: Organization, config_uuid: uuid.UUID) -> LensOrgModelLink:
+def require_org_model(
+    org: Organization | None, config_uuid: uuid.UUID,
+) -> LensOrgModelLink:
     link = org_model_links(org).filter(sl_config_uuid=config_uuid).first()
     if link is None:
         raise NotFound("AI model not found for this organization.")
     return link
 
 
-def ensure_org_default_model(org: Organization) -> LensOrgLink:
-    org_link = provisioning.get_or_create_org_link(org)
+def ensure_org_default_model(
+    org: Organization | None,
+) -> LensOrgLink | PlatformAISettings:
+    org_link = get_model_defaults(org)
     agent_links = org_model_links(org)
     current_ref = org_link.default_agent_model_ref
     if current_ref:
@@ -112,7 +131,9 @@ def ensure_org_default_model(org: Organization) -> LensOrgLink:
     return org_link
 
 
-def ensure_org_model_defaults(org: Organization) -> LensOrgLink:
+def ensure_org_model_defaults(
+    org: Organization | None,
+) -> LensOrgLink | PlatformAISettings:
     """Repair explicit Agent and multimodal defaults without crossing roles."""
 
     org_link = ensure_org_default_model(org)
@@ -127,7 +148,7 @@ def ensure_org_model_defaults(org: Organization) -> LensOrgLink:
     return org_link
 
 
-def list_org_model_configs(org: Organization) -> list[dict[str, Any]]:
+def list_org_model_configs(org: Organization | None) -> list[dict[str, Any]]:
     links = list(org_model_links(org))
     if not links:
         ensure_org_default_model(org)
@@ -200,7 +221,7 @@ def list_all_llm_configs(*, org: Organization | None = None) -> list[dict[str, A
         link.sl_config_uuid: link
         for link in org_model_links(org)
     }
-    defaults = provisioning.get_or_create_org_link(org)
+    defaults = get_model_defaults(org)
     out: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
@@ -222,8 +243,8 @@ def list_all_llm_configs(*, org: Organization | None = None) -> list[dict[str, A
     return out
 
 
-def active_llm_configs(*, org: Organization) -> list[dict[str, Any]]:
-    """Return active SourceLens models linked to exactly one organization."""
+def active_llm_configs(*, org: Organization | None) -> list[dict[str, Any]]:
+    """Return active AI models owned by exactly the requested scope."""
     rows: list[dict[str, Any]] = []
     for row in list_org_model_configs(org):
         status = str(row.get("status") or "").strip().lower()
@@ -245,15 +266,9 @@ def active_llm_configs_available_to_org(
     SourceLens configuration is represented in both scopes.
     """
 
-    from apps.lens_bridge.services import platform_lens
-
     rows = active_llm_configs(org=org)
-    platform_org = platform_lens.get_or_create_platform_org()
-    if org.pk == platform_org.pk:
-        return rows
-
     seen = {str(row.get("uuid")) for row in rows if row.get("uuid")}
-    for row in active_llm_configs(org=platform_org):
+    for row in active_llm_configs(org=None):
         uuid_value = str(row.get("uuid") or "")
         if uuid_value and uuid_value not in seen:
             rows.append(row)
@@ -261,14 +276,14 @@ def active_llm_configs_available_to_org(
     return rows
 
 
-def delete_org_model(org: Organization, config_uuid: uuid.UUID) -> None:
+def delete_org_model(org: Organization | None, config_uuid: uuid.UUID) -> None:
     require_org_model(org, config_uuid)
     sl_client.request_json("DELETE", f"/api/v1/admin/llm-config/{config_uuid}/")
     LensOrgModelLink.objects.filter(
-        organization=org,
+        **model_scope_filter(org),
         sl_config_uuid=config_uuid,
     ).update(is_deleted=True)
-    org_link = provisioning.get_or_create_org_link(org)
+    org_link = get_model_defaults(org)
     if org_link.default_agent_model_ref == config_uuid:
         org_link.default_agent_model_ref = None
     if org_link.default_multimodal_model_ref == config_uuid:
@@ -284,7 +299,7 @@ def delete_org_model(org: Organization, config_uuid: uuid.UUID) -> None:
 
 
 def validate_default_model_ref(
-    org: Organization,
+    org: Organization | None,
     config_uuid: uuid.UUID | None,
     *,
     field_name: str = "default_agent_model_ref",
@@ -313,13 +328,9 @@ def validate_agent_model_ref(
         sl_config_uuid=config_uuid,
     ).first()
     if link is None:
-        from apps.lens_bridge.services import platform_lens
-
-        platform_org = platform_lens.get_or_create_platform_org()
-        if org.pk != platform_org.pk:
-            link = org_model_links(platform_org).filter(
-                sl_config_uuid=config_uuid,
-            ).first()
+        link = org_model_links(None).filter(
+            sl_config_uuid=config_uuid,
+        ).first()
     if link is None:
         raise ValidationError(
             {field_name: "Model is not available to this organization."}

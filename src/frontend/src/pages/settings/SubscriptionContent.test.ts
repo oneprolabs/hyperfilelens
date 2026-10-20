@@ -162,7 +162,7 @@ describe('SubscriptionContent effective quotas', () => {
 
     const wrapper = await mountSubscription()
     const card = wrapper.findAll('.subscription-quota-item')
-      .find((item) => item.find('.subscription-quota-item__label').text() === 'AI Usage')!
+      .find((item) => item.find('.subscription-quota-item__label').text() === 'AI Tokens')!
 
     expect(card.find('.subscription-quota-item__numbers').text()).toBe('537.1K tokens')
     expect(card.find('.subscription-quota-item__numbers').attributes('title')).toBeUndefined()
@@ -190,7 +190,7 @@ describe('SubscriptionContent effective quotas', () => {
     })
     const wrapper = await mountSubscription()
     const cards = wrapper.findAll('.subscription-quota-item')
-    const ai = cards.find((item) => item.text().includes('AI Usage'))!
+    const ai = cards.find((item) => item.text().includes('AI Tokens'))!
     const hosts = cards.find((item) => item.text().includes('Source Hosts'))!
 
     expect(ai.find('.subscription-quota-item__numbers').text()).toBe(`${display} tokens`)
@@ -206,7 +206,7 @@ describe('SubscriptionContent effective quotas', () => {
     })
     const wrapper = await mountSubscription()
     const ai = wrapper.findAll('.subscription-quota-item')
-      .find((item) => item.text().includes('AI Usage'))!
+      .find((item) => item.text().includes('AI Tokens'))!
 
     expect(ai.find('.subscription-quota-item__numbers').text()).toBe('537.1K / 1M tokens')
     expect(ai.find('.subscription-quota-item__status').text()).toBe('54%')

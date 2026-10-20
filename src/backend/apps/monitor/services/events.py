@@ -14,7 +14,7 @@ from apps.monitor.services.event_targets import repository_event_target
 
 def record_operational_event(
     *,
-    organization_id: int,
+    organization_id: int | None,
     event_type: str,
     category: str,
     severity: str,
@@ -68,7 +68,7 @@ def record_operational_event(
 
 def schedule_availability_event(
     *,
-    organization_id: int,
+    organization_id: int | None,
     source: str,
     availability: str,
     occurred_at: datetime,
@@ -112,7 +112,7 @@ def schedule_availability_event(
 
 def schedule_repository_health_event(
     *,
-    organization_id: int,
+    organization_id: int | None,
     repository_id: int,
     repository_name: str,
     previous_health: str,

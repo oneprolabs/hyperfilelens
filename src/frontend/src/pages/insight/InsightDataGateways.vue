@@ -28,6 +28,7 @@ import { useResourceCapabilities } from '../../composables/useResourceCapabiliti
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
+import { fetchDeployProfile, getCachedDeployProfile } from '../../composables/useDeployProfile'
 import { sanitizeErrorDetails } from '../../lib/errors/details'
 import { apiErrorMessage } from '../../lib/api'
 import { applyGatewayDirectoryStatus } from '../../lib/gatewayDirectory'
@@ -85,6 +86,10 @@ const pageRequests = usePageRequestScope()
 
 /** Prefer route over module scope — Admin Engine can race with tenant scope resets. */
 const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
+const platformPermissions = ref(getCachedDeployProfile()?.platform_permissions ?? [])
+const canManagePlatformGateways = computed(() => platformPermissions.value.includes('platform.infra.public_gateway.manage'))
+const canManagePlatformCapacity = computed(() => platformPermissions.value.includes('platform.infra.public_gateway.capacity.manage'))
+let disposed = false
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -229,7 +234,7 @@ const resourcePermissions = useResourceCapabilities(computed(() => isPlatformEng
   .filter((row) => row.origin !== 'platform')
   .map((row) => ({ resource_type: 'node' as const, resource_id: row.id }))))
 const batchDisabled = computed(() => selectedRows.value.length === 0 || !selectedRows.value.every((row) =>
-  isPlatformEngine.value || resourcePermissions.permitted('node', row.id, 'delete'),
+  isPlatformEngine.value ? canManagePlatformGateways.value : resourcePermissions.permitted('node', row.id, 'delete'),
 ))
 const batchRenameDisabled = computed(() => selectedRows.value.length !== 1 || !selectedRows.value.every(canManageGateway))
 const batchUpgradeDisabled = computed(() => {
@@ -239,6 +244,7 @@ const batchUpgradeDisabled = computed(() => {
 
 function canUpgrade(row: ApiNode) {
   if ((row as InsightGatewayRow).managed_by_hfl === false) return false
+  if (isPlatformEngine.value && !canManagePlatformGateways.value) return false
   if (!isPlatformEngine.value && !resourcePermissions.permitted('node', row.id, 'upgrade')) return false
   return row.agent_release?.upgrade_version_allowed
     ?? canRemoteAgentUpgrade(row.version, latestAgentVersion.value)
@@ -263,7 +269,7 @@ function availabilityTagType(row: InsightGatewayRow): 'success' | 'danger' {
 }
 
 function aiPhase(row: InsightGatewayRow): GatewayAiPhase {
-  if (isPlatformEngine.value && !bridgeReady.value) return 'not_provisioned'
+  if (isPlatformEngine.value && canManagePlatformGateways.value && !bridgeReady.value) return 'not_provisioned'
   if (row.managed_by_hfl === false) return 'not_provisioned'
   if (!row.hfl_agent_online) return 'agent_offline'
   if (row.sidecar_status === 'error') return 'error'
@@ -348,7 +354,7 @@ function capacityHasKnownTotal(cap: PlatformGatewayCapacity | undefined): boolea
 }
 
 function openCapacityDialog(row: InsightGatewayRow) {
-  if (!canManageGateway(row)) return
+  if (!canManageCapacity(row)) return
   const cap = capacityFor(row)
   capacityTarget.value = row
   const bytes = cap != null && cap.capacity_bytes >= 0 ? Number(cap.capacity_bytes) : -1
@@ -365,7 +371,7 @@ function openCapacityDialog(row: InsightGatewayRow) {
 
 async function submitCapacity() {
   const row = capacityTarget.value
-  if (!row || capacitySaving.value) return
+  if (!row || !canManageCapacity(row) || capacitySaving.value) return
   const draft = Number(capacityDraft.value)
   const multiplier = capacityUnit.value === 'mib' ? MIB : GIB
   const next = capacityUnlimited.value ? -1 : draft * multiplier
@@ -414,7 +420,10 @@ function refreshCurrentPageStatus(force = false) {
 async function loadSupplementaryData() {
   const signal = pageRequests.nextSignal('dg-extras')
   try {
-    await Promise.all([loadLatestVersion(signal), loadCapacities(signal)])
+    await Promise.all([
+      ...(!isPlatformEngine.value || canManagePlatformGateways.value ? [loadLatestVersion(signal)] : []),
+      loadCapacities(signal),
+    ])
   } finally {
     pageRequests.releaseSignal('dg-extras', signal)
   }
@@ -436,7 +445,7 @@ async function load(options: { forceStatus?: boolean } = {}) {
   try {
     // The platform's external SL directory keeps its existing health semantics.
     // Private membership never waits for, or invokes, this global SL probe.
-    const healthRequest = isPlatformEngine.value
+    const healthRequest = isPlatformEngine.value && canManagePlatformGateways.value
       ? fetchLensHealth({ signal }).catch(() => null)
       : null
     const lensResult = isPlatformEngine.value
@@ -559,7 +568,12 @@ function openSelectedMaintenance() {
 
 function canManageGateway(row: InsightGatewayRow) {
   return row.managed_by_hfl !== false && row.id > 0
-    && (isPlatformEngine.value || resourcePermissions.permitted('node', row.id, 'manage'))
+    && (isPlatformEngine.value ? canManagePlatformGateways.value : resourcePermissions.permitted('node', row.id, 'manage'))
+}
+
+function canManageCapacity(row: InsightGatewayRow) {
+  return isPlatformEngine.value && canManagePlatformCapacity.value
+    && row.origin === 'platform' && row.managed_by_hfl !== false && row.id > 0
 }
 
 function readinessLabel(row: InsightGatewayRow) {
@@ -775,13 +789,17 @@ watch(rows, () => startListPoll(), { deep: true })
 onMounted(async () => {
   if (isPlatformEngine.value) {
     setLensApiScope('platform')
+    const profile = await fetchDeployProfile()
+    if (disposed) return
+    platformPermissions.value = profile?.platform_permissions ?? []
   }
   // Restore in-flight queue before first load so Removing rows can be retained.
-  lifecycleOps.restorePersisted()
+  if (!isPlatformEngine.value || canManagePlatformGateways.value) lifecycleOps.restorePersisted()
   await load()
 })
 
 onUnmounted(() => {
+  disposed = true
   stopListPoll()
 })
 </script>
@@ -792,6 +810,7 @@ onUnmounted(() => {
       <div class="hfl-list-toolbar hfl-list-toolbar--mobile-primary-utility">
         <div class="hfl-list-toolbar__primary">
           <RouterLink
+            v-if="!isPlatformEngine || canManagePlatformGateways"
             :to="isPlatformEngine ? '/platform-ops/engine/gateways/add' : '/node/nodes/deploy?role=gateway'"
             class="inline-flex"
           >
@@ -802,6 +821,7 @@ onUnmounted(() => {
           </RouterLink>
 
           <ElDropdown
+            v-if="!isPlatformEngine || canManagePlatformGateways"
             trigger="click"
             popper-class="hfl-actions-dropdown"
             @visible-change="moreActionsOpen = $event"
@@ -938,6 +958,7 @@ onUnmounted(() => {
           @selection-change="onSelectionChange"
         >
           <el-table-column
+            v-if="!isPlatformEngine || canManagePlatformGateways"
             type="selection"
             width="35"
             fixed="left"
@@ -1070,7 +1091,7 @@ onUnmounted(() => {
                   "
                 >
                   <template
-                    v-if="canManageGateway(row)"
+                    v-if="canManageCapacity(row)"
                     #trailing
                   >
                     <ElButton

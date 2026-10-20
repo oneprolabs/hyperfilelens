@@ -4,6 +4,7 @@ Access-profile helpers for feature gate / landing path.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 
 from apps.iam.features import FEATURE_DEFAULT_PATHS, FEATURE_KEYS, FEATURE_KEY_SET
 from apps.iam.models import Membership
@@ -68,7 +69,7 @@ ROLE_FEATURES: dict[str, list[str]] = {
 
 
 def get_effective_feature_keys(
-    *, membership: Membership | None, role: str | None = None, authorization=None,
+    *, membership: Membership | SimpleNamespace | None, role: str | None = None, authorization=None,
 ) -> list[str]:
     if membership is None:
         return ["dashboard"]
@@ -138,21 +139,39 @@ def serialize_available_platforms(feature_keys: list[str]) -> list[dict[str, str
     return out
 
 
-def resolve_membership_for_org(user, org_key: str | None) -> Membership | None:
-    if not getattr(user, "is_authenticated", False):
+def resolve_membership_for_org(
+    user, org_key: str | None,
+) -> Membership | SimpleNamespace | None:
+    if not getattr(user, "is_authenticated", False) or not user.is_active:
         return None
     qs = Membership.objects.select_related("organization").filter(
-        user=user, is_active=True
+        user=user, is_active=True, organization__is_active=True,
     )
     if org_key:
         membership = qs.filter(organization__key=org_key).first()
         if membership is not None:
             return membership
+        from common.platform_staff import is_installation_admin
+
+        if is_installation_admin(user):
+            from apps.iam.models import Organization
+            from apps.iam.permissions_org import installation_org_context
+
+            org = Organization.objects.filter(key=org_key, is_active=True).first()
+            return installation_org_context(user, org) if org else None
     return qs.order_by("organization__key", "id").first()
 
 
-def get_access_profile(user, *, org_key: str | None = None) -> dict[str, object]:
+def get_access_profile(
+    user, *, org_key: str | None = None, support_readonly: bool = False,
+) -> dict[str, object]:
     membership = resolve_membership_for_org(user, org_key)
+    if support_readonly and user.is_active and user.is_staff and org_key:
+        from apps.iam.models import Organization
+        from apps.iam.permissions_org import installation_org_context
+
+        org = Organization.objects.filter(key=org_key, is_active=True).first()
+        membership = installation_org_context(user, org) if org else None
     role = ""
     authorization = None
     if membership is not None:
@@ -164,12 +183,14 @@ def get_access_profile(user, *, org_key: str | None = None) -> dict[str, object]
             if callable(factory):
                 authorization = factory(user, membership.organization.key)
             if authorization is not None:
-                role = authorization.role or ""
+                role = authorization.role or (
+                    provider.get_org_role(user, membership.organization.key) or ""
+                )
             else:
                 role = provider.get_org_role(user, membership.organization.key) or ""
         else:
             # Community: affiliation ⇒ owner-equivalent access profile.
-            role = Membership.Role.OWNER
+            role = Membership.Role.OWNER if membership.pk else ""
     feature_keys = get_effective_feature_keys(
         membership=membership, role=role or None, authorization=authorization,
     )
@@ -178,6 +199,11 @@ def get_access_profile(user, *, org_key: str | None = None) -> dict[str, object]
         preferred_feature = str(membership.preferred_feature or "").strip()
     grants = []
     group_grants = []
+    authority_source = (
+        getattr(authorization, "authority_source", "")
+        if authorization is not None
+        else getattr(membership, "authority_source", "")
+    )
     if authorization is not None:
         grants = sorted(authorization.organization_permissions)
         group_grants = sorted(set().union(*authorization.group_permissions.values()))
@@ -194,11 +220,22 @@ def get_access_profile(user, *, org_key: str | None = None) -> dict[str, object]
             if callable(group_resolver)
             else []
         )
+    if support_readonly:
+        # Navigation hints must not advertise write authority in support mode.
+        from apps.iam.permission_catalog import PERMISSION_KEYS
+
+        grants = sorted(key for key in PERMISSION_KEYS if key.endswith(".view")) if membership else []
+        group_grants = []
+        authority_source = "support_readonly"
+        role = Membership.Role.AUDITOR if membership else ""
+        feature_keys = normalize_feature_keys(list(FEATURE_KEYS)) if membership else ["dashboard"]
     return {
         "permissions": grants,
         "group_permissions": group_grants,
         "org_key": getattr(membership.organization, "key", "") if membership else "",
         "role": role,
+        "authority_source": authority_source,
+        "is_organization_member": bool(membership and membership.pk),
         "visible_features": feature_keys,
         "available_platforms": serialize_available_platforms(feature_keys),
         "landing_path": get_landing_path(

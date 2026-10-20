@@ -9,8 +9,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
-from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink
-from apps.lens_bridge.services import platform_lens
+from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink, PlatformAISettings
 
 
 class LensOrgModelSettingsApiTests(TestCase):
@@ -127,16 +126,14 @@ class LensOrgModelSettingsApiTests(TestCase):
         self,
         active_configs,
     ):
-        platform_org = platform_lens.get_or_create_platform_org()
         platform_agent = uuid.uuid4()
         platform_multimodal = uuid.uuid4()
         for model_uuid in (platform_agent, platform_multimodal):
             LensOrgModelLink.objects.create(
-                organization=platform_org,
+                scope=LensOrgModelLink.Scope.PLATFORM,
                 sl_config_uuid=model_uuid,
             )
-        LensOrgLink.objects.create(
-            organization=platform_org,
+        PlatformAISettings.objects.create(
             default_agent_model_ref=platform_agent,
             default_multimodal_model_ref=platform_multimodal,
         )

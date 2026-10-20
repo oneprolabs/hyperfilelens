@@ -121,7 +121,13 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         org_key = None
         if request is not None:
             org_key = request.headers.get("X-Org-Key") or request.query_params.get("org")
-        return get_access_profile(obj, org_key=org_key)
+        from apps.iam.constants import SUPPORT_SESSION_KEY
+
+        support = bool(
+            request is not None and obj.is_staff and org_key
+            and getattr(request, "session", {}).get(SUPPORT_SESSION_KEY) == org_key
+        )
+        return get_access_profile(obj, org_key=org_key, support_readonly=support)
 
     @staticmethod
     def get_registered_at(obj):

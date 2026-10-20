@@ -9,7 +9,7 @@ defineOptions({ name: 'PlatformEngineLayout' })
 
 /**
  * Admin Engine always uses platform lens APIs
- * (``/api/v1/platform-ops/lens/*`` → Host ``__platform_lens__`` models).
+ * (``/api/v1/platform-ops/lens/*`` → explicit platform-owned Host resources).
  */
 setLensApiScope('platform')
 

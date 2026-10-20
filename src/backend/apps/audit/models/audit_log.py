@@ -16,6 +16,8 @@ class AuditLog(models.Model):
         Organization,
         on_delete=models.CASCADE,
         related_name="audit_logs",
+        null=True,
+        blank=True,
     )
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,

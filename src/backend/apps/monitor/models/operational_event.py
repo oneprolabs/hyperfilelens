@@ -1,4 +1,4 @@
-"""Immutable, tenant-scoped operational events."""
+"""Immutable tenant and platform operational events."""
 
 import uuid
 
@@ -25,6 +25,8 @@ class OperationalEvent(models.Model):
         "iam.Organization",
         on_delete=models.CASCADE,
         related_name="operational_events",
+        null=True,
+        blank=True,
     )
     event_type = models.CharField(max_length=120, db_index=True)
     category = models.CharField(max_length=32, choices=Category.choices, db_index=True)
@@ -64,6 +66,11 @@ class OperationalEvent(models.Model):
             ),
         ]
         constraints = [
+            models.UniqueConstraint(
+                fields=["dedup_key"],
+                condition=Q(organization__isnull=True) & ~Q(dedup_key=""),
+                name="mon_platform_event_dedup",
+            ),
             models.UniqueConstraint(
                 fields=["organization", "dedup_key"],
                 condition=~Q(dedup_key=""),

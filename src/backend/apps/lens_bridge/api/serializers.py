@@ -219,12 +219,14 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
         if org is None:
             return attrs
         gateway = attrs["gateway"]
-        provisioning.require_gateway_node(org, gateway.id)
         expected_scope = self.context.get(
             "gateway_scope",
             LensGatewayLink.GatewayScope.ORGANIZATION,
         )
-        if expected_scope in {
+        allow_platform = self.context.get("allow_platform_gateway") is True
+        if not allow_platform:
+            provisioning.require_gateway_node(org, gateway.id)
+        if allow_platform or expected_scope in {
             LensGatewayLink.GatewayScope.ORGANIZATION,
             LensGatewayLink.GatewayScope.USER,
         }:
@@ -236,6 +238,7 @@ class LensKnowledgeSourceCreateSerializer(serializers.ModelSerializer):
                 tenant_organization=org,
                 gateway_id=gateway.id,
                 require_ready=False,
+                include_platform=allow_platform,
             )
         else:
             link = provisioning.get_gateway_link(org, gateway.id)

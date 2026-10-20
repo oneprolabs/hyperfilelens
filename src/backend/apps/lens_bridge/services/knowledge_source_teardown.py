@@ -142,10 +142,11 @@ def _assess_chat_restore_record_stop(
         )
     )
     node_task_ids = {item.node_task_id for item in items if item.node_task_id}
-    execution_org_ids = {
-        record.organization_id,
-        record.target_execution_organization_id,
-    }
+    execution_owners = Q(organization_id=record.organization_id) | Q(
+        organization_id=record.target_execution_organization_id,
+        node_id=record.target_execution_node_id,
+        requesting_organization_id=record.requesting_organization_id,
+    )
     node_tasks = list(
         NodeTask.objects.filter(
             Q(pk__in=node_task_ids)
@@ -153,7 +154,7 @@ def _assess_chat_restore_record_stop(
                 correlation_id=str(record.task_uuid),
                 kind__in=("restore.run", "kopia.restore"),
             ),
-            organization_id__in=execution_org_ids,
+            execution_owners,
         ).only(
             "id",
             "node_id",
@@ -554,7 +555,8 @@ def cleanup_knowledge_source_workspace(
         )
         _renew(knowledge_source.id, claim_token)
         outcome = run_agent_task_sync(
-            org=execution.execution_organization,
+            org=execution.gateway.organization,
+            **({"platform": True} if execution.is_platform else {}),
             node_id=execution.gateway.id,
             kind="lens.ks.cleanup",
             payload={

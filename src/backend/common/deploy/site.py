@@ -33,22 +33,41 @@ def platform_ops_landing_path() -> str:
 
 
 def platform_ops_landing_path_for_user(user) -> str:
-    """Role-aware Admin Console landing (Platform AuthZ).
-
-    Billing → Quota Usage; Infra → AI Models; Admin / unknown → default.
-    """
+    """Choose an accessible destination for fixed or custom platform Roles."""
     try:
+        from common.extension_spi import get_authz_provider
         from common.platform_authz import (
             ROLE_BILLING_OPERATOR,
             ROLE_INFRA_OPERATOR,
             get_platform_role,
+            list_platform_permissions,
         )
 
+        if get_authz_provider() is None:
+            return platform_ops_landing_path()
         role = get_platform_role(user)
-        if role == ROLE_BILLING_OPERATOR:
+        permissions = set(list_platform_permissions(user))
+        quota_permissions = {
+            "platform.commerce.org.quota.manage", "platform.commerce.quota_usage.view",
+        }
+        if role == ROLE_BILLING_OPERATOR and permissions & quota_permissions:
             return "/platform-ops/platform/quota-usage"
-        if role == ROLE_INFRA_OPERATOR:
+        if role == ROLE_INFRA_OPERATOR and "platform.infra.ai_models.manage" in permissions:
             return "/platform-ops/engine/ai-settings"
+        destinations = (
+            ({"platform.infra.monitoring.view", "platform.commerce.quota_usage.view", "platform.admin.orgs.manage"}, "/platform-ops/overview"),
+            ({"platform.infra.ai_models.manage"}, "/platform-ops/engine/ai-settings"),
+            ({"platform.infra.public_gateway.manage", "platform.infra.public_gateway.capacity.manage"}, "/platform-ops/engine/gateways"),
+            ({"platform.admin.users.manage"}, "/platform-ops/users"),
+            ({"platform.admin.orgs.view"}, "/platform-ops/orgs"),
+            (quota_permissions, "/platform-ops/platform/quota-usage"),
+            ({"platform.infra.instance_license.view", "platform.commerce.instance_pool.view", "platform.admin.instance_license.activate"}, "/platform-ops/platform/instance-license"),
+            ({"platform.admin.audit.view"}, "/platform-ops/audit-center/audit-logs"),
+            ({"platform.infra.release_packages.view"}, "/platform-ops/platform/release-packages"),
+        )
+        for required, path in destinations:
+            if permissions & required:
+                return path
     except Exception:  # pragma: no cover
         pass
     return platform_ops_landing_path()

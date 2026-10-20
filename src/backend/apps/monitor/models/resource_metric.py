@@ -1,4 +1,4 @@
-"""Tenant-scoped resource metrics for alert evaluation and ops dashboards."""
+"""Resource metrics scoped to a real tenant or platform infrastructure."""
 
 import uuid
 
@@ -20,6 +20,8 @@ class ResourceMetric(models.Model):
         Organization,
         on_delete=models.CASCADE,
         related_name="resource_metrics",
+        null=True,
+        blank=True,
     )
     resource_type = models.CharField(max_length=100, db_index=True)
     resource_id = models.CharField(max_length=128, db_index=True)

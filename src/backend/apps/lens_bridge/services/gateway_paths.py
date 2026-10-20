@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import posixpath
 
+PLATFORM_WORKSPACE_ROOT = "/opt/hyperfilelens-agent/workspace/platform/data"
+
 
 class GatewayPathError(ValueError):
     """Raised when a gateway path can escape its declared filesystem root."""

@@ -15,21 +15,11 @@ _ORG_COUNT_FULL = (
 )
 
 
-def _platform_org_key() -> str:
-    try:
-        from apps.lens_bridge.services.platform_lens import PLATFORM_ORG_KEY
-
-        return PLATFORM_ORG_KEY
-    except Exception:  # pragma: no cover
-        return "__platform_lens__"
-
-
 def count_customer_organizations() -> int:
     from apps.iam.models import Organization
 
     return int(
         Organization.objects.filter(is_active=True)
-        .exclude(key=_platform_org_key())
         .count()
     )
 

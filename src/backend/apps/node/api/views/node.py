@@ -13,9 +13,9 @@ from rest_framework.response import Response
 
 from apps.audit.services.interface import write_audit_log
 from apps.iam.resource_api import GovernedResourceMixin
-from apps.iam.models import Organization
 from apps.iam.resource_access import filter_resource_queryset
 from apps.iam.resource_access import record_resource_owner
+from apps.node.services.internal.ownership import node_owner_filter, owner_id
 from apps.node.api import permissions as node_permissions
 from apps.node.api.serializers import (
     NodeHeartbeatSerializer,
@@ -34,7 +34,6 @@ from apps.node.models import Node, NodeInstallationSession, NodeToken
 from apps.node.models.base import NodeRole
 from apps.node.selectors.internal.node_query import node_field_search_q, node_search_q
 from apps.monitor.services.internal.node_metrics import ingest_node_heartbeat_metrics
-from apps.node.selectors.interface import list_nodes
 from apps.node.services.internal.node_lifecycle import (
     LIFECYCLE_KIND_UPGRADE,
     enrich_node_row,
@@ -200,6 +199,10 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
         if role == NodeRole.AGENT:
             return queryset.order_by("-created_at", "-id")
         return queryset.order_by("name", "id")
+
+    def perform_create(self, serializer):
+        """Console-created Nodes always belong to the authenticated real tenant."""
+        serializer.save(organization=self.org)
 
     def _build_enrichments(self, nodes) -> dict[int, dict]:
         from apps.node.services.internal.agent_upgrade import node_agent_release_status
@@ -484,6 +487,8 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
         permission_classes=[node_permissions.AllowAny],
     )
     def heartbeat(self, request):
+        from apps.node.services.internal.transport_identity import resolve_transport_scope
+
         org_key = str(request.headers.get("X-Org-Key", "") or "").strip()
         node_token = str(request.headers.get("X-Node-Token", "") or "").strip()
         if not org_key:
@@ -492,8 +497,9 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        org = Organization.objects.filter(key=org_key, is_active=True).first()
-        if org is None:
+        transport_scope = resolve_transport_scope(org_key, secret=node_token)
+        org = transport_scope.organization if transport_scope else None
+        if transport_scope is None:
             return Response(
                 {"error": "organization not found"},
                 status=status.HTTP_404_NOT_FOUND,
@@ -518,7 +524,12 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
             payload.get("metadata")
         )
         if node_id:
-            node = list_nodes(organization=org).filter(pk=node_id).first()
+            node = Node.objects.filter(**node_owner_filter(org)).filter(pk=node_id).first()
+            if node is not None and node.transport_key != org_key:
+                return Response(
+                    {"error": "invalid node credential"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
 
         observed_at = timezone.now()
         new_agent_registered = False
@@ -527,6 +538,7 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                 org=org,
                 secret=node_token,
                 role=payload["role"],
+                namespace=org_key,
             )
             if authorization is None:
                 return Response(
@@ -557,6 +569,27 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                     session=session,
                 )
                 token_row = locked_token
+                if (
+                    token_row.transport_key != org_key
+                    or token_row.organization_id != owner_id(org)
+                    or token_row.role != payload["role"]
+                ):
+                    return Response(
+                        {"error": "installation routing identity does not match"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if session is None and (
+                    not token_row.is_active
+                    or token_row.is_deleted
+                    or (
+                        token_row.expires_at is not None
+                        and token_row.expires_at <= timezone.now()
+                    )
+                ):
+                    return Response(
+                        {"error": "invalid enrollment token"},
+                        status=status.HTTP_401_UNAUTHORIZED,
+                    )
                 if not _token_authorizes_installation_mode(
                     token_row,
                     resolved_installation_mode,
@@ -621,19 +654,27 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                         {"error": "installation mode is fixed during enrollment"},
                         status=status.HTTP_409_CONFLICT,
                     )
+                if node is not None and node.transport_key != org_key:
+                    return Response(
+                        {"error": "installation routing identity does not match"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
                 created_node = node is None
                 if node is None:
                     from apps.subscription.services.interface import (
                         enforce_node_role_quota,
                     )
 
-                    enforce_node_role_quota(organization=org, role=payload["role"])
+                    if org is not None:
+                        enforce_node_role_quota(organization=org, role=payload["role"])
                     try:
                         with transaction.atomic():
                             node = Node.objects.create(
                                 organization=org,
+                                transport_namespace=token_row.transport_namespace,
+                                scope=Node.Scope.PLATFORM if org is None else Node.Scope.ORGANIZATION,
                                 name=uniquify_node_name(
-                                    organization_id=org.id,
+                                    organization_id=owner_id(org),
                                     name=resolve_registration_node_name(
                                         payload=payload
                                     ),
@@ -668,6 +709,11 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                         )
                         if node is None:
                             raise
+                        if node.transport_key != org_key:
+                            return Response(
+                                {"error": "installation routing identity does not match"},
+                                status=status.HTTP_409_CONFLICT,
+                            )
                         if node.installation_mode != resolved_installation_mode:
                             return Response(
                                 {
@@ -680,16 +726,16 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                         created_node = False
                     else:
                         unique_name = uniquify_node_name(
-                            organization_id=org.id,
+                            organization_id=owner_id(org),
                             name=node.name,
                             exclude_node_id=node.id,
                         )
                         if unique_name != node.name:
                             node.name = unique_name
                             node.save(update_fields=["name", "updated_at"])
-                    if created_node:
+                    if created_node and org is not None:
                         record_resource_owner(
-                            organization_id=org.id,
+                            organization_id=owner_id(org),
                             resource_type="node",
                             resource_id=node.id,
                             owner_id=(
@@ -753,7 +799,7 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                 # latest metadata under that lock so an HTTP registration
                 # refresh cannot overwrite a concurrently reported inventory.
                 node = (
-                    list_nodes(organization=org)
+                    Node.objects.filter(**node_owner_filter(org))
                     .select_for_update()
                     .filter(pk=existing_node_id)
                     .first()
@@ -762,6 +808,11 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                     return Response(
                         {"error": "node not found; enrollment token required"},
                         status=status.HTTP_404_NOT_FOUND,
+                    )
+                if node.transport_key != org_key:
+                    return Response(
+                        {"error": "invalid node credential"},
+                        status=status.HTTP_401_UNAUTHORIZED,
                     )
                 if payload["installation_mode"] != node.installation_mode:
                     return Response(
@@ -810,7 +861,7 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                         )
                     ):
                         next_name = uniquify_node_name(
-                            organization_id=org.id,
+                            organization_id=owner_id(org),
                             name=resolve_registration_node_name(payload=payload),
                             exclude_node_id=node.id,
                         )
@@ -822,7 +873,7 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                         fallback=node.name,
                     )
                     next_name = uniquify_node_name(
-                        organization_id=org.id,
+                        organization_id=owner_id(org),
                         name=next_name,
                         exclude_node_id=node.id,
                     )

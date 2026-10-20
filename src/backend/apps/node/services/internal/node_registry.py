@@ -245,7 +245,7 @@ def record_node_availability(
             from apps.monitor.services.events import schedule_availability_event
 
             schedule_availability_event(
-                organization_id=int(node.organization_id),
+                organization_id=node.organization_id,
                 source="node",
                 availability=availability,
                 occurred_at=node.availability_updated_at,

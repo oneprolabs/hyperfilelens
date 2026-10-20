@@ -4,12 +4,66 @@ from unittest.mock import patch
 from django.contrib.auth.models import User
 from django.core.management import call_command, CommandError
 from django.test import TestCase
+from django.db import IntegrityError, transaction
 
 from apps.iam.models import Membership, Organization
 from apps.iam.profile_models import Profile
 
 
 class SeedInitialDataCommandTests(TestCase):
+    def test_renamed_installation_identity_is_reused_without_resetting_profile(self):
+        call_command("seed_initial_data", stdout=StringIO())
+        user = User.objects.get(email="admin@hyperfilelens.com")
+        user.email = user.username = "renamed@example.test"
+        user.set_password("ChangedPassword@123")
+        user.save()
+        Profile.objects.filter(user=user).update(language="en", timezone="Asia/Shanghai")
+        call_command("seed_initial_data", stdout=StringIO())
+        user.refresh_from_db()
+        self.assertEqual(User.objects.count(), 1)
+        self.assertEqual(user.email, "renamed@example.test")
+        self.assertTrue(user.check_password("ChangedPassword@123"))
+        self.assertEqual(Profile.objects.get(user=user).timezone, "Asia/Shanghai")
+
+    def test_only_one_persistent_installation_identity_is_allowed(self):
+        first = User.objects.create_user(username="root-one")
+        second = User.objects.create_user(username="root-two")
+        Profile.objects.update_or_create(user=first, defaults={"is_installation_admin": True})
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Profile.objects.update_or_create(user=second, defaults={"is_installation_admin": True})
+
+    def test_existing_staff_requires_explicit_offline_adoption(self):
+        user = User.objects.create_user(
+            username="admin@hyperfilelens.com", email="admin@hyperfilelens.com",
+            is_staff=True, password="KeepThisPassword@123",
+        )
+        with self.assertRaises(CommandError):
+            call_command("seed_initial_data", stdout=StringIO())
+        call_command("seed_initial_data", adopt_existing_user_id=user.pk, stdout=StringIO())
+        self.assertTrue(Profile.objects.get(user=user).is_installation_admin)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("KeepThisPassword@123"))
+
+    def test_seed_does_not_adopt_existing_organizations_or_create_another_identity(self):
+        tenant = User.objects.create_user(username="existing-tenant")
+        org = Organization.objects.create(key="existing", name="Existing tenant")
+        Membership.objects.create(user=tenant, organization=org, role="owner")
+        call_command("seed_initial_data", stdout=StringIO())
+        root = User.objects.get(username="admin@hyperfilelens.com")
+        self.assertFalse(Membership.objects.filter(user=root).exists())
+        self.assertEqual(Membership.objects.count(), 1)
+        with self.assertRaises(CommandError):
+            call_command("seed_initial_data", adopt_existing_user_id=tenant.pk, stdout=StringIO())
+
+    def test_seed_does_not_reactivate_or_promote_a_damaged_installation_account(self):
+        call_command("seed_initial_data", stdout=StringIO())
+        user = User.objects.get(username="admin@hyperfilelens.com")
+        User.objects.filter(pk=user.pk).update(is_active=False)
+        with self.assertRaises(CommandError):
+            call_command("seed_initial_data", stdout=StringIO())
+        user.refresh_from_db()
+        self.assertFalse(user.is_active)
+
     def test_existing_ordinary_account_cannot_be_promoted_by_bootstrap_email(self):
         account = User.objects.create_user(
             username="admin@hyperfilelens.com", email="admin@hyperfilelens.com",
@@ -70,15 +124,14 @@ class SeedInitialDataCommandTests(TestCase):
         profile = Profile.objects.get(user=user)
         self.assertTrue(profile.registration_completed)
 
-        # EE AuthZ (when loaded): seed must attach PlatformStaffRole for Console.
+        # EE installation authority is intrinsic; no ordinary preset is seeded.
         try:
-            from apps.membership.models import PlatformStaffRole
-            from common.platform_authz import ROLE_PLATFORM_ADMIN
+            from apps.membership.models import PlatformRole, PlatformStaffRole
+            from common.platform_authz import ADMIN_USERS_MANAGE, has_platform_permission
 
-            self.assertEqual(
-                PlatformStaffRole.objects.get(user=user).role,
-                ROLE_PLATFORM_ADMIN,
-            )
+            self.assertFalse(PlatformStaffRole.objects.filter(user=user).exists())
+            self.assertFalse(PlatformRole.objects.exists())
+            self.assertTrue(has_platform_permission(user, ADMIN_USERS_MANAGE))
         except ImportError:
             pass
 

@@ -1,8 +1,9 @@
 """Platform Console authorization facade (infra vs commerce).
 
 Host code calls ``has_platform_permission`` / ``authorize_platform``.
-EE ``AuthzProvider.has_platform_permission`` requires an explicit platform
-role row (bare ``is_staff`` is not enough). Without a provider, authenticated
+EE ``AuthzProvider.has_platform_permission`` uses a live stored platform Role
+or the trusted installation identity (bare ``is_staff`` is not enough).
+Without a provider, authenticated
 ``is_staff`` keeps full access (Community / empty socket).
 """
 
@@ -20,6 +21,7 @@ INFRA_PUBLIC_GATEWAY_MANAGE = "platform.infra.public_gateway.manage"
 INFRA_PUBLIC_GATEWAY_CAPACITY_MANAGE = "platform.infra.public_gateway.capacity.manage"
 INFRA_INSTANCE_LICENSE_VIEW = "platform.infra.instance_license.view"
 INFRA_MONITORING_VIEW = "platform.infra.monitoring.view"
+INFRA_MONITORING_MANAGE = "platform.infra.monitoring.manage"
 INFRA_RELEASE_PACKAGES_VIEW = "platform.infra.release_packages.view"
 
 COMMERCE_ORG_QUOTA_MANAGE = "platform.commerce.org.quota.manage"
@@ -30,6 +32,10 @@ COMMERCE_INSTANCE_POOL_VIEW = "platform.commerce.instance_pool.view"
 ADMIN_INSTANCE_LICENSE_ACTIVATE = "platform.admin.instance_license.activate"
 ADMIN_USERS_MANAGE = "platform.admin.users.manage"
 ADMIN_ORGS_MANAGE = "platform.admin.orgs.manage"
+ADMIN_ORGS_VIEW = "platform.admin.orgs.view"
+ADMIN_TENANT_GOVERNANCE_VIEW = "platform.admin.tenant_governance.view"
+ADMIN_RESOURCES_VIEW = "platform.admin.resources.view"
+COMMERCE_ORG_QUOTA_VIEW = "platform.commerce.org.quota.view"
 ADMIN_SUPPORT_MANAGE = "platform.admin.support.manage"
 ADMIN_AUDIT_VIEW = "platform.admin.audit.view"
 
@@ -39,6 +45,7 @@ ALL_PLATFORM_ACTIONS: tuple[str, ...] = (
     INFRA_PUBLIC_GATEWAY_CAPACITY_MANAGE,
     INFRA_INSTANCE_LICENSE_VIEW,
     INFRA_MONITORING_VIEW,
+    INFRA_MONITORING_MANAGE,
     INFRA_RELEASE_PACKAGES_VIEW,
     COMMERCE_ORG_QUOTA_MANAGE,
     COMMERCE_ORG_PACKAGE_APPLY,
@@ -49,7 +56,35 @@ ALL_PLATFORM_ACTIONS: tuple[str, ...] = (
     ADMIN_ORGS_MANAGE,
     ADMIN_SUPPORT_MANAGE,
     ADMIN_AUDIT_VIEW,
+    ADMIN_ORGS_VIEW,
+    ADMIN_TENANT_GOVERNANCE_VIEW,
+    ADMIN_RESOURCES_VIEW,
+    COMMERCE_ORG_QUOTA_VIEW,
 )
+
+PLATFORM_PERMISSION_DEPENDENCIES = {
+    INFRA_MONITORING_MANAGE: (INFRA_MONITORING_VIEW,),
+    ADMIN_ORGS_MANAGE: (ADMIN_ORGS_VIEW, ADMIN_TENANT_GOVERNANCE_VIEW, ADMIN_RESOURCES_VIEW),
+    ADMIN_TENANT_GOVERNANCE_VIEW: (ADMIN_ORGS_VIEW,),
+    ADMIN_RESOURCES_VIEW: (ADMIN_ORGS_VIEW,),
+    ADMIN_SUPPORT_MANAGE: (ADMIN_ORGS_VIEW,),
+    COMMERCE_ORG_QUOTA_MANAGE: (COMMERCE_ORG_QUOTA_VIEW,),
+    COMMERCE_ORG_PACKAGE_APPLY: (COMMERCE_ORG_QUOTA_VIEW,),
+    COMMERCE_QUOTA_USAGE_VIEW: (COMMERCE_ORG_QUOTA_VIEW,),
+    COMMERCE_ORG_QUOTA_VIEW: (ADMIN_ORGS_VIEW,),
+}
+
+
+def normalize_platform_permissions(values: Iterable[str]) -> frozenset[str]:
+    """Expand read dependencies without inferring any new write capability."""
+    permissions = {value for value in values if isinstance(value, str)} & set(ALL_PLATFORM_ACTIONS)
+    pending = list(permissions)
+    while pending:
+        for dependency in PLATFORM_PERMISSION_DEPENDENCIES.get(pending.pop(), ()):
+            if dependency not in permissions:
+                permissions.add(dependency)
+                pending.append(dependency)
+    return frozenset(permissions)
 
 ROLE_PLATFORM_ADMIN = "platform_admin"
 ROLE_INFRA_OPERATOR = "infra_operator"
@@ -64,6 +99,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             INFRA_PUBLIC_GATEWAY_CAPACITY_MANAGE,
             INFRA_INSTANCE_LICENSE_VIEW,
             INFRA_MONITORING_VIEW,
+            INFRA_MONITORING_MANAGE,
             INFRA_RELEASE_PACKAGES_VIEW,
         }
     ),
@@ -76,12 +112,15 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         }
     ),
 }
+ROLE_PERMISSIONS = {
+    key: normalize_platform_permissions(values) for key, values in ROLE_PERMISSIONS.items()
+}
 
 
 def permissions_for_role(role: str | None) -> frozenset[str]:
     if not role:
         return frozenset()
-    return ROLE_PERMISSIONS.get(str(role), frozenset())
+    return normalize_platform_permissions(ROLE_PERMISSIONS.get(str(role), frozenset()))
 
 
 def has_platform_permission(user: Any, action: str) -> bool:
@@ -117,6 +156,7 @@ def list_platform_permissions(user: Any) -> list[str]:
 
 
 def get_platform_role(user: Any) -> str | None:
+    """Display/landing metadata only; never derive authority from this key."""
     provider = get_authz_provider()
     if provider is not None:
         getter = getattr(provider, "get_platform_role", None)
@@ -136,7 +176,8 @@ def ensure_platform_role(
     """Assign a platform role when EE AuthZ is loaded (seed / bootstrap).
 
     Community (no AuthzProvider): no-op; bare ``is_staff`` remains sufficient.
-    Enterprise: requires an explicit ``PlatformStaffRole`` row for Console access.
+    Enterprise: ordinary staff require a stored Role; installation authority
+    remains intrinsic and never creates a hidden preset or assignment.
     """
     if not user or not getattr(user, "is_staff", False):
         return

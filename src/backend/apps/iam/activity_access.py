@@ -29,9 +29,6 @@ def filter_activity_queryset(request, queryset, *, actor_field=None, action=None
             else queryset.none()
         )
     org_key = resolve_org_key(request)
-    role = provider.get_org_role(request.user, org_key)
-    if role is None:
-        return queryset.none()
     action = action or (
         "operations.audit_logs.view"
         if "audit" in request.path
@@ -42,6 +39,8 @@ def filter_activity_queryset(request, queryset, *, actor_field=None, action=None
     context = request_authorization(request)
     if context is not None:
         return _filter_activity_sql(request, queryset, context, actor_field, action)
+    if provider.get_org_role(request.user, org_key) is None:
+        return queryset.none()
     if provider.has_org_action(
         request.user, org_key, action
     ) and provider.has_org_action(

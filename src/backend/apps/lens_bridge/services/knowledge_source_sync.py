@@ -378,7 +378,7 @@ def request_knowledge_source_sync(
     from apps.node.services.internal.node_lifecycle import _active_lifecycle_task
 
     if _active_lifecycle_task(
-        org=execution.execution_organization,
+        org=execution.gateway.organization,
         node=execution.gateway,
     ):
         raise ValidationError(
@@ -840,7 +840,8 @@ def _run_phase_prepare_workspace(
         for scope in scope_entries(ks):
             source_path = str(scope.get("source_path") or "").strip()
             outcome = run_agent_task_sync(
-                org=execution.execution_organization,
+                org=execution.gateway.organization,
+            **({"platform": True} if execution.is_platform else {}),
                 node_id=gateway.id,
                 kind="lens.workspace.validate-local",
                 payload={

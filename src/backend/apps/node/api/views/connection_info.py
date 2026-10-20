@@ -12,23 +12,23 @@ from rest_framework.views import APIView
 from apps.node.api.permissions import AllowAny
 from apps.node.models import Node, NodeTask, NodeCredential
 from apps.node.services.internal.node_registry import agent_ws_routable
+from apps.node.services.internal.transport_identity import node_for_transport
 
 
 class NodeConnectionInfoView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        node = Node.objects.filter(
-            pk=request.query_params.get("node_id"),
-            organization__key=request.headers.get("X-Org-Key", ""),
-            organization__is_active=True,
-            is_deleted=False,
-        ).first() if str(request.query_params.get("node_id", "")).isdigit() else None
+        node_id = str(request.query_params.get("node_id", ""))
+        node = node_for_transport(
+            node_id=int(node_id),
+            namespace=request.headers.get("X-Org-Key", ""),
+        ) if node_id.isascii() and node_id.isdigit() and len(node_id) <= 19 and 0 < int(node_id) <= 2**63 - 1 else None
         nonce = request.headers.get("X-Connection-Nonce", "")
         proof = request.headers.get("X-Connection-Proof", "")
         credential = NodeCredential.objects.filter(node=node, is_active=True).first() if node else None
         key = bytes.fromhex(credential.secret_hash) if credential else b""
-        message = "\0".join(["node", nonce, str(node.id), node.organization.key, node.role, node.installation_id]) if node else ""
+        message = "\0".join(["node", nonce, str(node.id), node.transport_key, node.role, node.installation_id]) if node else ""
         expected = hmac.new(key, message.encode(), hashlib.sha256).hexdigest()
         if not credential or not re.fullmatch(r"[0-9a-f]{64}", nonce) or not re.fullmatch(r"[0-9a-f]{64}", proof) or not hmac.compare_digest(proof, expected):
             return Response({"detail": "Installed node authentication failed."}, status=401)
@@ -37,7 +37,7 @@ class NodeConnectionInfoView(APIView):
         ).exists()
         data = {
             "node_id": str(node.id),
-            "org_key": node.organization.key,
+            "org_key": node.transport_key,
             "role": node.role,
             "installation_id": node.installation_id,
             "busy": busy,

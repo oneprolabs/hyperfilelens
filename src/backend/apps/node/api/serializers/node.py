@@ -15,6 +15,7 @@ class NodeSerializer(serializers.ModelSerializer):
     """Console REST representation of a registered Agent node."""
 
     agent_control_ws_path = serializers.SerializerMethodField(read_only=True)
+    transport_key = serializers.CharField(read_only=True)
     routable = serializers.SerializerMethodField()
     lifecycle = serializers.SerializerMethodField(read_only=True)
     workload = serializers.SerializerMethodField(read_only=True)
@@ -72,6 +73,7 @@ class NodeSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "organization",
+            "transport_key",
             "name",
             "role",
             "installation_mode",
@@ -99,6 +101,7 @@ class NodeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "organization",
             "installation_mode",
             "ip_address",
             "effective_repository_server_address",
@@ -187,6 +190,16 @@ class NodeSerializer(serializers.ModelSerializer):
             immutable_errors["organization"] = (
                 "Node organization is fixed during enrollment."
             )
+        if instance is not None and isinstance(self.initial_data, dict) and "organization" in self.initial_data:
+            raw_owner = self.initial_data["organization"]
+            try:
+                owner = None if raw_owner is None else int(raw_owner)
+            except (TypeError, ValueError, OverflowError):
+                owner = object()
+            if isinstance(raw_owner, bool) or owner != instance.organization_id:
+                immutable_errors["organization"] = (
+                    "Node organization is fixed during enrollment."
+                )
         requested_role = attrs.get("role")
         if (
             instance is not None

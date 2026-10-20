@@ -1,5 +1,6 @@
 import type { ErrorDetailsPayload } from '../../../lib/errors/details'
 import { safeErrorDetailText } from '../../../lib/errors/details'
+import { readStoredOrganizationKey } from '../../../lib/organizationStorage'
 import type { FlowSourceRow } from './useFlowSourceAggregate'
 
 export type SourcePendingKind =
@@ -37,7 +38,7 @@ export function readWizardPendingStorage(): PersistedWizardPending | null {
     const raw = sessionStorage.getItem(WIZARD_PENDING_STORAGE_KEY)
     if (!raw) return null
     const saved = JSON.parse(raw) as PersistedWizardPending
-    if (saved.organizationKey !== undefined && saved.organizationKey !== (localStorage.getItem('hfl_org_key') || '')) return null
+    if (saved.organizationKey !== undefined && saved.organizationKey !== readStoredOrganizationKey()) return null
     return saved
   } catch {
     return null
@@ -55,7 +56,7 @@ export function writeWizardPendingStorage(
   sessionStorage.setItem(
     WIZARD_PENDING_STORAGE_KEY,
     safeErrorDetailText({
-      organizationKey: localStorage.getItem('hfl_org_key') || '',
+      organizationKey: readStoredOrganizationKey(),
       ops: [...ops.entries()].map(([id, op]) => [id, { ...op, failureDetails: op.failureDetails ? { ...op.failureDetails, capturedAt: op.failureDetails.capturedAt || Date.now() } : undefined }]),
       snapshots: [...snapshots.entries()],
     }),

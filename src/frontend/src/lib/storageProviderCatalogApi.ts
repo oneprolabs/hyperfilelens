@@ -25,6 +25,7 @@ export type StorageProvider = StorageProviderConfig & {
   checksum: string
   updated_at: string | null
   region_count: number
+  can_restore_default: boolean
 }
 
 export type ProviderDiff = {
@@ -130,7 +131,7 @@ export type ProviderImportReview = ProviderImportPreview & {
 }
 
 export type ProviderResetReview = {
-  scope: 'provider' | 'all'
+  scope: 'provider' | 'selected' | 'all'
   provider_ids: string[]
   providers: ProviderDiff[]
   expires_at: string
@@ -208,30 +209,55 @@ export function applyProviderImport(
   )
 }
 
-export function exportProviders(providerIds?: string[]) {
-  const query = providerIds?.length
-    ? `?provider_ids=${encodeURIComponent(providerIds.join(','))}`
-    : ''
+function requireProviderSelection(providerIds: string[]) {
+  if (
+    !providerIds.length
+    || providerIds.some(id => typeof id !== 'string' || !id.trim())
+    || new Set(providerIds).size !== providerIds.length
+  ) {
+    throw new Error('A non-empty, unique Provider selection is required.')
+  }
+}
+
+export function exportProviders(providerIds: string[]) {
+  requireProviderSelection(providerIds)
+  const query = `?provider_ids=${encodeURIComponent(providerIds.join(','))}`
   return payload<{ schema_version: number; providers: StorageProviderConfig[] }>(
     api<unknown>(`/api/v1/platform-ops/storage-providers/export${query}`),
   )
 }
 
-export function reviewProviderReset(providerId?: string) {
-  const path = providerId
-    ? `/api/v1/platform-ops/storage-providers/${encodeURIComponent(providerId)}/reset/review`
-    : '/api/v1/platform-ops/storage-providers/reset/review'
-  return payload<ProviderResetReview>(api<unknown>(path, { method: 'POST', body: '{}' }))
+export function reviewProviderReset(target: string | string[]) {
+  const selected = Array.isArray(target)
+  const providerIds = selected ? target : [target]
+  requireProviderSelection(providerIds)
+  const path = selected
+    ? '/api/v1/platform-ops/storage-providers/reset-selected/review'
+    : `/api/v1/platform-ops/storage-providers/${encodeURIComponent(target as string)}/reset/review`
+  return payload<ProviderResetReview>(api<unknown>(path, {
+    method: 'POST',
+    body: JSON.stringify(selected ? { provider_ids: providerIds } : {}),
+  }))
 }
 
 export function confirmProviderReset(review: ProviderResetReview, providerId?: string) {
-  const path = providerId
-    ? `/api/v1/platform-ops/storage-providers/${encodeURIComponent(providerId)}/reset`
-    : '/api/v1/platform-ops/storage-providers/reset'
+  requireProviderSelection(review.provider_ids)
+  const selected = review.scope === 'selected' && providerId === undefined
+  const single = review.scope === 'provider'
+    && providerId !== undefined
+    && review.provider_ids.length === 1
+    && review.provider_ids[0] === providerId
+  if (!selected && !single) throw new Error('Provider restore scope does not match the review.')
+  const path = selected
+    ? '/api/v1/platform-ops/storage-providers/reset-selected'
+    : `/api/v1/platform-ops/storage-providers/${encodeURIComponent(providerId!)}/reset`
   return payload<{ reset: boolean; provider_ids: string[] }>(
     api<unknown>(path, {
       method: 'POST',
-      body: JSON.stringify({ reset_token: review.reset_token }),
+      body: JSON.stringify({
+        reset_token: review.reset_token,
+        ...(selected ? { provider_ids: review.provider_ids } : {}),
+      }),
     }),
   )
 }

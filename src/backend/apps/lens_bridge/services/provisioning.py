@@ -25,6 +25,8 @@ from apps.lens_bridge.models import (
 from apps.lens_bridge.services import ingest_policy, org_models, retrieval_policy, sl_client
 from apps.node.models.base import NodeRole
 from apps.node.models.node import Node
+from apps.node.services.internal.ownership import node_owner_filter, owner_id
+from apps.lens_bridge.services.gateway_paths import PLATFORM_WORKSPACE_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -143,26 +145,19 @@ def default_model_refs_for_org(
     *,
     tenant_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[str | None, str | None]:
-    """Resolve Agent and multimodal defaults from organization-owned links.
+    """Resolve tenant overrides and platform AI defaults.
 
     HFL role pointers are authoritative. SourceLens's process-wide
     ``is_default`` flag is intentionally ignored because it is not tenant
     scoped.
     """
 
-    from apps.lens_bridge.services import platform_lens
-
-    platform_org = platform_lens.get_or_create_platform_org()
     tenant_rows = (
         tenant_rows
         if tenant_rows is not None
         else org_models.active_llm_configs(org=org)
     )
-    platform_rows = (
-        tenant_rows
-        if org.pk == platform_org.pk
-        else org_models.active_llm_configs(org=platform_org)
-    )
+    platform_rows = org_models.active_llm_configs(org=None)
     tenant_active = {
         str(row.get("uuid") or "")
         for row in tenant_rows
@@ -175,14 +170,10 @@ def default_model_refs_for_org(
     }
 
     org_defaults = org_models.ensure_org_model_defaults(org)
-    platform_defaults = (
-        org_defaults
-        if org.pk == platform_org.pk
-        else org_models.ensure_org_model_defaults(platform_org)
-    )
+    platform_defaults = org_models.ensure_org_model_defaults(None)
 
     agent_ref: str | None = None
-    if org.pk != platform_org.pk and org_defaults.default_agent_model_ref:
+    if org_defaults.default_agent_model_ref:
         candidate = str(org_defaults.default_agent_model_ref)
         if candidate in tenant_active:
             agent_ref = candidate
@@ -191,10 +182,7 @@ def default_model_refs_for_org(
         if candidate in platform_active:
             agent_ref = candidate
     multimodal_ref: str | None = None
-    if (
-        org.pk != platform_org.pk
-        and org_defaults.default_multimodal_model_ref
-    ):
+    if org_defaults.default_multimodal_model_ref:
         candidate = str(org_defaults.default_multimodal_model_ref)
         if candidate in tenant_active:
             multimodal_ref = candidate
@@ -213,17 +201,12 @@ def configured_default_model_refs_for_org(
 ) -> tuple[str | None, str | None]:
     """Resolve HFL-owned model defaults without calling SourceLens."""
 
-    from apps.lens_bridge.services import platform_lens
+    from apps.lens_bridge.services.model_defaults import get_model_defaults
 
-    platform_org = platform_lens.get_or_create_platform_org()
-    org_defaults = get_or_create_org_link(org)
-    platform_defaults = (
-        org_defaults
-        if org.pk == platform_org.pk
-        else get_or_create_org_link(platform_org)
-    )
+    org_defaults = get_model_defaults(org)
+    platform_defaults = get_model_defaults(None)
 
-    def _owned_default(owner: Organization, model_ref) -> str | None:
+    def _owned_default(owner: Organization | None, model_ref) -> str | None:
         if not model_ref:
             return None
         exists = org_models.org_model_links(owner).filter(
@@ -231,23 +214,19 @@ def configured_default_model_refs_for_org(
         ).exists()
         return str(model_ref) if exists else None
 
-    agent_ref = None
-    if org.pk != platform_org.pk:
-        agent_ref = _owned_default(org, org_defaults.default_agent_model_ref)
+    agent_ref = _owned_default(org, org_defaults.default_agent_model_ref)
     if agent_ref is None:
         agent_ref = _owned_default(
-            platform_org,
+            None,
             platform_defaults.default_agent_model_ref,
         )
-    multimodal_ref = None
-    if org.pk != platform_org.pk:
-        multimodal_ref = _owned_default(
-            org,
-            org_defaults.default_multimodal_model_ref,
-        )
+    multimodal_ref = _owned_default(
+        org,
+        org_defaults.default_multimodal_model_ref,
+    )
     if multimodal_ref is None:
         multimodal_ref = _owned_default(
-            platform_org,
+            None,
             platform_defaults.default_multimodal_model_ref,
         )
     return agent_ref, multimodal_ref
@@ -267,7 +246,7 @@ def default_multimodal_model_ref_for_org(
     return default_model_refs_for_org(org)[1]
 
 
-def get_gateway_link(org: Organization, gateway_id: int) -> LensGatewayLink:
+def get_gateway_link(org: Organization | None, gateway_id: int) -> LensGatewayLink:
     """Resolve an existing gateway link owned by ``org``.
 
     Platform gateway access is intentionally handled by the Copilot gateway
@@ -283,9 +262,9 @@ def get_gateway_link(org: Organization, gateway_id: int) -> LensGatewayLink:
     raise ValidationError({"gateway_id": "Data gateway link not found."})
 
 
-def require_gateway_node(org: Organization, gateway_id: int) -> Node:
+def require_gateway_node(org: Organization | None, gateway_id: int) -> Node:
     node = Node.objects.filter(
-        organization=org,
+        **node_owner_filter(org),
         id=gateway_id,
         role=NodeRole.GATEWAY,
         is_deleted=False,
@@ -390,12 +369,13 @@ def ensure_ks_workspace_on_gateway(
     if (
         workspace_binding.gateway_link_id != gateway_link.id
         or workspace_binding.execution_node_id != gateway.id
-        or workspace_binding.execution_organization_id != context.execution_organization.id
+        or workspace_binding.execution_organization_id != context.execution_organization_id
         or workspace_binding.workspace_root != root
     ):
         raise ValidationError({"workspace": "Workspace execution binding is inconsistent."})
     outcome = run_agent_task_sync(
-        org=context.execution_organization,
+        org=context.gateway.organization,
+            **({"platform": True} if context.is_platform else {}),
         node_id=gateway.id,
         kind="lens.ks.prepare",
         payload={
@@ -989,7 +969,7 @@ def _provision_source_lens_lensnode(
 @transaction.atomic
 def _resolve_gateway_link_identity(
     *,
-    org: Organization,
+    org: Organization | None,
     gateway: Node,
     created_by,
     normalized_scope: str | None,
@@ -1013,10 +993,12 @@ def _resolve_gateway_link_identity(
         else (
             existing.scope
             if existing is not None
-            else persistence_scope_for_private_gateway()
+            else (LensGatewayLink.GatewayScope.PLATFORM if org is None else persistence_scope_for_private_gateway())
         )
     )
     requested_is_platform = requested_scope == LensGatewayLink.GatewayScope.PLATFORM
+    if requested_is_platform != (org is None):
+        raise ValidationError({"gateway_id": "Data gateway ownership does not match its scope."})
     desired_scope = (
         existing.scope
         if existing is not None
@@ -1078,7 +1060,10 @@ def _resolve_gateway_link_identity(
                     # path under the unified Agent Root. Existing links retain
                     # their persisted legacy /workspace path through
                     # resolved_workspace_root().
-                    "workspace_root": f"/opt/hyperfilelens-agent/workspace/org-{org.id}/data",
+                    "workspace_root": (
+                        PLATFORM_WORKSPACE_ROOT if org is None
+                        else f"/opt/hyperfilelens-agent/workspace/org-{org.id}/data"
+                    ),
                     # ``owner_user`` and the legacy ``user`` scope stay
                     # populated until the blue/green compatibility window
                     # closes. New authorization uses only organization.
@@ -1116,7 +1101,7 @@ def _resolve_gateway_link_identity(
 
 def ensure_lensnode_for_gateway(
     *,
-    org: Organization,
+    org: Organization | None,
     gateway: Node,
     name: str | None = None,
     created_by=None,
@@ -1125,7 +1110,7 @@ def ensure_lensnode_for_gateway(
     """Idempotently associate a SourceLens LensNode with an HFL data gateway."""
     if gateway.role != NodeRole.GATEWAY:
         raise ValidationError({"gateway_id": "Node is not a data gateway."})
-    if gateway.organization_id != org.id:
+    if not Node.objects.filter(pk=gateway.pk, **node_owner_filter(org)).exists():
         raise ValidationError(
             {"gateway_id": "Data gateway belongs to another organization."}
         )
@@ -1207,7 +1192,7 @@ def ensure_lensnode_for_gateway(
 
 def enable_ai_on_gateway(
     *,
-    org: Organization,
+    org: Organization | None,
     gateway: Node,
     name: str | None = None,
     created_by=None,
@@ -1251,7 +1236,7 @@ def build_lens_enroll_config(link: LensGatewayLink) -> dict[str, Any]:
 
 def provision_gateway_lens_on_register(
     *,
-    org: Organization,
+    org: Organization | None,
     gateway: Node,
     created_by=None,
     scope: str | None = None,
@@ -1280,7 +1265,7 @@ def provision_gateway_lens_on_register(
 
 def record_gateway_install_status(
     *,
-    org: Organization,
+    org: Organization | None,
     gateway: Node,
     status: str,
     error_message: str = "",
@@ -1564,24 +1549,49 @@ def _normalize_gateway_browse_entries(
 
 def browse_gateway_directory(
     *,
-    org: Organization,
+    org: Organization | None,
     gateway_id: int,
     path: str = "",
     expected_scope: str | None = None,
+    include_platform: bool = False,
     limit: int = 200,
     wait_timeout_seconds: int = 15,
 ) -> dict[str, Any]:
+    """Browse an owned Gateway, with an explicit trusted shared-resource opt-in.
+
+    With ``include_platform``, ``org`` remains the real requesting tenant while
+    the selected link determines execution ownership. Tenant APIs must not
+    enable this option from client-supplied flags.
+    """
     from apps.node.services.interface import run_agent_task_sync
     from apps.lens_bridge.services.gateway_paths import (
         GatewayPathError,
         path_within_root,
     )
 
-    gateway = require_gateway_node(org, gateway_id)
+    execution_org = org
+    if include_platform:
+        from apps.lens_bridge.services.gateway_execution import (
+            require_organization_gateway_link,
+        )
+
+        link = require_organization_gateway_link(
+            tenant_organization=org,
+            gateway_id=gateway_id,
+            require_ready=False,
+            include_platform=True,
+        )
+        gateway = link.gateway
+        if gateway.is_deleted or gateway.role != NodeRole.GATEWAY:
+            raise ValidationError({"gateway_id": "Data gateway not found."})
+        execution_org = link.organization
+    else:
+        gateway = require_gateway_node(org, gateway_id)
     if gateway.availability != Node.Availability.ONLINE:
         raise ValidationError({"gateway": "Data gateway must be online to browse directories."})
 
-    link = get_gateway_link(org, gateway.id)
+    if not include_platform:
+        link = get_gateway_link(org, gateway.id)
     if expected_scope is not None:
         from apps.lens_bridge.services.gateway_ownership import is_private_gateway
 
@@ -1621,7 +1631,9 @@ def browse_gateway_directory(
         ) from exc
 
     outcome = run_agent_task_sync(
-        organization_id=org.id,
+        organization_id=owner_id(execution_org),
+        **({"platform": True} if execution_org is None else {}),
+        **({"requesting_organization_id": org.pk} if include_platform else {}),
         node_id=gateway.id,
         kind="lens.gateway.browse",
         payload={

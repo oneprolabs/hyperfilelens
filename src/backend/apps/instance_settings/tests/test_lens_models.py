@@ -10,13 +10,12 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Organization
 from apps.instance_settings.tests.helpers import ensure_ops_staff_role
-from apps.lens_bridge.models import LensOrgModelLink
-from apps.lens_bridge.services import platform_lens
+from apps.lens_bridge.models import LensOrgLink, LensOrgModelLink, PlatformAISettings
 
 
 @override_settings(HFL_PLATFORM_OPS_ENABLED=True)
 class HostPlatformLensModelTests(TestCase):
-    """Community Admin AI Models must hit Host platform-org APIs without EE."""
+    """Community Admin AI Models use explicit platform ownership without EE."""
 
     model_uuid = uuid.UUID("68c7f764-561c-475a-9cc4-50f6f9457b5c")
     foreign_uuid = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -33,9 +32,8 @@ class HostPlatformLensModelTests(TestCase):
         ensure_ops_staff_role(self.staff)
         self.client.force_authenticate(user=self.staff)
         self.client.defaults["HTTP_X_HFL_SITE_ROLE"] = "ops"
-        self.platform_org = platform_lens.get_or_create_platform_org()
         self.link = LensOrgModelLink.objects.create(
-            organization=self.platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=self.model_uuid,
             display_name="Example Model",
         )
@@ -308,7 +306,8 @@ class HostPlatformLensModelTests(TestCase):
             ],
         )
         created_link = LensOrgModelLink.objects.get(sl_config_uuid=created_uuid)
-        self.assertEqual(created_link.organization, self.platform_org)
+        self.assertIsNone(created_link.organization_id)
+        self.assertEqual(created_link.scope, LensOrgModelLink.Scope.PLATFORM)
         self.assertEqual(created_link.display_name, "Example model")
 
     @patch("apps.instance_settings.api.views.lens_models.sl_client.request_json")
@@ -405,7 +404,7 @@ class HostPlatformLensModelTests(TestCase):
     ):
         manual_uuid = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
         LensOrgModelLink.objects.create(
-            organization=self.platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=manual_uuid,
             display_name="Inactive model",
         )
@@ -463,7 +462,7 @@ class HostPlatformLensModelTests(TestCase):
     ):
         manual_uuid = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
         LensOrgModelLink.objects.create(
-            organization=self.platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=manual_uuid,
             display_name="Inactive model",
         )
@@ -520,7 +519,7 @@ class HostPlatformLensModelTests(TestCase):
     ):
         manual_uuid = uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000")
         LensOrgModelLink.objects.create(
-            organization=self.platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=manual_uuid,
             display_name="Unavailable model",
         )
@@ -561,7 +560,7 @@ class HostPlatformLensModelTests(TestCase):
     ):
         manual_uuid = uuid.UUID("dddddddd-eeee-ffff-0000-111111111111")
         LensOrgModelLink.objects.create(
-            organization=self.platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=manual_uuid,
             display_name="Inactive model",
         )
@@ -608,7 +607,7 @@ class HostPlatformLensModelTests(TestCase):
     ):
         manual_uuid = uuid.UUID("eeeeeeee-ffff-0000-1111-222222222222")
         LensOrgModelLink.objects.create(
-            organization=self.platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=manual_uuid,
             display_name="Active model",
         )
@@ -656,7 +655,7 @@ class HostPlatformLensModelTests(TestCase):
     ):
         manual_uuid = uuid.UUID("ffffffff-0000-1111-2222-333333333333")
         LensOrgModelLink.objects.create(
-            organization=self.platform_org,
+            scope=LensOrgModelLink.Scope.PLATFORM,
             sl_config_uuid=manual_uuid,
             display_name="Inactive model",
         )
@@ -690,3 +689,39 @@ class HostPlatformLensModelTests(TestCase):
                 ),
             ],
         )
+
+    def test_platform_settings_read_does_not_create_an_organization(self):
+        before = Organization.objects.count()
+
+        response = self.client.get("/api/v1/platform-ops/lens/settings")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(Organization.objects.count(), before)
+        self.assertEqual(LensOrgLink.objects.count(), 0)
+        self.assertEqual(PlatformAISettings.objects.count(), 1)
+
+    def test_invalid_second_default_rolls_back_first_default_update(self):
+        previous = PlatformAISettings.objects.create(
+            default_agent_model_ref=self.model_uuid,
+        )
+        candidate = LensOrgModelLink.objects.create(
+            scope=LensOrgModelLink.Scope.PLATFORM, sl_config_uuid=uuid.uuid4(),
+        )
+        tenant = Organization.objects.create(key="private-models", name="Private Models")
+        private = LensOrgModelLink.objects.create(
+            organization=tenant, sl_config_uuid=uuid.uuid4(),
+        )
+
+        response = self.client.patch(
+            "/api/v1/platform-ops/lens/settings",
+            {
+                "default_agent_model_ref": str(candidate.sl_config_uuid),
+                "default_multimodal_model_ref": str(private.sl_config_uuid),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        previous.refresh_from_db()
+        self.assertEqual(previous.default_agent_model_ref, self.model_uuid)
+        self.assertIsNone(previous.default_multimodal_model_ref)

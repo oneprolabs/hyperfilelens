@@ -6,13 +6,13 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.iam.models import Organization
 from apps.node.api import permissions as node_permissions
 from apps.node.models import Node
 from apps.node.services.internal.enrollment_auth import (
     open_installation_session,
     release_installation_session,
 )
+from apps.node.services.internal.transport_identity import resolve_transport_scope
 from common.http.throttling import EnrollmentRateThrottle
 
 
@@ -59,8 +59,9 @@ class InstallationSessionView(APIView):
                 {"error": "invalid role"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        org = Organization.objects.filter(key=org_key, is_active=True).first()
-        if org is None:
+        transport_scope = resolve_transport_scope(org_key, secret=enrollment_secret)
+        org = transport_scope.organization if transport_scope else None
+        if transport_scope is None:
             return Response(
                 {"error": "organization not found"},
                 status=status.HTTP_404_NOT_FOUND,
@@ -71,6 +72,7 @@ class InstallationSessionView(APIView):
                 enrollment_secret=enrollment_secret,
                 role=role,
                 installation_id=installation_id,
+                namespace=org_key,
             )
         except PermissionError as exc:
             return Response(
@@ -121,8 +123,9 @@ class InstallationSessionView(APIView):
                 {"error": "invalid role"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        org = Organization.objects.filter(key=org_key, is_active=True).first()
-        if org is None:
+        transport_scope = resolve_transport_scope(org_key, secret=session_secret)
+        org = transport_scope.organization if transport_scope else None
+        if transport_scope is None:
             return Response(
                 {"error": "organization not found"},
                 status=status.HTTP_404_NOT_FOUND,
@@ -132,6 +135,7 @@ class InstallationSessionView(APIView):
             secret=session_secret,
             role=role,
             installation_id=installation_id,
+            namespace=org_key,
         )
         if not released:
             return Response(

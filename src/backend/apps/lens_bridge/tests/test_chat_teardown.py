@@ -52,10 +52,7 @@ from apps.storage.repositories.models import Repository
 class CopilotChatTeardownTests(TestCase):
     def setUp(self):
         self.tenant = Organization.objects.create(key="teardown-tenant", name="Tenant")
-        self.platform_org = Organization.objects.create(
-            key="__platform_lens__",
-            name="Platform Lens",
-        )
+        self.platform_org = None
         self.repository = Repository.objects.create(
             organization_id=self.tenant.id,
             name="chat-teardown-repository",
@@ -68,7 +65,7 @@ class CopilotChatTeardownTests(TestCase):
             email="teardown@example.test",
         )
         self.gateway = Node.objects.create(
-            organization=self.platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="platform-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,
@@ -105,7 +102,7 @@ class CopilotChatTeardownTests(TestCase):
             organization=self.tenant,
             knowledge_source=self.knowledge_source,
             gateway_link=self.gateway_link,
-            execution_organization_id=self.platform_org.id,
+            execution_organization_id=None,
             execution_node_id=self.gateway.id,
             workspace_kind=LensWorkspaceBinding.WorkspaceKind.MANAGED_RESTORE,
             workspace_root="/workspace/platform/data",
@@ -122,6 +119,19 @@ class CopilotChatTeardownTests(TestCase):
             sl_assistant_uuid=self.knowledge_source.sl_assistant_uuid,
             lifecycle_status=LensSessionLink.LifecycleStatus.READY,
         )
+
+    def _use_private_gateway(self):
+        """Build a valid private fixture for the private-only force-cleanup API."""
+        self.gateway.organization = self.tenant
+        self.gateway.scope = Node.Scope.ORGANIZATION
+        self.gateway.transport_namespace = ""
+        self.gateway.save(update_fields=["organization", "scope", "transport_namespace", "updated_at"])
+        self.gateway_link.organization = self.tenant
+        self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
+        self.gateway_link.owner_user = self.user
+        self.gateway_link.save(update_fields=["organization", "scope", "owner_user", "updated_at"])
+        self.workspace_binding.execution_organization_id = self.tenant.pk
+        self.workspace_binding.save(update_fields=["execution_organization_id", "updated_at"])
 
     def test_ready_chat_releases_snapshot_usage_lease(self):
         snapshot = BackupSourceSnapshot.objects.create(
@@ -348,7 +358,7 @@ class CopilotChatTeardownTests(TestCase):
         previous = RestoreRecord.objects.create(
             organization_id=self.tenant.id,
             requesting_organization_id=self.tenant.id,
-            target_execution_organization_id=self.platform_org.id,
+            target_execution_organization_id=None,
             target_execution_node_id=self.gateway.id,
             purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
             idempotency_key="previous-chat-layout",
@@ -2215,6 +2225,7 @@ class CopilotChatTeardownTests(TestCase):
         wake_gateway_queue,
         _agent_ws_routable,
     ):
+        self._use_private_gateway()
         self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
         self.gateway_link.save(update_fields=["scope", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -2318,6 +2329,7 @@ class CopilotChatTeardownTests(TestCase):
         wake_gateway_queue.assert_called_once_with(self.gateway_link.id)
 
     def _prepare_shared_force_cleanup(self):
+        self._use_private_gateway()
         self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
         self.gateway_link.save(update_fields=["scope", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -2398,6 +2410,7 @@ class CopilotChatTeardownTests(TestCase):
         return_value=False,
     )
     def test_force_delete_offline_private_gateway_respects_live_claims(self, _agent_ws_routable):
+        self._use_private_gateway()
         self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
         self.gateway_link.save(update_fields=["scope", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -2474,6 +2487,7 @@ class CopilotChatTeardownTests(TestCase):
     def test_online_private_force_cleanup_requires_executor_stop_evidence(
         self, _agent_ws_routable
     ):
+        self._use_private_gateway()
         self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
         self.gateway_link.save(update_fields=["scope", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -2516,6 +2530,7 @@ class CopilotChatTeardownTests(TestCase):
     def test_online_force_cleanup_refuses_unconfirmed_remote_task(
         self, _agent_ws_routable
     ):
+        self._use_private_gateway()
         self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
         self.gateway_link.save(update_fields=["scope", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -2541,6 +2556,7 @@ class CopilotChatTeardownTests(TestCase):
 
     @mock.patch("apps.node.services.internal.node_registry.agent_ws_routable", return_value=False)
     def test_late_resource_does_not_reopen_force_deleted_chat(self, _agent_ws_routable):
+        self._use_private_gateway()
         self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
         self.gateway_link.save(update_fields=["scope", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -2585,6 +2601,7 @@ class CopilotChatTeardownTests(TestCase):
     def test_legacy_pending_force_cleanup_can_be_finalized(self, _agent_ws_routable):
         """Old deferred-cleanup rows remain recoverable by Force Delete."""
 
+        self._use_private_gateway()
         self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
         self.gateway_link.save(update_fields=["scope", "updated_at"])
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
@@ -2650,18 +2667,7 @@ class CopilotChatTeardownTests(TestCase):
             task_id=1,
             status=BackupSourceSnapshot.Status.AVAILABLE,
         )
-        self.gateway.organization = self.tenant
-        self.gateway.save(update_fields=["organization", "updated_at"])
-        self.gateway_link.organization = self.tenant
-        self.gateway_link.scope = LensGatewayLink.GatewayScope.ORGANIZATION
-        self.gateway_link.owner_user = self.user
-        self.gateway_link.save(
-            update_fields=["organization", "scope", "owner_user", "updated_at"]
-        )
-        self.workspace_binding.execution_organization_id = self.tenant.id
-        self.workspace_binding.save(
-            update_fields=["execution_organization_id", "updated_at"]
-        )
+        self._use_private_gateway()
         self.session.lifecycle_status = LensSessionLink.LifecycleStatus.DELETING
         self.session.status = LensSessionLink.Status.ARCHIVED
         self.session.cleanup_intent = LensSessionLink.CleanupIntent.DELETE_SESSION

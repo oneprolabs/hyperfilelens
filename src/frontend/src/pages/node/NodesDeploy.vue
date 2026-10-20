@@ -59,7 +59,7 @@ const deployPageDesc = computed(() => {
   return t('nodesDeploy.enrollHint')
 })
 
-const orgKey = computed(() => (gatewayScope.value === 'platform' ? '__platform_lens__' : getEffectiveOrgKey()))
+const orgKey = computed(() => (gatewayScope.value === 'platform' ? '' : getEffectiveOrgKey()))
 
 async function copyCommand(text: string) {
   if (!text) {

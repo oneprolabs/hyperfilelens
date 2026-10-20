@@ -14,6 +14,7 @@ from rest_framework.exceptions import AuthenticationFailed
 
 from apps.iam.models import PersonalApiKey
 from apps.iam.permissions_org import resolve_org_key
+from common.platform_staff import is_installation_admin
 
 User = get_user_model()
 
@@ -52,14 +53,14 @@ class PersonalApiKeyAuthentication(authentication.BaseAuthentication):
                 user=key.user,
                 organization=org,
                 is_active=True,
-            ).exists():
+            ).exists() and not is_installation_admin(key.user):
                 raise AuthenticationFailed(
                     "API key user is not a member of the requested organization"
                 )
 
-        from apps.iam.services.account_setup import assert_account_ready
+        from apps.iam.services.request_access import assert_authenticated_request_allowed
 
-        assert_account_ready(key.user)
+        assert_authenticated_request_allowed(request, key.user)
         return key.user, key
 
     @staticmethod

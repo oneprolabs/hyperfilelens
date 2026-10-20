@@ -149,6 +149,8 @@ describe('Spanish language pack', () => {
     // These are also valid Spanish terms or product module names, not
     // untranslated governance descriptions.
     const sharedGovernanceTerms = [
+      'platformOps.orgGovernance.general',
+      'platformOps.orgGovernance.roles',
       'settings.groupsPage.general',
       'settings.membersPage.general',
       'settings.resourcesPage.general',

@@ -50,11 +50,11 @@ class JWTAuthenticationFromCookies(DefaultJWTAuthentication):
     def authenticate(
         self, request: Request,
     ) -> tuple[AbstractBaseUser, Token] | None:
-        from apps.iam.services.account_setup import assert_setup_request_allowed
+        from apps.iam.services.request_access import assert_authenticated_request_allowed
 
         result = self._authenticate(request)
         if result is not None:
-            assert_setup_request_allowed(request, result[0])
+            assert_authenticated_request_allowed(request, result[0])
         return result
 
     def _authenticate(

@@ -43,7 +43,7 @@ class Command(BaseCommand):
             ).values_list("id", flat=True)
         )
         payload = {
-            "org_key": token.organization.key,
+            "org_key": token.transport_key,
             "token": token.token,
             "api_base": api_base,
             "wss_url": agent_control_plane_ws_url(api_base),

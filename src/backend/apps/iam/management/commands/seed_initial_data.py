@@ -31,6 +31,15 @@ class Command(BaseCommand):
             "--admin-password",
             default=os.environ.get("SEED_ADMIN_PASSWORD", "Admin@123"),
         )
+        parser.add_argument(
+            "--adopt-existing-user-id",
+            type=int,
+            help=(
+                "Offline recovery only: explicitly establish an existing active staff "
+                "account as the installation identity when no trusted identity exists. "
+                "Does not change its email or password."
+            ),
+        )
 
     @transaction.atomic
     def handle(self, *args, **opts):
@@ -42,61 +51,53 @@ class Command(BaseCommand):
         from apps.iam.services.member_onboarding import lock_identity_provisioning
 
         lock_identity_provisioning()
-        existing = User.objects.filter(username=admin_email).first()
-        if existing is not None and not existing.is_staff:
-            raise CommandError("The installation administrator conflicts with an existing ordinary account.")
-        duplicates = User.objects.filter(email__iexact=admin_email)
-        if existing is not None:
-            duplicates = duplicates.exclude(pk=existing.pk)
-        if duplicates.exists():
-            raise CommandError("The installation administrator email is already used by another account.")
-        user, created = User.objects.get_or_create(
-            username=admin_email,
-            defaults={
-                "email": admin_email,
-                "is_active": True,
-                "is_staff": False,
-                "is_superuser": False,
-            },
-        )
-        user.email = admin_email
-        user.is_active = True
-        apply_platform_staff(user, True)
-        if created:
+        identities = list(Profile.objects.select_for_update().filter(
+            is_installation_admin=True,
+        ).select_related("user"))
+        if len(identities) > 1:
+            raise CommandError("Multiple installation identities exist; resolve them offline.")
+        adopt_id = opts.get("adopt_existing_user_id")
+        if identities:
+            user = identities[0].user
+            if adopt_id is not None and adopt_id != user.pk:
+                raise CommandError("An installation identity already exists; it cannot be replaced by seeding.")
+        elif adopt_id is not None:
+            user = User.objects.select_for_update().filter(pk=adopt_id).first()
+            if user is None:
+                raise CommandError("The explicitly selected recovery account does not exist.")
+        else:
+            if User.objects.filter(username=admin_email).exists() or User.objects.filter(
+                email__iexact=admin_email,
+            ).exists():
+                raise CommandError(
+                    "The bootstrap account already exists without a trusted identity. "
+                    "For offline recovery, explicitly select an active staff account "
+                    "with --adopt-existing-user-id."
+                )
+            user = User(
+                username=admin_email, email=admin_email, is_active=True,
+            )
+            apply_platform_staff(user, True)
             user.set_password(admin_password)
-        user.save()
-        # EE AuthZ: bare is_staff is not enough for Admin Console / smoke verify.
+            user.save()
+        if not user.is_active or not user.is_staff:
+            raise CommandError(
+                "The installation identity must be an active staff account; "
+                "repair its account state offline, not through initialization."
+            )
+        profile, _ = Profile.objects.get_or_create(user=user, defaults={
+            "registration_completed": True, "registered_at": timezone.now(),
+        })
+        if not profile.is_installation_admin:
+            profile.is_installation_admin = True
+            profile.save(update_fields=["is_installation_admin"])
+        # Establish intrinsic installation authority before resolving EE Roles.
+        # A fresh installation must not create an ordinary preset Role.
         ensure_platform_role(user)
 
-        Profile.objects.update_or_create(
-            user=user,
-            defaults={
-                "registration_completed": True,
-                "is_installation_admin": True,
-                "registered_at": timezone.now(),
-                "language": "en",
-                "timezone": "UTC",
-            },
-        )
-
         if Organization.objects.exists():
-            membership = (
-                Membership.objects.filter(user=user, is_active=True)
-                .select_related("organization")
-                .order_by("id")
-                .first()
-            )
-            if membership is None:
-                org = Organization.objects.select_for_update(no_key=True).order_by("id").first()
-                from apps.subscription.services.interface import enforce_license_quota
-
-                enforce_license_quota(org, "max_users", additional=1)
-                Membership.objects.create(
-                    user=user,
-                    organization=org,
-                    role=Membership.Role.OWNER,
-                    is_active=True,
-                )
+            # Existing organizations are not adopted: global authority does not
+            # make this account their member or Owner.
             seed_global_config()
             org = (
                 Membership.objects.filter(user=user, is_active=True)

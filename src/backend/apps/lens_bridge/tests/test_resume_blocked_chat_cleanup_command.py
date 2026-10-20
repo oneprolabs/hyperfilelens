@@ -77,16 +77,13 @@ class ResumeBlockedChatCleanupDatabaseTests(TestCase):
             key="cleanup-recovery-tenant",
             name="Cleanup recovery tenant",
         )
-        self.platform_org = Organization.objects.create(
-            key="cleanup-recovery-platform",
-            name="Cleanup recovery platform",
-        )
+        self.platform_org = None
         self.user = get_user_model().objects.create_user(
             username="cleanup-recovery@example.test",
             email="cleanup-recovery@example.test",
         )
         self.gateway = Node.objects.create(
-            organization=self.platform_org,
+            organization=None, scope=Node.Scope.PLATFORM,
             name="cleanup-recovery-gateway",
             role=Node.Role.GATEWAY,
             status=Node.Status.ACTIVE,

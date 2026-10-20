@@ -44,7 +44,7 @@ vi.mock('./useDeployProfile', () => ({
   shouldForceDeployProfileRefresh: vi.fn().mockReturnValue(false),
 }))
 
-import { clearAuth, setupAuthGuard } from './useAuth'
+import { clearAuth, getEffectiveOrgKey, setStoredOrgKey, setupAuthGuard } from './useAuth'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -68,6 +68,55 @@ const tenantProfile = {
 }
 
 describe('login route authentication guard', () => {
+  it('accepts a verified installation context without an invented tenant role', async () => {
+    const fetch = vi.fn().mockResolvedValue(jsonResponse({
+      user: {
+        id: 1, email: 'root@test.local', is_staff: true,
+        access_profile: {
+          org_key: 'target-org', role: '', authority_source: 'installation_admin',
+          permissions: ['configuration.roles.manage'], visible_features: ['settings'], landing_path: '/',
+        },
+      },
+    }))
+    vi.stubGlobal('fetch', fetch)
+    const next = vi.fn()
+    await mocks.guard?.({
+      path: '/node/roles', query: { org: 'target-org' }, meta: {},
+    }, { path: '/' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(getEffectiveOrgKey()).toBe('target-org')
+    // Selecting another organization in another tab must not retarget this tab.
+    localStorage.setItem('hfl_org_key', 'another-tab-org')
+    expect(getEffectiveOrgKey()).toBe('target-org')
+  })
+
+  it('does not enter an organization that the server did not verify', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: {
+        id: 8, email: 'member@test.local',
+        access_profile: {
+          org_key: 'actual-org', role: 'member', permissions: [],
+          visible_features: [], landing_path: '/',
+        },
+      },
+    })))
+    const next = vi.fn()
+    await mocks.guard?.({
+      path: '/', query: { org: 'unavailable-org' }, meta: {},
+    }, { path: '/' }, next)
+    expect(next).toHaveBeenCalledWith('/')
+    expect(getEffectiveOrgKey()).toBe('actual-org')
+  })
+
+  it('clears both the tab context and stored default on logout', () => {
+    setStoredOrgKey('tenant-context')
+    expect(sessionStorage.getItem('hfl_org_key')).toBe('tenant-context')
+    clearAuth()
+    expect(sessionStorage.getItem('hfl_org_key')).toBeNull()
+    expect(localStorage.getItem('hfl_org_key')).toBeNull()
+  })
+
   beforeEach(() => {
     clearAuth()
     mocks.beforeEach.mockClear()

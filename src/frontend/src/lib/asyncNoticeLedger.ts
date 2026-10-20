@@ -1,7 +1,8 @@
 import { safeErrorDetailText, type ErrorDetailsPayload } from './errors/details'
+import { readStoredOrganizationKey } from './organizationStorage'
 
 export function asyncNoticeScope() {
-  try { return localStorage.getItem('hfl_org_key') || 'session' } catch { return 'session' }
+  return readStoredOrganizationKey() || 'session'
 }
 
 /** A bounded, redacted, tab-local ledger survives toast dismissal and reload. */

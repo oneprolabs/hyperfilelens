@@ -299,6 +299,50 @@ refresh_website_web_mount
 [[ "${#compose_calls[@]}" -eq 1 ]]
 [[ "${compose_calls[0]}" == "up -d --no-deps --no-build --pull never --force-recreate web" ]]
 
+(
+	calls="${tmp}/exclusive-dev-calls"
+	log() { :; }
+	warn() { :; }
+	hfl_log_step() { :; }
+	hfl_normalize_native_stream() { cat; }
+	render_migration_stream() { cat; }
+	compose_logged() {
+		printf '%s\n' "$*" >>"${calls}"
+		[[ "$*" != "stop api worker scheduler" ]] || return "${stop_status}"
+	}
+	compose() {
+		printf '%s\n' "$*" >>"${calls}"
+		case "$*" in
+		"ps --status running -q api worker scheduler")
+			printf '%s' "${backend_running}"
+			return "${ps_status}"
+			;;
+		"--profile tools run --rm --no-deps -e HFL_EXCLUSIVE_PLATFORM_MIGRATION=1 migration")
+			printf 'migration fixture\n'
+			;;
+		*) return 91 ;;
+		esac
+	}
+	wait_for_data_services_healthy() { return "${data_status}"; }
+	for scenario in stop-failed still-running inspect-failed data-unhealthy ready; do
+		stop_status=0 ps_status=0 data_status=0 backend_running=""
+		case "${scenario}" in
+		stop-failed) stop_status=1 ;;
+		still-running) backend_running=old-api ;;
+		inspect-failed) ps_status=1 ;;
+		data-unhealthy) data_status=1 ;;
+		esac
+		: >"${calls}"
+		if run_dev_migration_gate >/dev/null; then
+			[[ "${scenario}" == ready ]]
+			grep -F 'HFL_EXCLUSIVE_PLATFORM_MIGRATION=1 migration' "${calls}" >/dev/null
+		else
+			[[ "${scenario}" != ready ]]
+			! grep -F 'HFL_EXCLUSIVE_PLATFORM_MIGRATION=1 migration' "${calls}" >/dev/null
+		fi
+	done
+)
+
 cmd_up_body="$(sed -n '/^cmd_up()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 cmd_restart_body="$(sed -n '/^cmd_restart()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
 run_dev_migration_gate_body="$(sed -n '/^run_dev_migration_gate()/,/^}/p' "${ROOT_REPO}/dev/stack.sh")"
@@ -333,7 +377,7 @@ helper_line="$(grep -nF 'local helper=' <<<"${gateway_refresh_body}" | cut -d: -
 backend_stop_line="$(grep -nE 'compose(_logged)? stop api worker scheduler' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 data_services_line="$(grep -nE 'compose(_logged)? up -d --no-build --pull never postgres redis' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 data_services_wait_line="$(grep -nF 'wait_for_data_services_healthy' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
-migration_line="$(grep -nF 'compose --profile tools run --rm --no-deps migration' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
+migration_line="$(grep -nF 'compose --profile tools run --rm --no-deps -e HFL_EXCLUSIVE_PLATFORM_MIGRATION=1 migration' <<<"${run_dev_migration_gate_body}" | cut -d: -f1)"
 [[ -n "${backend_stop_line}" ]]
 [[ -n "${data_services_line}" ]]
 [[ -n "${data_services_wait_line}" ]]

@@ -23,6 +23,21 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+def organization_key_available(key: str) -> bool:
+    """Keep tenant identifiers distinct from installed infrastructure namespaces."""
+    from apps.node.models import Node, NodeToken
+    from apps.node.services.internal.transport_identity import PLATFORM_TRANSPORT_NAMESPACE
+
+    return not (
+        key == PLATFORM_TRANSPORT_NAMESPACE
+        or Organization.objects.filter(key=key).exists()
+        or NodeToken.all_objects.filter(
+            gateway_scope="platform", transport_namespace=key,
+        ).exists()
+        or Node.all_objects.filter(scope="platform", transport_namespace=key).exists()
+    )
+
+
 def unique_org_key_for_email(email: str) -> str:
     """Derive a unique organization key from the user's email."""
     local = email.split("@", 1)[0]
@@ -32,7 +47,7 @@ def unique_org_key_for_email(email: str) -> str:
     key = f"{base}-{suffix}"[:64]
     candidate = key
     counter = 1
-    while Organization.objects.filter(key=candidate).exists():
+    while not organization_key_available(candidate):
         candidate = f"{key[:56]}-{counter}"[:64]
         counter += 1
     return candidate
@@ -44,7 +59,7 @@ def unique_org_key_for_name(name: str) -> str:
     base = base[:48]
     candidate = base
     counter = 1
-    while Organization.objects.filter(key=candidate).exists():
+    while not organization_key_available(candidate):
         suffix = f"-{counter}"
         candidate = f"{base[: 64 - len(suffix)]}{suffix}"
         counter += 1

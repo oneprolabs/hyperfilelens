@@ -275,9 +275,9 @@ class AgentDownloadAuthorizationTests(SimpleTestCase):
             mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
             mock.patch.object(release, "_load_release_token", return_value=payload),
             mock.patch.object(
-                release.Organization.objects,
-                "filter",
-                return_value=SimpleNamespace(first=lambda: organization),
+                release,
+                "resolve_transport_scope",
+                return_value=SimpleNamespace(organization=organization),
             ),
             mock.patch.object(release, "_release_authorization_is_valid", return_value=True),
             mock.patch.object(
@@ -310,9 +310,9 @@ class AgentDownloadAuthorizationTests(SimpleTestCase):
             mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
             mock.patch.object(release, "_load_release_token", return_value=payload),
             mock.patch.object(
-                release.Organization.objects,
-                "filter",
-                return_value=SimpleNamespace(first=lambda: organization),
+                release,
+                "resolve_transport_scope",
+                return_value=SimpleNamespace(organization=organization),
             ),
             mock.patch.object(release, "_release_authorization_is_valid", return_value=True),
             mock.patch.object(release, "try_acquire_slot", return_value=(False, 20)),
@@ -357,9 +357,9 @@ class AgentDownloadAuthorizationTests(SimpleTestCase):
             mock.patch.object(release, "_release_download_token", return_value="signed-secret"),
             mock.patch.object(release, "_load_release_token", return_value=payload),
             mock.patch.object(
-                release.Organization.objects,
-                "filter",
-                return_value=SimpleNamespace(first=lambda: organization),
+                release,
+                "resolve_transport_scope",
+                return_value=SimpleNamespace(organization=organization),
             ),
             mock.patch.object(
                 release,
@@ -385,10 +385,17 @@ def test_session_download_auth_fails_when_conditional_renewal_loses_race():
     renewal = mock.Mock()
     renewal.update.return_value = 0
 
-    with mock.patch.object(
-        release.NodeInstallationSession.objects,
-        "filter",
-        side_effect=[lookup, renewal],
+    with (
+        mock.patch.object(
+            release.NodeInstallationSession.objects,
+            "select_related",
+            return_value=SimpleNamespace(filter=lambda **kwargs: lookup),
+        ),
+        mock.patch.object(
+            release.NodeInstallationSession.objects,
+            "filter",
+            return_value=renewal,
+        ),
     ):
         valid = release._release_authorization_is_valid(
             org=SimpleNamespace(pk=1),

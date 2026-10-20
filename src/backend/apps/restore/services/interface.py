@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from common.errors import AppError
@@ -485,7 +486,7 @@ def _create_manual_restore_record(
     else:
         if purpose != RestoreRecord.Purpose.LENS_WORKSPACE:
             raise ValueError("unsupported restore purpose")
-        if target_execution_organization_id is None or target_execution_node_id is None:
+        if target_execution_node_id is None:
             raise ValueError(
                 "lens workspace restore requires a validated execution binding"
             )
@@ -643,7 +644,7 @@ def create_lens_workspace_restore_record(
     ).first()
     if existing is not None:
         expected = (
-            int(execution_context.execution_organization.id),
+            execution_context.execution_organization_id,
             int(execution_context.gateway.id),
             workspace_binding.id,
             _int(data, "source_snapshot_id"),
@@ -672,7 +673,7 @@ def create_lens_workspace_restore_record(
                 data=data,
                 user_id=None,
                 purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
-                target_execution_organization_id=execution_context.execution_organization.id,
+                target_execution_organization_id=execution_context.execution_organization_id,
                 target_execution_node_id=execution_context.gateway.id,
                 workspace_binding_id=workspace_binding.id,
                 expected_target_path=expected_target_path,
@@ -686,7 +687,7 @@ def create_lens_workspace_restore_record(
         if existing is None:
             raise
         expected = (
-            execution_context.execution_organization.id,
+            execution_context.execution_organization_id,
             execution_context.gateway.id,
             workspace_binding.id,
             _int(data, "source_snapshot_id"),
@@ -827,7 +828,7 @@ def _create_restore_record(
     idempotency_key: str = "",
     workspace_binding_id: int | None = None,
 ) -> RestoreRecord:
-    if target_execution_node_id is None or target_execution_organization_id is None:
+    if target_execution_node_id is None:
         _validate_endpoint_exists(
             organization_id=organization_id,
             endpoint_type=target_type,
@@ -1836,7 +1837,7 @@ def _dispatch_restore_items(
         )
         if (
             record.target_execution_organization_id
-            != execution_context.execution_organization.id
+            != execution_context.execution_organization_id
             or record.target_execution_node_id != execution_context.gateway.id
             or record.target_path != workspace_binding.resolved_path()
             or any(
@@ -2111,6 +2112,7 @@ def _dispatch_restore_items(
             with dispatch_scope:
                 handle = run_agent_task_async(
                     organization_id=record.target_execution_organization_id,
+                    **({"platform": True} if record.target_execution_organization_id is None else {}),
                     node_id=node.id,
                     kind="restore.run",
                     payload=payload,
@@ -2657,11 +2659,15 @@ def cancel_restore(
             item.terminal_projection_at = timezone.now()
             item.save(update_fields=["terminal_projection_at", "updated_at"])
 
-    execution_org_ids = {organization_id}
+    execution_owners = Q(organization_id=organization_id)
     if record is not None:
-        execution_org_ids.add(record.target_execution_organization_id)
+        execution_owners |= Q(
+            organization_id=record.target_execution_organization_id,
+            node_id=record.target_execution_node_id,
+            requesting_organization_id=record.requesting_organization_id,
+        )
     for node_task in NodeTask.objects.filter(
-        organization_id__in=execution_org_ids,
+        execution_owners,
         correlation_id=str(task.task_uuid),
         status__in=_ACTIVE_NODE_STATUSES,
     ):
@@ -2713,11 +2719,15 @@ def restore_task_is_stopping(*, task: Task) -> bool:
         organization_id=task.organization_id,
         task_uuid=task.task_uuid,
     ).first()
-    organization_ids = {task.organization_id}
+    execution_owners = Q(organization_id=task.organization_id)
     if record is not None:
-        organization_ids.add(record.target_execution_organization_id)
+        execution_owners |= Q(
+            organization_id=record.target_execution_organization_id,
+            node_id=record.target_execution_node_id,
+            requesting_organization_id=record.requesting_organization_id,
+        )
     return NodeTask.objects.filter(
-        organization_id__in=organization_ids,
+        execution_owners,
         correlation_id=str(task.task_uuid),
         status__in=_ACTIVE_NODE_STATUSES,
     ).exists()

@@ -4,11 +4,13 @@ Org-scoped DRF permissions (IAM domain).
 Affiliation lives on OSS ``Membership``. Role authority:
   - Community (no AuthzProvider): active member ⇒ full power (product: single-user org).
   - Enterprise: ``AuthzProvider`` (EE ``MemberRole`` table).
+Trusted installation authority is independent of affiliation and ordinary Roles.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from rest_framework import permissions
 from rest_framework.request import Request
@@ -16,6 +18,20 @@ from rest_framework.request import Request
 from apps.iam.constants import SUPPORT_SESSION_KEY
 from apps.iam.models import Membership, Organization
 from common.extension_spi import get_authz_provider
+from common.platform_staff import is_installation_admin
+
+
+# Compatibility value for legacy request permission gates, never a stored Role.
+INSTALLATION_AUTHORITY = "__installation_admin__"
+
+
+def installation_org_context(user: Any, org: Organization) -> SimpleNamespace:
+    """Describe access, not affiliation; never persist this as a Membership."""
+    return SimpleNamespace(
+        user=user, user_id=user.pk, organization=org, organization_id=org.pk,
+        authority_source="installation_admin", is_active=True,
+        preferred_feature="", id=None, pk=None,
+    )
 
 
 def resolve_org_key(request: Request) -> str:
@@ -26,9 +42,10 @@ def resolve_org_key(request: Request) -> str:
     ).strip()
 
 
-def get_membership(request: Request) -> Membership | None:
+def get_membership(request: Request) -> Membership | SimpleNamespace | None:
+    """Resolve affiliation or an explicitly identified, non-persistent context."""
     user = request.user
-    if not user or not user.is_authenticated:
+    if not user or not user.is_authenticated or not user.is_active:
         return None
     org_key = resolve_org_key(request)
     if not org_key:
@@ -36,6 +53,16 @@ def get_membership(request: Request) -> Membership | None:
     org = Organization.objects.filter(key=org_key, is_active=True).first()
     if org is None:
         return None
+    # Explicit support mode takes precedence even for a real member/Owner/root.
+    if user.is_staff and getattr(request, "session", {}).get(SUPPORT_SESSION_KEY) == org_key:
+        request.hfl_support_readonly = True
+        return SimpleNamespace(
+            user=user, user_id=user.pk,
+            organization=org, organization_id=org.pk,
+            role=Membership.Role.AUDITOR,
+            authority_source="support_readonly",
+            preferred_feature="", is_active=True, id=None, pk=None,
+        )
     membership = (
         Membership.objects.select_related("organization", "user")
         .filter(user=user, organization=org, is_active=True)
@@ -43,16 +70,8 @@ def get_membership(request: Request) -> Membership | None:
     )
     if membership is not None:
         return membership
-    if user.is_staff and request.session.get(SUPPORT_SESSION_KEY) == org_key:
-        request.hfl_support_readonly = True
-        return SimpleNamespace(
-            user=user,
-            organization=org,
-            role=Membership.Role.AUDITOR,
-            is_active=True,
-            id=0,
-            pk=0,
-        )
+    if is_installation_admin(user):
+        return installation_org_context(user, org)
     return None
 
 
@@ -63,6 +82,8 @@ def get_effective_role(request: Request, membership=None) -> str | None:
         return None
     if getattr(request, "hfl_support_readonly", False):
         return Membership.Role.AUDITOR
+    if is_installation_admin(request.user):
+        return INSTALLATION_AUTHORITY
     org_key = getattr(
         getattr(membership, "organization", None), "key", ""
     ) or resolve_org_key(request)
@@ -94,7 +115,10 @@ def is_custom_role_member(request, membership=None) -> bool:
 
 class IsOrgMember(permissions.BasePermission):
     def has_permission(self, request, view) -> bool:
-        return get_membership(request) is not None
+        return get_membership(request) is not None and not (
+            getattr(request, "hfl_support_readonly", False)
+            and request.method not in permissions.SAFE_METHODS
+        )
 
 
 class IsOrgAuthorizedMember(IsOrgMember):
@@ -105,6 +129,10 @@ class IsOrgAuthorizedMember(IsOrgMember):
         return (
             membership is not None
             and get_effective_role(request, membership) is not None
+            and not (
+                getattr(request, "hfl_support_readonly", False)
+                and request.method not in permissions.SAFE_METHODS
+            )
         )
 
 
@@ -120,6 +148,11 @@ class _RoleMixin:
             return False
         membership = get_membership(request)
         if membership is None:
+            return False
+        if (
+            getattr(request, "hfl_support_readonly", False)
+            and request.method not in permissions.SAFE_METHODS
+        ):
             return False
         provider = get_authz_provider()
         if provider is not None and not getattr(request, "hfl_support_readonly", False):
@@ -174,6 +207,10 @@ class _RoleMixin:
                 )
             )
         if not self.allowed_roles:
+            return True
+        if not getattr(request, "hfl_support_readonly", False) and is_installation_admin(
+            request.user,
+        ):
             return True
         role = get_effective_role(request, membership)
         if role in self.allowed_roles:

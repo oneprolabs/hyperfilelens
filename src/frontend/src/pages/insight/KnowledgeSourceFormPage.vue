@@ -27,7 +27,6 @@ const route = useRoute()
 const router = useRouter()
 
 const GATEWAY_DEPLOY_ROUTE = { path: '/node/nodes/deploy', query: { role: 'gateway' } } as const
-const PLATFORM_ORG_KEY = '__platform_lens__'
 
 const sourceType = ref<KnowledgeSourceType>('backup_source')
 
@@ -115,7 +114,7 @@ async function loadOrganizationOptions() {
         key: String(row.key || '').trim(),
         name: String(row.name || row.key || '').trim(),
       }))
-      .filter((row) => row.key && row.key !== PLATFORM_ORG_KEY)
+      .filter((row) => row.key)
       .sort((a, b) => a.name.localeCompare(b.name))
   } catch {
     organizationOptions.value = []

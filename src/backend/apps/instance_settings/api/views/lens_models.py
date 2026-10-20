@@ -1,31 +1,26 @@
-"""Platform-org AI model APIs for the Admin Console (OSS essential).
+"""Platform-owned AI model APIs for the Admin Console (OSS essential).
 
-These endpoints always target the hidden ``__platform_lens__`` organization so
-community Admin can configure models used by the local public Data Gateway.
-Mutations require an existing platform-org model link (same ownership gate as
-tenant lens APIs).
+These endpoints use explicit platform ownership, not a tenant organization.
+Mutations require an existing platform-owned model link.
 """
 
 from __future__ import annotations
 
 import uuid
 
+from django.db import transaction
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.iam.models import Organization
 from apps.instance_settings.permissions import HasPlatformPermission
 from apps.lens_bridge.api.serializers import LensOrgSettingsSerializer
 from apps.lens_bridge.models import LensOrgModelLink
-from apps.lens_bridge.services import org_models, platform_lens, provisioning, sl_client
+from apps.lens_bridge.services import org_models, sl_client
+from apps.lens_bridge.services.model_defaults import get_model_defaults
 from common.errors import AppError
 from common.platform_authz import INFRA_AI_MODELS_MANAGE
-
-
-def _platform_org() -> Organization:
-    return platform_lens.get_or_create_platform_org()
 
 
 def _reject_client_config_reference(body: dict) -> None:
@@ -150,12 +145,11 @@ def _validate_model_update_connection(
 
 
 def _set_platform_default_model_ref(
-    org: Organization,
     config_uuid: uuid.UUID | None,
     *,
     role: str = "agent",
 ) -> None:
-    link = provisioning.get_or_create_org_link(org)
+    link = get_model_defaults(None)
     field_name = (
         "default_agent_model_ref" if role == "agent" else "default_multimodal_model_ref"
     )
@@ -171,7 +165,7 @@ class PlatformOpsLensSettingsView(APIView):
     permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
 
     def get(self, request):
-        link = provisioning.get_or_create_org_link(_platform_org())
+        link = get_model_defaults(None)
         return Response(
             LensOrgSettingsSerializer(
                 {
@@ -181,10 +175,10 @@ class PlatformOpsLensSettingsView(APIView):
             ).data
         )
 
+    @transaction.atomic
     def patch(self, request):
         body = LensOrgSettingsSerializer(data=request.data, partial=True)
         body.is_valid(raise_exception=True)
-        org = _platform_org()
         for role, field_name in (
             ("agent", "default_agent_model_ref"),
             ("multimodal", "default_multimodal_model_ref"),
@@ -193,12 +187,11 @@ class PlatformOpsLensSettingsView(APIView):
                 continue
             model_ref = body.validated_data[field_name]
             org_models.validate_default_model_ref(
-                org,
+                None,
                 model_ref,
                 field_name=field_name,
             )
             _set_platform_default_model_ref(
-                org,
                 model_ref,
                 role=role,
             )
@@ -206,29 +199,27 @@ class PlatformOpsLensSettingsView(APIView):
 
 
 class PlatformOpsLensModelProxyView(APIView):
-    """Admin Console: SL admin LLM config for the platform organization."""
+    """Admin Console: AI models owned by the platform."""
 
     permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
 
     def get(self, request, config_uuid=None):
-        org = _platform_org()
         url_name = getattr(request.resolver_match, "url_name", "")
         if url_name == "platform-ops-lens-models-providers":
             data = sl_client.request_json("GET", "/api/v1/admin/llm-config/providers/")
         elif url_name == "platform-ops-lens-models-catalog":
             data = sl_client.request_json("GET", "/api/v1/admin/llm-config/models/")
         elif config_uuid:
-            link = org_models.require_org_model(org, config_uuid)
+            link = org_models.require_org_model(None, config_uuid)
             data = sl_client.request_json(
                 "GET", f"/api/v1/admin/llm-config/{config_uuid}/"
             )
             data = org_models.merge_model_display_name(data, link)
         else:
-            data = org_models.list_org_model_configs(org)
+            data = org_models.list_org_model_configs(None)
         return Response(data)
 
     def post(self, request, config_uuid=None):
-        org = _platform_org()
         url_name = getattr(request.resolver_match, "url_name", "")
         if url_name == "platform-ops-lens-models-test":
             _reject_client_config_reference(request.data)
@@ -239,7 +230,7 @@ class PlatformOpsLensModelProxyView(APIView):
             )
             return Response(data)
         if url_name == "platform-ops-lens-models-test-call" and config_uuid:
-            org_models.require_org_model(org, config_uuid)
+            org_models.require_org_model(None, config_uuid)
             data = _test_saved_model_connection(config_uuid)
             return Response(data)
         _reject_client_config_reference(request.data)
@@ -253,22 +244,20 @@ class PlatformOpsLensModelProxyView(APIView):
         config_uuid_created = data.get("uuid")
         if config_uuid_created:
             link = org_models.register_org_model(
-                org=org,
+                org=None,
                 sl_config_uuid=uuid.UUID(str(config_uuid_created)),
                 created_by=request.user,
             )
             org_models.set_model_display_name(link, display_name)
             if make_agent_default:
                 _set_platform_default_model_ref(
-                    org,
                     uuid.UUID(str(config_uuid_created)),
                 )
             data = org_models.merge_model_display_name(data, link)
         return Response(data, status=status.HTTP_201_CREATED)
 
     def put(self, request, config_uuid):
-        org = _platform_org()
-        link = org_models.require_org_model(org, config_uuid)
+        link = org_models.require_org_model(None, config_uuid)
         _reject_client_config_reference(request.data)
         body = dict(request.data)
         display_name = body.pop("name", None)
@@ -288,9 +277,9 @@ class PlatformOpsLensModelProxyView(APIView):
         org_models.set_model_display_name(link, display_name)
         link.refresh_from_db(fields=["display_name"])
         if make_agent_default:
-            _set_platform_default_model_ref(org, config_uuid)
+            _set_platform_default_model_ref(config_uuid)
         if body.get("is_active") is False:
-            defaults = provisioning.get_or_create_org_link(org)
+            defaults = get_model_defaults(None)
             update_fields: list[str] = []
             if defaults.default_agent_model_ref == config_uuid:
                 defaults.default_agent_model_ref = None
@@ -306,19 +295,17 @@ class PlatformOpsLensModelProxyView(APIView):
         return self.put(request, config_uuid)
 
     def delete(self, request, config_uuid):
-        org = _platform_org()
-        org_models.require_org_model(org, config_uuid)
+        org_models.require_org_model(None, config_uuid)
         sl_client.request_json("DELETE", f"/api/v1/admin/llm-config/{config_uuid}/")
         LensOrgModelLink.objects.filter(
-            organization=org,
+            **org_models.model_scope_filter(None),
             sl_config_uuid=config_uuid,
         ).update(is_deleted=True)
-        platform_defaults = provisioning.get_or_create_org_link(org)
+        platform_defaults = get_model_defaults(None)
         if platform_defaults.default_agent_model_ref == config_uuid:
-            _set_platform_default_model_ref(org, None)
+            _set_platform_default_model_ref(None)
         if platform_defaults.default_multimodal_model_ref == config_uuid:
             _set_platform_default_model_ref(
-                org,
                 None,
                 role="multimodal",
             )

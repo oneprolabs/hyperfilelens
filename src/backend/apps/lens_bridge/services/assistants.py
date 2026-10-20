@@ -884,17 +884,22 @@ def list_org_lensnodes(
     org: Organization,
     *,
     platform_passthrough: bool = False,
+    include_platform: bool = False,
 ) -> list[dict[str, Any]]:
     from apps.lens_bridge.services.gateway_ownership import PRIVATE_GATEWAY_SCOPES
 
-    links = LensGatewayLink.objects.filter(
-        organization=org,
-        sl_lensnode_uuid__isnull=False,
-    )
-    if platform_passthrough:
-        links = links.filter(scope=LensGatewayLink.GatewayScope.PLATFORM)
+    from django.db.models import Q
+
+    links = LensGatewayLink.objects.filter(sl_lensnode_uuid__isnull=False)
+    if include_platform:
+        links = links.filter(
+            Q(organization=org, scope__in=PRIVATE_GATEWAY_SCOPES)
+            | Q(organization__isnull=True, scope=LensGatewayLink.GatewayScope.PLATFORM)
+        )
+    elif platform_passthrough:
+        links = links.filter(organization__isnull=True, scope=LensGatewayLink.GatewayScope.PLATFORM)
     else:
-        links = links.filter(scope__in=PRIVATE_GATEWAY_SCOPES)
+        links = links.filter(organization=org, scope__in=PRIVATE_GATEWAY_SCOPES)
     linked = {
         str(link.sl_lensnode_uuid)
         for link in links
@@ -917,11 +922,12 @@ def assistant_form_options(
 
     gateway_rows = []
     if inventory_org_scope:
-        from apps.lens_bridge.services.gateway_ownership import (
-            organization_gateway_links,
-        )
+        from django.db.models import Q
+        from apps.lens_bridge.services.gateway_ownership import PRIVATE_GATEWAY_SCOPES
 
-        links = organization_gateway_links(organization=org).filter(
+        links = LensGatewayLink.objects.filter(
+            Q(organization=org, scope__in=PRIVATE_GATEWAY_SCOPES)
+            | Q(organization__isnull=True, scope=LensGatewayLink.GatewayScope.PLATFORM),
             sl_lensnode_uuid__isnull=False,
         )
     elif platform_passthrough:
@@ -985,11 +991,8 @@ def assistant_form_options(
             lifecycle_status=LensKnowledgeSource.LifecycleStatus.DELETED,
         )
     elif platform_passthrough:
-        from apps.lens_bridge.services import platform_lens as pl
-
-        platform_org = pl.get_or_create_platform_org()
-        ks_org = platform_org
-        ks_qs = LensKnowledgeSource.objects.filter(organization=platform_org)
+        ks_org = None
+        ks_qs = LensKnowledgeSource.objects.none()
     else:
         ks_qs = LensKnowledgeSource.objects.filter(
             organization=org,
@@ -1000,6 +1003,7 @@ def assistant_form_options(
         "lensnodes": list_org_lensnodes(
             ks_org,
             platform_passthrough=platform_passthrough and not inventory_org_scope,
+            include_platform=inventory_org_scope,
         ),
         "gateways": gateway_rows,
         "knowledge_sources": [

@@ -21,6 +21,11 @@ const { locale, t } = useI18n()
 const route = useRoute()
 const { theme } = useTheme()
 const supportOrgKey = ref<string | null>(null)
+const installationContext = computed(() => {
+  const profile = currentUser.value?.access_profile
+  return profile?.authority_source === 'installation_admin'
+    && profile.is_organization_member === false ? profile.org_key : ''
+})
 const adminConsoleUrl = ref('')
 const adminConsoleLandingPath = ref('')
 // Bump this whenever theme changes so child components re-evaluate CSS var refs
@@ -479,10 +484,17 @@ function applyThemeVars(t: string) {
       :timezone-offset-display="timezoneOffsetDisplay"
     />
     <div
-      v-if="supportOrgKey"
+      v-if="supportOrgKey && supportOrgKey === currentUser?.access_profile?.org_key"
       class="support-banner"
     >
       {{ t('common.supportModeBanner', { org: supportOrgKey }) }}
+    </div>
+    <div
+      v-else-if="installationContext"
+      class="installation-context-banner"
+      role="status"
+    >
+      {{ t('common.installationContextBanner', { org: installationContext }) }}
     </div>
     <main class="content-wrapper">
       <RouterView v-slot="{ Component, route: matchedRoute }">
@@ -879,6 +891,16 @@ function applyThemeVars(t: string) {
   color: rgb(146 64 14);
   font-size: 13px;
   font-weight: 600;
+  padding: 8px 16px;
+  text-align: center;
+}
+
+.installation-context-banner {
+  background: var(--el-color-primary-light-9);
+  border-bottom: 1px solid var(--el-color-primary-light-8);
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 1.6;
   padding: 8px 16px;
   text-align: center;
 }

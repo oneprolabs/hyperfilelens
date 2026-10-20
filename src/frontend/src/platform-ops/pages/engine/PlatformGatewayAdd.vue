@@ -114,7 +114,7 @@ onUnmounted(() => {
             <NodeLifecycleWizard
               ref="wizardRef"
               install-only
-              org-key="__platform_lens__"
+              org-key=""
               role="gateway"
               os="linux"
               role-locked
