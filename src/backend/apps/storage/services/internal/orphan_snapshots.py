@@ -1,5 +1,6 @@
 """Durable, fail-closed discovery and delayed cleanup of unmanaged snapshots."""
 
+from contextlib import nullcontext
 from datetime import timedelta
 import logging
 import os
@@ -21,6 +22,10 @@ from apps.storage.services.internal.orphan_snapshot_fence import backup_blocker
 from apps.storage.services.internal.orphan_reconciliation_errors import (
     OrphanReconciliationError, classify_reconciliation_error,
 )
+from apps.storage.services.internal.orphan_delete_execution import (
+    controller_delete_execution, controller_execution_pending,
+    controller_result_registration, recover_controller_deletions,
+)
 from apps.storage.services.internal.repository_operations import (
     finalize_repository_operation, repository_execution_target_has_owned_location,
     set_task_step,
@@ -29,6 +34,7 @@ from apps.storage.services.internal.snapshot_inventory import (
     controller_snapshot_inventory, parse_snapshot_inventory,
 )
 from apps.task.models import Task, TaskEvent, TaskStep
+from apps.task.signals import task_updated
 from apps.task.services.interface import append_task_event, create_task, start_task
 
 
@@ -244,6 +250,12 @@ def run_orphan_reconciliation(repository_task_id):
         and rt.due_at and rt.due_at > timezone.now()
     ):
         return {"status": "retry_scheduled"}
+    if (
+        rt.owner_type == "controller"
+        and rt.task.error_code == "ORPHAN_EXECUTION_CONFIRMING"
+        and rt.due_at and rt.due_at > timezone.now()
+    ):
+        return {"status": "recovering"}
     if rt.task.status == Task.Status.PENDING:
         start_task(task_uuid=rt.task.task_uuid, organization_id=rt.repository.organization_id)
     _step(rt, "prepare_repository_operation", TaskStep.Status.RUNNING, 5)
@@ -266,7 +278,14 @@ def run_orphan_reconciliation(repository_task_id):
         stage = "run_repository_operation"
         _step(rt, stage, TaskStep.Status.RUNNING, 25)
         if controller:
+            if controller_execution_pending(rt):
+                return _wait(rt, "Automatically confirming the previous deletion executor.")
             inventory = controller_snapshot_inventory(rt.repository)
+            if recover_controller_deletions(rt, inventory):
+                return _finish(
+                    rt, False, "Controller execution stopped and snapshot states were recovered; this interrupted cycle ended without redispatching deletion.",
+                    scanned=len(inventory), error_code="ORPHAN_DELETE_RECOVERED",
+                )
         else:
             result = _remote(rt, "snapshot.inventory")
             if result is None:
@@ -288,14 +307,15 @@ def run_orphan_reconciliation(repository_task_id):
         for candidate in RepositoryOrphanSnapshot.objects.filter(
             target=rt.execution_target, status__in=["candidate", "deleting"],
         ).exclude(snapshot_id__in=present):
-            if candidate.status == "deleting":
-                # Absence alone cannot prove the old deletion process has stopped.
-                return _wait(rt, "Deletion execution requires confirmation.")
-            else:
+            with controller_result_registration(rt, None) if controller else nullcontext():
+                if candidate.status == "deleting":
+                    # Absence alone cannot prove the old deletion process has stopped.
+                    return _wait(rt, "Deletion execution requires confirmation.")
                 candidate.status = "absent"
-            candidate.save(update_fields=["status"])
-            _record(rt, candidate, "absent")
+                candidate.save(update_fields=["status"])
+                _record(rt, candidate, "absent")
         for item in inventory:
+            execution = None
             sid = item["snapshot_id"]
             candidate = candidates.get(sid)
             created_at = item["source"].get("snapshot_created_at")
@@ -325,7 +345,10 @@ def run_orphan_reconciliation(repository_task_id):
                 continue
             candidate.last_seen_at = now
             candidate.save(update_fields=["last_seen_at"])
-            if now - candidate.first_seen_at < timedelta(hours=24):
+            if (
+                now - candidate.first_seen_at < timedelta(hours=24)
+                or candidate.delete_not_before and candidate.delete_not_before > now
+            ):
                 _record(rt, candidate, "grace")
                 continue
             if os.getenv("STORAGE_ORPHAN_SNAPSHOT_DELETE_ENABLED", "true").lower() not in {"true", "1", "yes", "on"}:
@@ -338,7 +361,7 @@ def run_orphan_reconciliation(repository_task_id):
             ).exists():
                 continue
             if controller and candidate.status == "deleting":
-                return _wait(rt, "Controller delete result unknown; manual execution confirmation required.")
+                return _wait(rt, "Automatically confirming the previous Controller deletion.")
             with transaction.atomic():
                 Repository.objects.select_for_update().get(pk=rt.repository_id)
                 candidate = RepositoryOrphanSnapshot.objects.select_for_update().get(pk=candidate.pk)
@@ -347,22 +370,43 @@ def run_orphan_reconciliation(repository_task_id):
                 if backup_blocker(rt.repository) or sid in managed_ids(rt.repository):
                     _record(rt, candidate, "deferred", "Backup or management relationship changed.")
                     continue
-                candidate.status = "deleting"
-                candidate.save(update_fields=["status"])
+                if not controller:
+                    candidate.status = "deleting"
+                    candidate.save(update_fields=["status"])
             if controller:
                 # Fresh complete listing and physical ownership verification before delete.
                 fresh = {entry["snapshot_id"] for entry in controller_snapshot_inventory(rt.repository)}
                 if sid not in fresh:
                     outcome = "absent"
                 else:
-                    results = delete_s3_snapshots(rt.repository, snapshot_ids=[sid]).get("results", [])
+                    with controller_delete_execution(rt, candidate) as execution:
+                        results = delete_s3_snapshots(rt.repository, snapshot_ids=[sid]).get("results", [])
                     from apps.protection.services.kopia_snapshot_delete import classify_kopia_snapshot_delete_results
                     deleted, absent, failures = classify_kopia_snapshot_delete_results(results)
                     if failures:
-                        candidate.status = "candidate"
-                        candidate.last_error = "Physical snapshot deletion failed."
-                        candidate.save(update_fields=["status", "last_error"])
-                        _record(rt, candidate, "failed", candidate.last_error)
+                        if execution.attempt is not None:
+                            # Process termination is not the business outcome.
+                            # Re-observe after a timeout/nonzero exit before
+                            # releasing the repository's write fence.
+                            recover_controller_deletions(
+                                rt, controller_snapshot_inventory(rt.repository),
+                                reason=(
+                                    "Snapshot deletion timed out; its executor stopped automatically."
+                                    if execution.outcome == "timeout"
+                                    else "Physical snapshot deletion failed; its executor stopped."
+                                ),
+                            )
+                            continue
+                        with controller_result_registration(rt, execution):
+                            candidate.status = "candidate"
+                            candidate.delete_not_before = timezone.now() + timedelta(hours=24)
+                            candidate.last_error = (
+                                "Snapshot deletion timed out; its executor stopped automatically."
+                                if execution.outcome == "timeout"
+                                else "Physical snapshot deletion failed."
+                            )
+                            candidate.save(update_fields=["status", "last_error", "delete_not_before"])
+                            _record(rt, candidate, "failed", candidate.last_error)
                         continue
                     if sid not in deleted | absent:
                         raise ValueError("Physical snapshot deletion completion is unknown.")
@@ -380,7 +424,7 @@ def run_orphan_reconciliation(repository_task_id):
                 if result.get("snapshot_id") != sid or not isinstance(result.get("deleted"), bool):
                     return _wait(rt, "Agent deletion identity or completion is unconfirmed.")
                 outcome = "deleted" if result.get("deleted") is True else "absent"
-            with transaction.atomic():
+            with controller_result_registration(rt, execution) if controller else transaction.atomic():
                 candidate.status = outcome
                 candidate.deleted_at = now if outcome == "deleted" else None
                 candidate.save(update_fields=["status", "deleted_at"])
@@ -406,9 +450,62 @@ def run_orphan_reconciliation(repository_task_id):
         )
 
 
+@transaction.atomic
 def _wait(rt, reason="Waiting for confirmed Agent result."):
+    if rt.owner_type == "controller":
+        # Keep recovery automatic, bounded by the independent executor. A
+        # missing/expired cache lock never proves that execution has stopped.
+        RepositoryTask.objects.select_for_update().get(pk=rt.pk)
+        rt.task = Task.objects.select_for_update().get(pk=rt.task_id)
+        if rt.task.status in {
+            Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT,
+        }:
+            return {"status": rt.task.status}
+        now = timezone.now()
+        payload = rt.task.result_payload if isinstance(rt.task.result_payload, dict) else {}
+        recovery = payload.get("orphan_recovery") or {}
+        checks = int(recovery.get("checks", 0)) + 1
+        next_check = now + timedelta(seconds=min(900, 60 * 2 ** min(checks - 1, 4)))
+        recovery = {
+            "first_checked_at": recovery.get("first_checked_at", now.isoformat()),
+            "last_checked_at": now.isoformat(), "next_check_at": next_check.isoformat(),
+            "checks": checks, "phase": "confirming_execution",
+        }
+        updated = Task.objects.filter(
+            pk=rt.task_id,
+            status__in=[Task.Status.PENDING, Task.Status.RUNNING, Task.Status.WAITING],
+        ).update(
+            status=Task.Status.RUNNING, error_code="ORPHAN_EXECUTION_CONFIRMING",
+            error_message="Automatically confirming snapshot cleanup execution before recovery.",
+            result_payload={**payload, "orphan_recovery": recovery},
+            updated_at=now,
+        )
+        if not updated:
+            return {"status": Task.objects.get(pk=rt.task_id).status}
+        RepositoryTask.objects.filter(pk=rt.pk).update(due_at=next_check)
+        if checks == 4:
+            append_task_event(
+                task=rt.task, level=TaskEvent.Level.WARN,
+                message="Snapshot cleanup recovery is retrying automatically.",
+                metadata={"event_type": "orphan_snapshot_recovery", **recovery},
+            )
+        transaction.on_commit(lambda: _notify_recovery(rt.task_id))
+        return {"status": "recovering"}
     Task.objects.filter(pk=rt.task_id).update(status=Task.Status.WAITING, error_message=reason)
     return {"status": "waiting", "reason": reason}
+
+
+def _notify_recovery(task_id):
+    # Reload after commit so a terminal result cannot be followed by a stale
+    # "running" projection from a delayed recovery notification.
+    task = Task.objects.filter(pk=task_id).first()
+    if task is None:
+        return
+    task_updated.send_robust(
+        sender=Task, task_uuid=str(task.task_uuid),
+        organization_id=task.organization_id, status=task.status,
+        progress=float(task.progress),
+    )
 
 
 @transaction.atomic
@@ -423,6 +520,12 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
     }:
         return {"status": rt.task.status}
     target = RepositoryExecutionTarget.objects.select_for_update().get(pk=rt.execution_target_id)
+    # Another advance may have committed a newer delete after recovery. Intent
+    # creation takes this same Repository lock, so check and finish atomically.
+    if rt.owner_type == "controller" and RepositoryOrphanSnapshot.objects.filter(
+        target_id=rt.execution_target_id, status="deleting",
+    ).exists():
+        return _wait(rt, "Automatically confirming the current Controller deletion before finishing.")
     counts = {}
     for row in rt.task.events.filter(
         metadata__event_type="orphan_snapshot_result",
@@ -448,6 +551,11 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
                 )
     summary = {"scanned": scanned, "inventory_available": scanned is not None, **counts}
     result = {"orphan_snapshot_summary": summary}
+    if isinstance(rt.task.result_payload, dict) and rt.task.result_payload.get("orphan_recovery"):
+        result["orphan_recovery"] = {
+            **rt.task.result_payload["orphan_recovery"],
+            "phase": "finished", "finished_at": timezone.now().isoformat(),
+        }
     if diagnostic:
         result["orphan_snapshot_error"] = diagnostic
     append_task_event(
@@ -461,6 +569,7 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
         and rt.task.recovery_attempt == 0 and rt.task.replaces_task_id is None
         and target.active_task_id == rt.task_id
         and not counts.get("failed") and not counts.get("deleted")
+        and error_code != "ORPHAN_DELETE_RECOVERED"
     )
     if retry_scan:
         for child in rt.task.node_tasks.filter(correlation_type="repository_orphan"):
