@@ -17,7 +17,7 @@ export type NotificationChannelFormState = {
     use_tls: boolean
     encryption: 'none' | 'starttls' | 'ssl'
   }
-  webhook: { url: string; method: string; headers: string; timeout: number }
+  webhook: { url: string; method: string; headers: string; timeout: number; secret: string; secret_configured: boolean; secret_editing: boolean }
   dingtalk: { webhook_url: string; secret: string; secret_configured: boolean; secret_editing: boolean; at_mobiles: string; at_user_ids: string; is_at_all: boolean }
   wecom: { webhook_url: string; mentioned_list: string; mentioned_mobile_list: string; is_at_all: boolean }
   sms: {
@@ -46,7 +46,7 @@ export function defaultNotificationChannelForm(): NotificationChannelFormState {
       use_tls: true,
       encryption: 'starttls',
     },
-    webhook: { url: '', method: 'POST', headers: '', timeout: 30 },
+    webhook: { url: '', method: 'POST', headers: '', timeout: 30, secret: '', secret_configured: false, secret_editing: false },
     dingtalk: { webhook_url: '', secret: '', secret_configured: false, secret_editing: false, at_mobiles: '', at_user_ids: '', is_at_all: false },
     wecom: { webhook_url: '', mentioned_list: '', mentioned_mobile_list: '', is_at_all: false },
     sms: {
@@ -91,6 +91,11 @@ export function buildNotificationChannelConfig(form: NotificationChannelFormStat
       method: form.webhook.method,
       headers,
       timeout_seconds: form.webhook.timeout,
+      ...(form.webhook.secret.trim()
+        ? { secret: form.webhook.secret.trim() }
+        : form.webhook.secret_editing && form.webhook.secret_configured
+          ? { clear_secret: true }
+          : {}),
     }
   }
   if (form.type === 'dingtalk') {
@@ -153,7 +158,10 @@ export function loadNotificationChannelConfig(
       encryption,
     })
   } else if (type === 'webhook') {
-    form.webhook.url = String(config.url || '')
+    form.webhook.url = String(config.url || config.webhook_url || config.endpoint || '')
+    form.webhook.secret = ''
+    form.webhook.secret_configured = Boolean(String(config.secret || '').trim())
+    form.webhook.secret_editing = false
     form.webhook.method = String(config.method || 'POST')
     form.webhook.headers =
       typeof config.headers === 'object' ? JSON.stringify(config.headers, null, 2) : ''

@@ -8960,5 +8960,13 @@
   "platformOps.settings.email.testSavedSettingsHint": "c0074d3198311b1d63db986aad7a2a31450e9561c35d0ac4c8d16d02308d2fe0",
   "account.menuProductWebsite": "3629e0b32e7e9754d136bb411555835c529f7dfe7de5cd2d9ce3a8fb199a9653",
   "platformOps.settings.externalAccess.productWebsiteUrl": "7544f65062b7aea4d134e5f6fcf5cd22ea0f5befb67d476056da1ccf7b8e213d",
-  "platformOps.settings.externalAccess.productWebsiteHint": "d2559938fd9d0ea27b18984cbb93a189ae799d59cd024811960af024f4aa6a24"
+  "platformOps.settings.externalAccess.productWebsiteHint": "d2559938fd9d0ea27b18984cbb93a189ae799d59cd024811960af024f4aa6a24",
+  "errors.codes.notificationFeishuRejected": "5f4d7aca02c6e2b2ab0a823c26bda8dfa58e1bab1bcc1e8b58ee03f798d1c15b",
+  "ops.notification.feishuKeywordReason": "1bcf82d1757ca6e1cf791de2981167b74eb27aaf3380eefd9d1966d4b8fbfc8e",
+  "ops.notification.feishuKeywordResolution": "924d87782ce037cc796fc3b60da40f8530881c25abab7ad2916f0b38e3d6fac1",
+  "ops.notification.feishuSignatureReason": "46b7092fff247a12902550336d2028c54f827d8cc5592d79fbee8585a31d36db",
+  "ops.notification.feishuSignatureResolution": "369c2fdb5fa2c5ad85f419d218b7ec73ba4ac3663d29dfcd240d4dfed3dd61b6",
+  "ops.notification.feishuDeliveryReason": "da3df726d92dd6ebeedb8fc49aa795ae03a31920791efd7c3086c8ea3f247cea",
+  "ops.notification.feishuDeliveryResolution": "79e6d3ae774586e24e249cd5507877f7f49cc85adf5e21623d52942982ee97e4",
+  "ops.notification.tipWebhookSecret": "9f189bcc4d88d22bab8f6da05007ef01cfde3138c815c5fae957507a285cd149"
 }

@@ -2,9 +2,12 @@
 import { describe, expect, it } from 'vitest'
 import { en } from '../locales/en'
 import zhHans from '../../../../language-packs/packs/zh-hans/frontend/messages.json'
+import es from '../../../../language-packs/packs/es/frontend/messages.json'
 import { notificationTestFailureDetails } from './notificationTestFailure'
 import { notifyError } from './notify'
 import { toastState } from './toast/store'
+import { ERROR_CODE_I18N_KEYS } from './errors/registry'
+import { errorDetailsCopyText } from './errors/details'
 
 function translate(locale: unknown, key: string): string {
   const value = key.split('.').reduce<unknown>(
@@ -16,6 +19,73 @@ function translate(locale: unknown, key: string): string {
   return typeof value === 'string' ? value : key
 }
 const t = (key: string) => translate(en, key)
+
+describe('Feishu test failure feedback', () => {
+  it.each([en, zhHans, es])('localizes the keyword rejection from the API envelope', (locale) => {
+    const error = {
+      errorCode: 'NOTIFICATION.FEISHU_REJECTED',
+      message: 'Feishu did not accept the notification.',
+      detail: {
+        code: 'NOTIFICATION.FEISHU_REJECTED',
+        data: {
+          status: 'failed',
+          code: 'NOTIFICATION.FEISHU_REJECTED',
+          error: 'Feishu rejected the message (code=19024): Key Words Not Found',
+        },
+      },
+    }
+    const details = notificationTestFailureDetails(error, (key) => translate(locale, key))
+    expect(details.summary).toBe(locale.errors.codes.notificationFeishuRejected)
+    expect(details.issue).toBe(details.summary)
+    expect(details.reasons).toEqual([locale.ops.notification.feishuKeywordReason])
+    expect(details.resolutions).toEqual([locale.ops.notification.feishuKeywordResolution])
+    expect(details.resolutions?.[0]).toContain('HyperFileLens')
+    expect(JSON.stringify(details.rawDetail)).toContain('19024')
+    expect(ERROR_CODE_I18N_KEYS[details.errorCode!]).toBe('errors.codes.notificationFeishuRejected')
+
+    const toast = notifyError({ message: details.summary, details, showDetails: true })
+    expect(toastState.items.at(-1)?.details?.reasons).toEqual(details.reasons)
+    expect(toastState.items.at(-1)?.details?.resolutions).toEqual(details.resolutions)
+    toast.close()
+  })
+
+  it.each([
+    'Feishu rejected the message (code=19024): provider text changed',
+    'Feishu rejected the message: keyword not found',
+  ])('recognizes keyword rejections by code or diagnostic: %s', (error) => {
+    const details = notificationTestFailureDetails({ code: 'NOTIFICATION.FEISHU_REJECTED', error }, t)
+    expect(details.reasons).toEqual([en.ops.notification.feishuKeywordReason])
+  })
+
+  it('explains signature failures without claiming a keyword failure', () => {
+    const details = notificationTestFailureDetails({
+      code: 'NOTIFICATION.FEISHU_REJECTED',
+      error: 'Feishu rejected the message (code=19021): sign match fail or timestamp is not within one hour',
+    }, t)
+    expect(details.reasons).toEqual([en.ops.notification.feishuSignatureReason])
+    expect(details.resolutions).toEqual([en.ops.notification.feishuSignatureResolution])
+  })
+
+  it.each(['Bad Request', 'Invalid JSON response', 'Unconfirmed delivery'])(
+    'gives general recovery steps for unknown or invalid responses: %s', (error) => {
+      const details = notificationTestFailureDetails({ code: 'NOTIFICATION.FEISHU_REJECTED', error }, t)
+      expect(details.reasons).toEqual([en.ops.notification.feishuDeliveryReason])
+      expect(details.resolutions).toEqual([en.ops.notification.feishuDeliveryResolution])
+    },
+  )
+
+  it('keeps trace IDs and redacts credentials from displayed and copied details', () => {
+    const details = notificationTestFailureDetails({
+      status: 400,
+      code: 'NOTIFICATION.FEISHU_REJECTED',
+      traceId: 'feishu-test-trace',
+      error: 'Feishu rejected: token=private-token secret=private-secret',
+    }, t)
+    expect(details.traceId).toBe('feishu-test-trace')
+    expect(JSON.stringify(details)).not.toMatch(/private-token|private-secret/)
+    expect(errorDetailsCopyText(details)).not.toMatch(/private-token|private-secret/)
+  })
+})
 
 describe('DingTalk test failure feedback', () => {
   it('shows the provider rejection and keyword remedy in shared toast details', () => {

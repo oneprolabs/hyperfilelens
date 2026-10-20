@@ -165,7 +165,8 @@
       "subscriptionQuotaExceededGateway": "La puerta de enlace de datos compartida actualmente tiene una capacidad insuficiente. Pruebe de nuevo más tarde o póngase en contacto con su administrador de la plataforma.",
       "subscriptionQuotaUsageUnavailable": "La información sobre la capacidad no está disponible temporalmente. Inténtelo de nuevo en breve.",
       "backupAlreadyRunning": "Una copia de seguridad está empezando o funcionando para esta fuente. Detenga o espere a que termine antes de continuar.",
-      "restoreAlreadyRunning": "Una tarea de restauración ya se está ejecutando para esta fuente."
+      "restoreAlreadyRunning": "Una tarea de restauración ya se está ejecutando para esta fuente.",
+      "notificationFeishuRejected": "Feishu no aceptó el mensaje de prueba. Compruebe la configuración del robot."
     }
   },
   "feedback": {
@@ -7704,7 +7705,14 @@
       "toggleFailed": "La operación falló. Inténtelo de nuevo.",
       "orgFallback": "Organización #{id}",
       "channelFallback": "Canal #{id}",
-      "unitMin": "min"
+      "unitMin": "min",
+      "feishuKeywordReason": "El robot de Feishu rechazó el mensaje porque no contiene una palabra clave configurada.",
+      "feishuKeywordResolution": "En el grupo de Feishu, abra los bots del grupo, seleccione el bot personalizado y revise las palabras clave de seguridad. Permita HyperFileLens como palabra clave para esta prueba y vuelva a intentarlo.",
+      "feishuSignatureReason": "Feishu informó de un fallo en la verificación de la firma.",
+      "feishuSignatureResolution": "Compruebe que el secreto del canal coincide con el secreto de firma de este robot de Feishu y que la hora del servidor de HyperFileLens es correcta; vuelva a intentarlo.",
+      "feishuDeliveryReason": "Feishu no confirmó la entrega del mensaje. La respuesta original está disponible en los detalles técnicos.",
+      "feishuDeliveryResolution": "Verifique que la URL del webhook corresponde al robot del grupo de Feishu deseado. Revise las palabras clave, la firma y la lista de IP permitidas. Si la respuesta no es válida, compruebe el proxy o la puerta de enlace y vuelva a intentarlo.",
+      "tipWebhookSecret": "Secreto de firma opcional. Para los bots de Feishu/Lark, introduzca el secreto de la configuración de firma del bot. Otros webhooks usan una cabecera X-HFL-Signature HMAC-SHA256. Déjelo vacío si no se requiere firma."
     },
     "audit": {
       "pageTitle": "Registros de auditoría",
