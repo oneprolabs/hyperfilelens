@@ -20,11 +20,12 @@ from django.test import TransactionTestCase, SimpleTestCase
 from django.utils import timezone
 
 from apps.storage.repositories.models import (
-    OrphanSnapshotDeleteAttempt, RepositoryOrphanSnapshot, RepositoryTask,
+    OrphanSnapshotDeleteAttempt, Repository, RepositoryOrphanSnapshot, RepositoryTask,
 )
 from apps.storage.services.internal import orphan_delete_runner
 from apps.storage.services.internal.orphan_delete_execution import (
     ControllerDelete, confirmed_stopped, _open_lease, _require_local_filesystem,
+    _root, repository_delete_revision,
 )
 from apps.storage.services.internal.kopia_cli import KopiaCliError
 from apps.storage.services.internal.orphan_reconciliation_errors import OrphanReconciliationError
@@ -34,6 +35,7 @@ from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task, discover_repository_execution_targets,
 )
 from apps.storage.services.internal.repository_usage import repository_observation_revision
+from apps.storage.services.interface import update_repository
 from apps.storage.tests import test_repository_tasks as fixtures
 from apps.task.models import Task
 
@@ -67,7 +69,7 @@ class ControllerRecoveryTests(TransactionTestCase):
     def stopped_attempt(self, *, locked=False):
         attempt = OrphanSnapshotDeleteAttempt.objects.create(
             candidate=self.candidate, repository_task=self.rt,
-            observation_revision=repository_observation_revision(self.repository),
+            observation_revision=repository_delete_revision(self.repository),
             journal_root=self.directory.name, executor_identity="test-worker",
         )
         fd = _open_lease(Path(self.directory.name) / f"{attempt.id}.lease", create=True)
@@ -175,6 +177,28 @@ class ControllerRecoveryTests(TransactionTestCase):
         self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "recovering")
         self.candidate.refresh_from_db()
         self.assertEqual(self.candidate.status, "deleting")
+
+    @patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
+    @patch("apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots")
+    @patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory", return_value=[ITEM])
+    def test_quota_edit_does_not_block_lost_result_recovery(self, inventory, delete, refresh):
+        attempt = self.stopped_attempt()
+        self.repository = update_repository(
+            repository=self.repository,
+            config={"quota_gb": 20, "quota_unit": "TB",
+                    "quota_alert_enabled": True, "quota_alert_threshold": 85},
+        )
+        self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "failed")
+        self.candidate.refresh_from_db()
+        self.target.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(self.candidate.status, "candidate")
+        self.assertGreater(self.candidate.delete_not_before, timezone.now() + timedelta(hours=23))
+        self.assertEqual(attempt.state, "recovered")
+        self.assertIsNone(self.target.active_task_id)
+        assert_no_orphan_cleanup(self.repository.id)
+        delete.assert_not_called()
+        refresh.assert_called_once()
 
     @patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory", return_value=[ITEM])
     def test_replaced_execution_token_cannot_be_finalized_by_old_attempt(self, inventory):
@@ -438,8 +462,117 @@ class ControllerRecoveryTests(TransactionTestCase):
         self.candidate.refresh_from_db()
         self.assertEqual(self.candidate.status, "deleting")
 
+    @patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
+    def test_quota_edit_before_intent_does_not_invalidate_prepared_connection(self, refresh):
+        self.cli_environment()
+        original = ControllerDelete.run
+
+        def changed_then_started(execution, *args):
+            self.repository = update_repository(
+                repository=self.repository, config={"quota_gb": 20},
+            )
+            return original(execution, *args)
+
+        with (
+            patch("apps.storage.services.internal.kopia_cli._kopia_path",
+                  return_value=self.fake_cli("pass")),
+            patch.object(ControllerDelete, "run", changed_then_started),
+        ):
+            self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "success")
+        self.candidate.refresh_from_db()
+        self.assertEqual(self.candidate.status, "deleted")
+        self.assertEqual(self.candidate.delete_attempts.count(), 1)
+        assert_no_orphan_cleanup(self.repository.id)
+
+    @patch("apps.storage.services.interface.enqueue_repository_usage_refresh")
+    def test_quota_edit_during_execution_does_not_reject_successful_result(self, refresh):
+        self.cli_environment()
+        original = ControllerDelete.run
+
+        def finished_then_changed(execution, *args):
+            result = original(execution, *args)
+            self.repository = update_repository(
+                repository=self.repository,
+                config={"quota_gb": 30, "quota_unit": "TB",
+                        "quota_alert_enabled": False, "quota_alert_threshold": 90},
+            )
+            return result
+
+        with (
+            patch("apps.storage.services.internal.kopia_cli._kopia_path",
+                  return_value=self.fake_cli("pass")),
+            patch.object(ControllerDelete, "run", finished_then_changed),
+        ):
+            self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "success")
+        self.candidate.refresh_from_db()
+        self.target.refresh_from_db()
+        self.assertEqual(self.candidate.status, "deleted")
+        self.assertIsNone(self.target.active_task_id)
+        assert_no_orphan_cleanup(self.repository.id)
+
+
+class DeleteRevisionTests(SimpleTestCase):
+    def setUp(self):
+        self.repository = Repository(
+            organization_id=1, repo_type=Repository.Type.S3,
+            s3_bucket="bucket", config={"prefix": "original"},
+        )
+
+    def test_only_quota_and_alert_settings_are_ignored(self):
+        revision = repository_delete_revision(self.repository)
+        observation = repository_observation_revision(self.repository)
+        for key, value in {
+            "quota_gb": 20, "quota_unit": "TB",
+            "quota_alert_enabled": True, "quota_alert_threshold": 90,
+        }.items():
+            with self.subTest(key=key):
+                self.repository.config[key] = value
+                self.assertEqual(repository_delete_revision(self.repository), revision)
+                # Do not weaken metric observation fencing as a side effect.
+                self.assertNotEqual(repository_observation_revision(self.repository), observation)
+
+    def test_all_connection_settings_including_unknown_options_remain_fenced(self):
+        revision = repository_delete_revision(self.repository)
+        for key, value in {
+            "prefix": "other", "endpoint": "other.example.com",
+            "external_endpoint": "other.example.com", "internal_endpoint": "internal.example.com",
+            "region": "other-region", "use_tls": False, "s3_url_style": "path",
+            "access_key_id": "other-key", "secret_access_key": "other-secret",
+            "kopia_password": "other-password", "future_connection_option": "other",
+        }.items():
+            with self.subTest(key=key):
+                self.repository.config = {"prefix": "original", key: value}
+                self.assertNotEqual(repository_delete_revision(self.repository), revision)
+
+    def test_repository_identity_and_authority_remain_fenced(self):
+        for key, value in {
+            "s3_bucket": "other", "s3_platform": "custom", "credential_id": 99,
+            "organization_id": 2, "repository_uuid": uuid4(), "status": "removing",
+            "repo_type": Repository.Type.NAS, "nas_protocol": "nfs",
+            "bind_node_id": 123, "bind_node_type": "agent",
+        }.items():
+            with self.subTest(key=key):
+                previous = getattr(self.repository, key)
+                revision = repository_delete_revision(self.repository)
+                setattr(self.repository, key, value)
+                self.assertNotEqual(repository_delete_revision(self.repository), revision)
+                setattr(self.repository, key, previous)
+
 
 class SupervisorTests(SimpleTestCase):
+    def test_volume_mount_does_not_require_syncing_parent_log_filesystem(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(os.environ, {"HFL_ORPHAN_EXECUTION_DIR": directory}),
+            patch.object(Path, "is_mount", return_value=True),
+            patch("apps.storage.services.internal.orphan_delete_execution.os.open",
+                  wraps=os.open) as open_directory,
+        ):
+            self.assertEqual(_root(), Path(directory))
+            open_directory.assert_called_once_with(
+                Path(directory), os.O_RDONLY | os.O_DIRECTORY,
+            )
+
     @patch("pathlib.Path.read_text", return_value="1 0 0:1 / / rw - ext4 /dev/root rw\n2 1 0:2 / /shared rw - nfs host:/volume rw\n")
     def test_network_lease_expiry_is_not_accepted_as_termination_evidence(self, mounts):
         with self.assertRaises(OSError):

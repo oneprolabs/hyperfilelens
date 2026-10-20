@@ -2222,10 +2222,23 @@ cmd_doctor() {
 	printf 'doctor: no blocking issues found\n'
 }
 
+remove_compose_volume() {
+	local volume_name
+	# Resolve the actual project-scoped name rather than guessing a prefix.
+	volume_name="$(compose config --format json | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["volumes"][sys.argv[1]]["name"])
+' "$1")" || die "Cannot resolve Compose volume $1"
+	docker volume rm "${volume_name}" >/dev/null 2>&1 || true
+}
+
 clean_runtime() {
 	require_docker
 	ensure_env_file
-	compose_logged down --volumes --remove-orphans || true
+	# The database bind mount survives runtime cleanup, so its execution
+	# journals must survive too. Remove only the disposable modules volume.
+	compose_logged down --remove-orphans || true
+	remove_compose_volume frontend-node-modules
 	if [[ -x "${ROOT}/dev/sourcelens.sh" ]]; then
 		"${ROOT}/dev/sourcelens.sh" down || true
 	fi
@@ -2249,6 +2262,7 @@ clean_data() {
 	[[ "${CLEAN_YES}" -eq 1 ]] \
 		|| die "clean --data and clean --all require --yes because databases and runtime data are deleted" 2
 	rm -rf "${ROOT}/data"
+	remove_compose_volume orphan-executions
 	log "Removed runtime data"
 }
 

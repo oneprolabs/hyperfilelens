@@ -18,6 +18,7 @@ import time
 from uuid import uuid4
 
 from django.db import connection, transaction
+from django.utils.crypto import salted_hmac
 from django.utils import timezone
 
 from apps.storage.repositories.models import (
@@ -25,10 +26,38 @@ from apps.storage.repositories.models import (
     RepositoryOrphanSnapshot, RepositoryTask,
 )
 from apps.storage.services.internal.orphan_reconciliation_errors import OrphanReconciliationError
-from apps.storage.services.internal.repository_usage import repository_observation_revision
 from apps.task.models import Task
 
 _execution = ContextVar("orphan_delete_execution", default=None)
+
+
+def repository_delete_revision(repository: Repository) -> str:
+    """Fence deletion identity without treating quota edits as storage changes.
+
+    Only known non-execution settings are excluded. Unknown/new config keys
+    remain fenced so a future connection option cannot silently escape checks.
+    Usage observations keep their separate, stricter revision semantics.
+    """
+    config = repository.config if isinstance(repository.config, dict) else {}
+    quota_keys = {"quota_gb", "quota_unit", "quota_alert_enabled", "quota_alert_threshold"}
+    identity = {
+        "repository_uuid": str(repository.repository_uuid),
+        "organization_id": repository.organization_id,
+        "repo_type": repository.repo_type,
+        "status": repository.status,
+        "config": {key: value for key, value in config.items() if key not in quota_keys},
+        "credential_id": repository.credential_id,
+        "nas_protocol": repository.nas_protocol,
+        "bind_node_type": repository.bind_node_type,
+        "bind_node_id": repository.bind_node_id,
+        "s3_platform": repository.s3_platform,
+        "s3_bucket": repository.s3_bucket,
+    }
+    return salted_hmac(
+        "hyperfilelens.repository-delete-revision",
+        json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str),
+        algorithm="sha256",
+    ).hexdigest()
 
 
 def _require_local_filesystem(root: Path) -> None:
@@ -47,18 +76,21 @@ def _require_local_filesystem(root: Path) -> None:
 
 
 def _root() -> Path:
-    # This directory must be shared by Controller Workers, like their logs.
+    # Compose mounts a persistent local volume shared by Controller Workers.
     root = Path(os.getenv("HFL_ORPHAN_EXECUTION_DIR", "").strip()
                 or "/var/log/hyperfilelens/.orphan-executions")
     if not root.is_absolute():
         raise OSError("The shared execution journal directory must be absolute.")
     _require_local_filesystem(root)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    parent_fd = os.open(root.parent, os.O_RDONLY | os.O_DIRECTORY)
+    # A named volume is already a durable mount root. Do not require fsync on
+    # its parent logs bind mount, which may be a different/virtual filesystem.
+    sync_directory = root if root.is_mount() else root.parent
+    directory_fd = os.open(sync_directory, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        os.fsync(parent_fd)
+        os.fsync(directory_fd)
     finally:
-        os.close(parent_fd)
+        os.close(directory_fd)
     return root
 
 
@@ -79,7 +111,7 @@ class ControllerDelete:
     def __init__(self, rt: RepositoryTask, candidate: RepositoryOrphanSnapshot) -> None:
         self.rt = rt
         self.candidate = candidate
-        self.revision = repository_observation_revision(rt.repository)
+        self.revision = repository_delete_revision(rt.repository)
         self.attempt = None
         self.outcome = ""
 
@@ -132,7 +164,7 @@ class ControllerDelete:
                     or target.organization_id != repository.organization_id
                     or target.active_task_id != task.id
                     or candidate.target_id != target.id or candidate.status != "candidate"
-                    or repository_observation_revision(repository) != self.revision
+                    or repository_delete_revision(repository) != self.revision
                     or backup_blocker(repository)
                     or candidate.snapshot_id in managed_ids(repository)
                     or pending_operation(repository, candidate.operation_id)
@@ -239,7 +271,7 @@ def controller_result_registration(
             or execution and execution.attempt
             and operation.execution_token != execution.attempt.id
             or execution
-            and repository_observation_revision(repository) != execution.revision
+            and repository_delete_revision(repository) != execution.revision
         ):
             raise _error("A late Controller result cannot change the current operation.")
         yield
@@ -317,7 +349,7 @@ def recover_controller_deletions(
                     or task.status not in {Task.Status.RUNNING, Task.Status.WAITING}
                     or attempt.repository_task_id != operation.id
                     or operation.execution_token != attempt.id
-                    or repository_observation_revision(repository) != attempt.observation_revision
+                    or repository_delete_revision(repository) != attempt.observation_revision
                 ):
                     raise _error("Deletion recovery identity changed; automatic verification will retry.")
                 protected = (

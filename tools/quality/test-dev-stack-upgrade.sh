@@ -542,4 +542,58 @@ PUBLISH
 	! tail -1 "${FIXTURE_CALLS}" | grep -q -- '--version'
 )
 
+# Runtime cleanup must not destroy execution evidence while the database
+# survives. Destructive data cleanup can remove both only with confirmation.
+(
+	ROOT="${tmp}/cleanup"
+	mkdir -p "${ROOT}"
+	calls="${tmp}/cleanup-calls"
+	require_docker() { :; }
+	ensure_env_file() { :; }
+	compose() {
+		[[ "$*" == "config --format json" ]]
+		printf '%s\n' '{"volumes":{
+			"frontend-node-modules":{"name":"custom_frontend-node-modules"},
+			"orphan-executions":{"name":"custom_orphan-executions"}}}'
+	}
+	compose_logged() { printf 'compose:%s\n' "$*" >>"${calls}"; }
+	docker() { printf 'docker:%s\n' "$*" >>"${calls}"; }
+	rm() { printf 'rm:%s\n' "$*" >>"${calls}"; }
+	CLEAN_SCOPE=runtime
+	: >"${calls}"
+	cmd_clean
+	grep -Fx 'compose:down --remove-orphans' "${calls}" >/dev/null
+	grep -Fx 'docker:volume rm custom_frontend-node-modules' "${calls}" >/dev/null
+	! grep -Eq -- '--volumes|orphan-executions|^rm:' "${calls}"
+
+	CLEAN_SCOPE=data
+	CLEAN_YES=0
+	: >"${calls}"
+	result=0
+	(cmd_clean) >/dev/null 2>&1 || result=$?
+	[[ "${result}" -eq 2 && ! -s "${calls}" ]]
+
+	CLEAN_YES=1
+	cmd_clean
+	grep -Fx "rm:-rf ${ROOT}/data" "${calls}" >/dev/null
+	grep -Fx 'docker:volume rm custom_orphan-executions' "${calls}" >/dev/null
+	data_line="$(grep -n '^rm:' "${calls}" | cut -d: -f1)"
+	journal_line="$(grep -n 'volume rm custom_orphan-executions' "${calls}" | cut -d: -f1)"
+	[[ "${data_line}" -lt "${journal_line}" ]]
+)
+
+# Both Compose templates place the journal on a shared local named volume,
+# never the host log bind mount (which can be virtiofs on Docker Desktop).
+python3 - "${ROOT_REPO}" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+for path in (root / "docker-compose.yml", root / "deploy/docker-compose.yml"):
+    text = path.read_text()
+    shared = text.split("x-backend-volumes: &backend-volumes\n", 1)[1].split("\nx-", 1)[0]
+    assert "  - orphan-executions:/var/log/hyperfilelens/.orphan-executions\n" in shared, path
+    assert "  orphan-executions:\n    driver: local\n" in text.split("\nvolumes:\n", 1)[1], path
+PY
+
 printf 'Development stack upgrade regression checks passed.\n'

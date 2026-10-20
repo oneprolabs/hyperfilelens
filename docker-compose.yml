@@ -18,6 +18,8 @@ x-backend-volumes: &backend-volumes
   - ./data/media:/opt/hyperfilelens/backend/media
   - ./data/staticfiles:/opt/hyperfilelens/backend/staticfiles
   - ./data/logs:/var/log/hyperfilelens
+  # Keep execution leases on Linux-local storage, including Docker Desktop.
+  - orphan-executions:/var/log/hyperfilelens/.orphan-executions
   - ./data/sourcelens/logs:/var/log/sourcelens:ro
   - ./data/runtime:/opt/hyperfilelens/runtime:ro
   # Persist observation caches only; connection configs/credentials stay separate.
@@ -285,3 +287,5 @@ networks:
 
 volumes:
   frontend-node-modules:
+  orphan-executions:
+    driver: local
