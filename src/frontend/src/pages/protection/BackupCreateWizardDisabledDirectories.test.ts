@@ -6,6 +6,7 @@ import { defineComponent } from 'vue'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 import HflHelpTip from '../../components/HflHelpTip.vue'
+import { enProtectionPages } from '../../locales/enProtectionPages'
 
 const wizard = readFileSync(
   resolve(process.cwd(), 'src/pages/protection/BackupCreateWizard.vue'),
@@ -15,6 +16,7 @@ const wizard = readFileSync(
 const rowStart = wizard.lastIndexOf('<div', wizard.indexOf('class="create-dir-row create-dir-row--tree"'))
 const rowTemplate = wizard.slice(rowStart, wizard.indexOf('</ElTooltip>', rowStart))
 const reason = 'This directory is managed by the HyperFileLens Agent.'
+const unavailableLabel = enProtectionPages.backupsPage.dirNotSelectable
 const captureSource = wizard.slice(
   wizard.indexOf('function onSourceTreeClickCapture('),
   wizard.indexOf('\nfunction addPickedSourceFor('),
@@ -51,7 +53,7 @@ function mountRow(protectedPath = true) {
       addedDirTreeDisableReason: () => '',
       isSourceDirectoryRefreshing: () => false,
       refreshCreateSourceDirectory: vi.fn(),
-      t: (key: string) => key === 'protection.backupsPage.dirNotSelectable' ? '不可选' : key,
+      t: (key: string) => key === 'protection.backupsPage.dirNotSelectable' ? unavailableLabel : key,
       onSourceTreeRowClick,
     }),
     template: rowTemplate,
@@ -79,11 +81,11 @@ describe('BackupCreateWizard disabled directories', () => {
     const help = wrapper.getComponent(HflHelpTip)
     expect(help.props('content')).toBe(reason)
     const button = help.get('button')
-    expect(button.text()).toBe('不可选')
+    expect(button.text()).toBe(unavailableLabel)
     expect(button.find('svg').exists()).toBe(true)
     expect(button.classes()).toContain('hfl-help-tip--labeled')
     expect(wrapper.findAllComponents(HflHelpTip)).toHaveLength(1)
-    expect(button.attributes('aria-label')).toBe(`不可选: ${reason}`)
+    expect(button.attributes('aria-label')).toBe(`${unavailableLabel}: ${reason}`)
     expect(button.attributes('disabled')).toBeUndefined()
     expect(button.attributes('aria-disabled')).toBe('false')
     expect(button.attributes('tabindex')).not.toBe('-1')
@@ -122,7 +124,7 @@ describe('BackupCreateWizard disabled directories', () => {
     expect(wrapper.attributes('aria-disabled')).toBe('false')
     expect(wrapper.classes()).not.toContain('create-dir-row--disabled')
     expect(wrapper.findComponent(HflHelpTip).exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('不可选')
+    expect(wrapper.text()).not.toContain(unavailableLabel)
     expect(wrapper.find('.hfl-dir-tree-node__refresh').exists()).toBe(true)
     await wrapper.trigger('click')
     expect(onSourceTreeRowClick).toHaveBeenCalledOnce()
