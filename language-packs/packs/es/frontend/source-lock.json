@@ -8960,5 +8960,19 @@
   "platformOps.settings.email.testSavedSettingsHint": "c0074d3198311b1d63db986aad7a2a31450e9561c35d0ac4c8d16d02308d2fe0",
   "account.menuProductWebsite": "3629e0b32e7e9754d136bb411555835c529f7dfe7de5cd2d9ce3a8fb199a9653",
   "platformOps.settings.externalAccess.productWebsiteUrl": "7544f65062b7aea4d134e5f6fcf5cd22ea0f5befb67d476056da1ccf7b8e213d",
-  "platformOps.settings.externalAccess.productWebsiteHint": "d2559938fd9d0ea27b18984cbb93a189ae799d59cd024811960af024f4aa6a24"
+  "platformOps.settings.externalAccess.productWebsiteHint": "d2559938fd9d0ea27b18984cbb93a189ae799d59cd024811960af024f4aa6a24",
+  "protection.backupsPage.targetDetailLocation": "fb077badb70aedf1581c95586c91144566e7e7070978942062887d138ddc0cfc",
+  "protection.backupsPage.targetPickerApplyBatch": "fd1ed5bd61537df2ec7b15c2a6f02bdc149a8d9445948494de197b87fc5fddc9",
+  "protection.backupsPage.targetPickerChoose": "045bfa7b0462b792aa9ecbffaa87d91ef8870089aa99f2b1a6fbca817ad40994",
+  "protection.backupsPage.targetPickerChooseHint": "affb256abdb672e3827b26d27e70db9a8a6214b6835a3e2dddcae6664de04d20",
+  "protection.backupsPage.targetPickerDetails": "87e3a7ffb7d94918f245961911dd7969ef5f8b40236fd6908078253ff860c28c",
+  "protection.backupsPage.targetPickerLocate": "437b290b34f369d9dc8a561ff48711fa1d059acb068ce713983287075ce7e0cd",
+  "protection.backupsPage.targetPickerResults": "ba3c406a13426d653f73480ddc1a08c3057c6f52b9b075590fe0e2eb7601d3da",
+  "protection.backupsPage.targetPickerReturnToSelection": "80e405579cd0265f5275016f4b2d821ea1ab1705fbc235c6478fb5dd068cbcf0",
+  "protection.backupsPage.targetPickerSelected": "a1f47543565c36d104be56b32154e1cbed04b560d236327500f8ee17bf22150d",
+  "protection.backupsPage.targetPickerSelectionHidden": "f89615ed6419567a47a14156105008f0aa4a3548221499653b9aa38c985c0532",
+  "protection.backupsPage.targetPickerUnknown": "14c4849191d018fc8b00b02dc1e49d9f8b36a152066023b3b4c609b2f62ba328",
+  "protection.backupsPage.targetPickerUse": "71ae3040cdb88ea8e7cdd7816209256f290007489c89e01504f713a63b085656",
+  "protection.backupsPage.targetPickerViewReason": "06ac9854ec751c7b137c556d78c89e0bdaf55b5aebb4f398ccdf562c30a16a06",
+  "protection.backupsPage.targetPickerSelectionUnavailable": "9a09073fc44f6b7ff7e6bceabadf3e5ab582ff6a6886425e670ea4b856ee2277"
 }

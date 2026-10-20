@@ -603,7 +603,6 @@ type CreateSourceRow = {
 }
 
 type TargetPickerState = {
-  search: string
   repoType: string
   targetId: string
 }
@@ -1023,7 +1022,7 @@ const targetValidationInProgress = ref(false)
 const targetConnectionResults = ref<Record<string, BackupTargetValidationResult>>({})
 let targetValidationController: AbortController | null = null
 const TARGET_VALIDATION_CLIENT_TIMEOUT_MS = 125_000
-const batchTargetPicker = reactive<TargetPickerState>({ search: '', repoType: '', targetId: '' })
+const batchTargetPicker = reactive<TargetPickerState>({ repoType: '', targetId: '' })
 const batchNasTargetMode = ref<NasTargetMode>('per_directory_repo')
 const batchRepositoryEndpointType = ref<RepositoryEndpointType | ''>('')
 type TargetAssignDialogMode = 'single' | 'batch'
@@ -1232,29 +1231,6 @@ const compressionOptions = computed<Array<{
     icon: Archive,
   },
 ])
-const repoTypeOptions = computed(() => {
-  const set = new Set<string>()
-  const otherLabel = t('protection.backupsPage.repoTypeOther')
-  for (const tgt of selectableTargets.value) {
-    const rt = tgt.repoType ?? otherLabel
-    set.add(rt)
-  }
-  const preferredOrder = ['S3', 'NAS', 'PROXY_FS']
-  const list = [...set]
-  list.sort((a, b) => {
-    const ai = preferredOrder.indexOf(a)
-    const bi = preferredOrder.indexOf(b)
-    if (ai !== -1 || bi !== -1) {
-      if (ai === -1) return 1
-      if (bi === -1) return -1
-      return ai - bi
-    }
-    const collator = String(locale.value || 'en')
-    return a.localeCompare(b, collator)
-  })
-  return list
-})
-
 const selectableTargets = computed(() =>
   realTargets.value.filter((target) => isSelectableTarget(target)),
 )
@@ -1497,7 +1473,7 @@ function targetIncompatibilityMessageItems(reason: BackupTargetIncompatibilityRe
 }
 
 function targetOptionsForGroup(group: WizardSourceGroup | null | undefined) {
-  return filterTargetsByCriteria(batchTargetPicker.search, batchTargetPicker.repoType)
+  return selectableTargets.value
     .map((target) => {
       const reason = targetIncompatibilityReasonForGroup(target, group)
       return {
@@ -1511,7 +1487,7 @@ function targetOptionsForGroup(group: WizardSourceGroup | null | undefined) {
 
 function targetOptionsForCheckedGroups() {
   const groups = checkedTargetGroups.value
-  return filterTargetsByCriteria(batchTargetPicker.search, batchTargetPicker.repoType)
+  return selectableTargets.value
     .map((target) => {
       const reason = backupTargetIncompatibilityReasonForSources(
         groups.map(targetCompatibilitySourceForGroup),
@@ -2678,22 +2654,6 @@ async function validateCreateRecoveryDestPathInput(group: WizardSourceGroup, dir
   }
 }
 
-function filterTargetsByCriteria(search: string, repoType: string | undefined) {
-  const q = search.trim().toLowerCase()
-  const typ = repoType
-  const otherLabel = t('protection.backupsPage.repoTypeOther')
-  return selectableTargets.value.filter((target) => {
-    const repo = target.repoType ?? otherLabel
-    if (typ != null && typ !== '' && repo !== typ) return false
-    if (!q) return true
-    return (
-      target.name.toLowerCase().includes(q) ||
-      target.location.toLowerCase().includes(q) ||
-      repo.toLowerCase().includes(q)
-    )
-  })
-}
-
 function targetHealth(target: WizardTarget | null | undefined) {
   return target?.health || target?.status || 'unverified'
 }
@@ -2701,14 +2661,6 @@ function targetHealth(target: WizardTarget | null | undefined) {
 function isSelectableTarget(target: WizardTarget | null | undefined) {
   const health = targetHealth(target)
   return health === 'online' || health === 'unverified'
-}
-
-function setTargetPickerSearch(picker: TargetPickerState | undefined, query: string) {
-  if (picker) picker.search = query
-}
-
-function onTargetPickerVisible(picker: TargetPickerState | undefined, visible: boolean) {
-  if (visible && picker) picker.search = ''
 }
 
 function applyAddTargetS3RegionPreset(key: string) {
@@ -3195,7 +3147,6 @@ function resetCreateStateForSources(sourceIds: string[], initialStep = 0) {
   closeValidationPopover()
   sourceFilterMap.value = {}
   sourceCompressionMap.value = {}
-  batchTargetPicker.search = ''
   batchTargetPicker.repoType = ''
   batchTargetPicker.targetId = ''
   batchNasTargetMode.value = 'per_directory_repo'
@@ -3449,7 +3400,6 @@ function openCreate() {
   closeValidationPopover()
   sourceFilterMap.value = {}
   sourceCompressionMap.value = {}
-  batchTargetPicker.search = ''
   batchTargetPicker.repoType = ''
   batchTargetPicker.targetId = ''
   batchNasTargetMode.value = 'per_directory_repo'
@@ -4676,6 +4626,11 @@ function targetOptionsForBatch() {
   return targetOptionsForCheckedGroups()
 }
 
+const targetAssignmentValid = computed(() => {
+  const target = targetOptionsForBatch().find((item) => item.id === batchTargetPicker.targetId)
+  return Boolean(target && !target.disabled && isSelectableTarget(target))
+})
+
 const targetAssignDialogTitle = computed(() =>
   targetAssignDialogMode.value === 'batch'
     ? t('protection.backupsPage.batchAssignTitle')
@@ -4694,7 +4649,6 @@ function resetTargetAssignPicker(
   nasMode?: NasTargetMode,
   endpointType: RepositoryEndpointType | '' = '',
 ) {
-  batchTargetPicker.search = ''
   batchTargetPicker.repoType = ''
   batchTargetPicker.targetId = targetId
   const resolved = nasMode ?? inferNasModeForTarget(getRealTarget(targetId))
@@ -7831,7 +7785,8 @@ function preserveShallowestPathOrder(paths: string[]) {
             <el-dialog
               v-model="targetAssignDialogOpen"
               :title="targetAssignDialogTitle"
-              width="640px"
+              width="960px"
+              top="6vh"
               destroy-on-close
               class="target-batch-dialog dp-dialog-soft-bg"
             >
@@ -7844,9 +7799,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                   v-model:nas-mode="batchNasTargetMode"
                   :model-value="batchTargetPicker.targetId"
                   :targets="targetOptionsForBatch()"
-                  :all-targets="selectableTargets"
                   :selected-target="batchSelectedTarget"
-                  :repo-type-options="repoTypeOptions"
                   :target-placeholder="t('protection.backupsPage.phSearchTargets')"
                   :repo-type-placeholder="t('protection.backupsPage.phAllRepoTypes')"
                   :no-data-text="t('protection.backupsPage.targetsEmpty')"
@@ -7854,44 +7807,44 @@ function preserveShallowestPathOrder(paths: string[]) {
                   :refreshing="targetsRefreshing"
                   :refresh-title="t('common.refresh')"
                   @update:model-value="onTargetPickerTargetChange"
-                  @update:repo-type="onTargetPickerTargetChange('')"
-                  @search="(query) => setTargetPickerSearch(batchTargetPicker, query)"
-                  @visible-change="(visible) => onTargetPickerVisible(batchTargetPicker, visible)"
                   @refresh="refreshWizardTargets"
-                />
-                <ElFormItem
-                  v-if="batchSelectedTargetRequiresEndpoint"
-                  :label="t('addS3Repo.fieldEndpointType')"
-                  required
-                  class="target-endpoint-choice"
                 >
-                  <ElRadioGroup
-                    v-model="batchRepositoryEndpointType"
-                    class="target-endpoint-choice__options"
-                  >
-                    <ElRadio
-                      value="external"
-                      border
+                  <template #selection-options>
+                    <ElFormItem
+                      v-if="batchSelectedTargetRequiresEndpoint"
+                      :label="t('addS3Repo.fieldEndpointType')"
+                      required
+                      class="target-endpoint-choice"
                     >
-                      <span class="target-endpoint-choice__option">
-                        <strong>{{ t('addS3Repo.endpointExternal') }}</strong>
-                        <span>{{ targetExternalEndpoint(batchSelectedTarget) }}</span>
-                      </span>
-                    </ElRadio>
-                    <ElRadio
-                      value="internal"
-                      border
-                    >
-                      <span class="target-endpoint-choice__option">
-                        <strong>{{ t('addS3Repo.endpointInternal') }}</strong>
-                        <span>{{ targetInternalEndpoint(batchSelectedTarget) }}</span>
-                      </span>
-                    </ElRadio>
-                  </ElRadioGroup>
-                  <p class="target-endpoint-choice__hint">
-                    {{ t('addS3Repo.hintEndpointType') }}
-                  </p>
-                </ElFormItem>
+                      <ElRadioGroup
+                        v-model="batchRepositoryEndpointType"
+                        class="target-endpoint-choice__options"
+                      >
+                        <ElRadio
+                          value="external"
+                          border
+                        >
+                          <span class="target-endpoint-choice__option">
+                            <strong>{{ t('addS3Repo.endpointExternal') }}</strong>
+                            <span>{{ targetExternalEndpoint(batchSelectedTarget) }}</span>
+                          </span>
+                        </ElRadio>
+                        <ElRadio
+                          value="internal"
+                          border
+                        >
+                          <span class="target-endpoint-choice__option">
+                            <strong>{{ t('addS3Repo.endpointInternal') }}</strong>
+                            <span>{{ targetInternalEndpoint(batchSelectedTarget) }}</span>
+                          </span>
+                        </ElRadio>
+                      </ElRadioGroup>
+                      <p class="target-endpoint-choice__hint">
+                        {{ t('addS3Repo.hintEndpointType') }}
+                      </p>
+                    </ElFormItem>
+                  </template>
+                </TargetRepositoryPicker>
               </ElForm>
               <template #footer>
                 <ElButton @click="targetAssignDialogOpen = false">
@@ -7899,10 +7852,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                 </ElButton>
                 <ElButton
                   type="primary"
-                  :disabled="batchSelectedTargetRequiresEndpoint && !batchRepositoryEndpointType"
+                  :disabled="!targetAssignmentValid || (batchSelectedTargetRequiresEndpoint && !batchRepositoryEndpointType)"
                   @click="applyTargetAssignment"
                 >
-                  {{ t('protection.backupsPage.btnConfirm') }}
+                  {{ targetAssignDialogMode === 'batch'
+                    ? t('protection.backupsPage.targetPickerApplyBatch', { n: checkedTargetGroups.length })
+                    : t('protection.backupsPage.targetPickerUse') }}
                 </ElButton>
               </template>
             </el-dialog>
@@ -10987,8 +10942,39 @@ function preserveShallowestPathOrder(paths: string[]) {
   gap: 14px;
 }
 
-.target-batch-dialog :deep(.el-dialog__body) {
+:global(.el-dialog.target-batch-dialog) {
+  max-width: calc(100vw - 32px);
+  max-height: 88dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+:global(.target-batch-dialog .el-dialog__body) {
+  min-height: 0;
+  overflow-y: auto;
   padding-top: 12px;
+}
+
+:global(.target-batch-dialog .el-dialog__footer) {
+  flex-shrink: 0;
+  padding-top: 12px;
+}
+
+.target-batch-form .target-endpoint-choice__options {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.target-batch-form .target-endpoint-choice__options :deep(.el-radio) {
+  margin-right: 0;
+  white-space: normal;
+  height: auto;
+}
+
+.target-batch-form .target-endpoint-choice__options :deep(.el-radio__label) {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .target-batch-form {
