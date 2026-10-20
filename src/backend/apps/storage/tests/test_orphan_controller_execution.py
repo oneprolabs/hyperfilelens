@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import QuerySet
 from django.test import TransactionTestCase, SimpleTestCase
 from django.utils import timezone
 
@@ -84,6 +85,109 @@ class ControllerRecoveryTests(TransactionTestCase):
         self.candidate.save(update_fields=["status"])
         RepositoryTask.objects.filter(pk=self.rt.pk).update(execution_token=attempt.id)
         return attempt
+
+    def assert_concurrent_absence_remains_fenced(self, *, initial_scan: bool) -> None:
+        observed = {}
+
+        def begin_concurrent_intent():
+            observed["attempt"] = self.stopped_attempt()
+            fd = _open_lease(
+                Path(self.directory.name) / f"{observed['attempt'].id}.lease",
+            )
+            self.addCleanup(os.close, fd)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            observed["fd"] = fd
+
+        def inventory(repository):
+            if initial_scan:
+                return []
+            if not observed:
+                observed["initial_inventory"] = True
+                return [ITEM]
+            # A passed its prechecks. B committed an intent and removed the
+            # manifest, but its executor still positively owns the lease.
+            begin_concurrent_intent()
+            return []
+
+        original_iter = QuerySet.__iter__
+
+        def stale_absent_candidates(queryset):
+            rows = list(original_iter(queryset))
+            if (
+                initial_scan and queryset.model is RepositoryOrphanSnapshot
+                and rows and "attempt" not in observed
+                and any(getattr(child, "negated", False) for child in queryset.query.where.children)
+            ):
+                # Materialize the initial absent-candidate exclusion first,
+                # then commit B's intent before A projects those stale rows.
+                begin_concurrent_intent()
+            return iter(rows)
+
+        with (
+            patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory",
+                  side_effect=inventory),
+            patch.object(QuerySet, "__iter__", stale_absent_candidates),
+            patch("apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots") as delete,
+        ):
+            self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "recovering")
+            delete.assert_not_called()
+        self.candidate.refresh_from_db()
+        self.rt.refresh_from_db()
+        self.target.refresh_from_db()
+        self.assertEqual(self.candidate.status, "deleting")
+        self.assertEqual(self.rt.task.status, Task.Status.RUNNING)
+        self.assertEqual(self.rt.execution_token, observed["attempt"].id)
+        self.assertEqual(self.target.active_task_id, self.rt.task_id)
+        self.assertEqual(self.candidate.delete_attempts.count(), 1)
+        with confirmed_stopped(observed["attempt"]) as stopped:
+            self.assertFalse(stopped)
+        with self.assertRaises(ValidationError):
+            assert_no_orphan_cleanup(self.repository.id)
+
+        # Release only the actual execution lease, not the durable intent.
+        # The existing automatic recovery must then finish without redispatch.
+        fcntl.flock(observed["fd"], fcntl.LOCK_UN)
+        RepositoryTask.objects.filter(pk=self.rt.pk).update(
+            due_at=timezone.now() - timedelta(seconds=1),
+        )
+        with (
+            patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory",
+                  return_value=[]),
+            patch("apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots") as delete,
+        ):
+            self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "failed")
+            delete.assert_not_called()
+        self.candidate.refresh_from_db()
+        observed["attempt"].refresh_from_db()
+        self.target.refresh_from_db()
+        self.assertEqual(self.candidate.status, "absent")
+        self.assertEqual(observed["attempt"].state, "recovered")
+        self.assertIsNone(self.target.active_task_id)
+        self.assertEqual(self.candidate.delete_attempts.count(), 1)
+        assert_no_orphan_cleanup(self.repository.id)
+
+    def test_fresh_absence_cannot_supersede_concurrent_delete(self):
+        self.assert_concurrent_absence_remains_fenced(initial_scan=False)
+
+    def test_initial_absence_cannot_supersede_concurrent_delete(self):
+        self.assert_concurrent_absence_remains_fenced(initial_scan=True)
+
+    @patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory",
+           side_effect=[[ITEM], []])
+    def test_fresh_absence_without_pending_delete_can_finish(self, inventory):
+        self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "success")
+        self.candidate.refresh_from_db()
+        self.assertEqual(self.candidate.status, "absent")
+        self.assertFalse(self.candidate.delete_attempts.exists())
+        assert_no_orphan_cleanup(self.repository.id)
+
+    @patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory", return_value=[])
+    def test_initial_absence_without_pending_delete_can_finish(self, inventory):
+        self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "success")
+        self.candidate.refresh_from_db()
+        self.assertEqual(self.candidate.status, "absent")
+        self.assertFalse(self.candidate.delete_attempts.exists())
+        assert_no_orphan_cleanup(self.repository.id)
 
     def assert_other_intent_rejected(self, *, locked: bool) -> None:
         first = self.stopped_attempt(locked=locked)

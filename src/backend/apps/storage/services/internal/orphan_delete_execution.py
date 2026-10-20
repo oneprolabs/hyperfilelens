@@ -279,6 +279,14 @@ def controller_result_registration(
         if (
             task.status not in {Task.Status.RUNNING, Task.Status.WAITING}
             or target.active_task_id != task.id
+            # A non-executing observation cannot supersede a committed intent.
+            # The same Repository lock serializes this check with intent creation.
+            or (
+                (execution is None or execution.attempt is None)
+                and RepositoryOrphanSnapshot.objects.filter(
+                    target_id=target.id, status="deleting",
+                ).exists()
+            )
             or execution and execution.attempt
             and operation.execution_token != execution.attempt.id
             or execution

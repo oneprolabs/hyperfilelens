@@ -1,5 +1,6 @@
 """Durable, fail-closed discovery and delayed cleanup of unmanaged snapshots."""
 
+from contextlib import nullcontext
 from datetime import timedelta
 import logging
 import os
@@ -306,13 +307,13 @@ def run_orphan_reconciliation(repository_task_id):
         for candidate in RepositoryOrphanSnapshot.objects.filter(
             target=rt.execution_target, status__in=["candidate", "deleting"],
         ).exclude(snapshot_id__in=present):
-            if candidate.status == "deleting":
-                # Absence alone cannot prove the old deletion process has stopped.
-                return _wait(rt, "Deletion execution requires confirmation.")
-            else:
+            with controller_result_registration(rt, None) if controller else nullcontext():
+                if candidate.status == "deleting":
+                    # Absence alone cannot prove the old deletion process has stopped.
+                    return _wait(rt, "Deletion execution requires confirmation.")
                 candidate.status = "absent"
-            candidate.save(update_fields=["status"])
-            _record(rt, candidate, "absent")
+                candidate.save(update_fields=["status"])
+                _record(rt, candidate, "absent")
         for item in inventory:
             execution = None
             sid = item["snapshot_id"]
