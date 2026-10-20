@@ -24,6 +24,13 @@ class DingTalkDeliveryError(ChannelError):
         )
 
 
+class FeishuDeliveryError(ChannelError):
+    """Feishu accepted the HTTP request but did not confirm message delivery."""
+
+    def __init__(self, code: object, message: object):
+        super().__init__(f"Feishu rejected the message (code={code}): {message}")
+
+
 class WebhookTestError(ChannelError):
     """A classified failure from an interactive webhook connection test."""
 
