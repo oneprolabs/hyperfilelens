@@ -165,7 +165,8 @@
       "subscriptionQuotaExceededGateway": "共享数据网关当前容量不足。请稍后重试或联系平台管理员。",
       "subscriptionQuotaUsageUnavailable": "容量信息暂时不可用，请稍后重试。",
       "backupAlreadyRunning": "该备份源的备份正在启动或运行。请先停止备份或等待其完成，再继续操作。",
-      "restoreAlreadyRunning": "该备份源已有恢复任务正在运行"
+      "restoreAlreadyRunning": "该备份源已有恢复任务正在运行",
+      "notificationFeishuRejected": "飞书未接受测试消息，请检查机器人设置。"
     }
   },
   "feedback": {
@@ -7719,7 +7720,14 @@
       "toggleFailed": "操作失败，请重试",
       "orgFallback": "组织 #{id}",
       "channelFallback": "渠道 #{id}",
-      "unitMin": "分钟"
+      "unitMin": "分钟",
+      "feishuKeywordReason": "飞书机器人因消息不包含已配置的关键词而拒收。",
+      "feishuKeywordResolution": "在飞书群中打开“群机器人”，选择该自定义机器人，检查关键词安全设置。可将 HyperFileLens 设为允许的关键词，然后重试。",
+      "feishuSignatureReason": "飞书返回签名校验失败。",
+      "feishuSignatureResolution": "核对渠道的 Secret 是否与该飞书机器人的签名密钥一致，并确认 HyperFileLens 服务器时间准确，然后重试。",
+      "feishuDeliveryReason": "飞书未确认消息送达，原始响应可在“技术细节”中查看。",
+      "feishuDeliveryResolution": "确认 Webhook 地址属于目标飞书群的机器人，核对其关键词、签名及 IP 白名单设置。若响应格式无效，请检查代理或网关，然后重试。",
+      "tipWebhookSecret": "可选签名密钥。飞书/Lark 机器人请填写机器人签名设置中的密钥；其他 Webhook 使用 X-HFL-Signature HMAC-SHA256 请求头。不需要签名时留空。"
     },
     "audit": {
       "pageTitle": "操作审计",

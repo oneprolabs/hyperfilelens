@@ -294,6 +294,11 @@ const previewTargetRows = computed(() => {
       { label: t('ops.notification.formWebhookUrl'), value: form.webhook.url, mono: true },
       { label: t('ops.notification.webhookMethod'), value: form.webhook.method },
       { label: t('ops.notification.webhookTimeout'), value: `${form.webhook.timeout}s` },
+      {
+        label: t('ops.notification.formSecret'),
+        value: maskPreviewSecret(form.webhook.secret, form.webhook.secret_configured && !form.webhook.secret_editing),
+        mono: true,
+      },
     ]
   }
   if (form.type === 'dingtalk') {
@@ -341,10 +346,21 @@ function cancelDingtalkSecretEdit() {
   form.dingtalk.secret_editing = false
 }
 
-async function confirmDingtalkSecretClear(): Promise<boolean> {
-  if (form.type !== 'dingtalk' || !editingId.value ||
-      !form.dingtalk.secret_configured || !form.dingtalk.secret_editing ||
-      form.dingtalk.secret.trim()) return true
+function startWebhookSecretEdit() {
+  form.webhook.secret = ''
+  form.webhook.secret_editing = true
+}
+
+function cancelWebhookSecretEdit() {
+  form.webhook.secret = ''
+  form.webhook.secret_editing = false
+}
+
+async function confirmSecretClear(): Promise<boolean> {
+  const secret = form.type === 'webhook' ? form.webhook : form.type === 'dingtalk' ? form.dingtalk : null
+  if (!secret || !editingId.value ||
+      !secret.secret_configured || !secret.secret_editing ||
+      secret.secret.trim()) return true
   try {
     await ElMessageBox.confirm(
       t('ops.notification.emptySecretConfirm'),
@@ -449,7 +465,7 @@ async function saveChannel() {
   if (!(await validateRequiredFields())) return
   saving.value = true
   try {
-    if (!(await confirmDingtalkSecretClear())) return
+    if (!(await confirmSecretClear())) return
     const isEdit = !!editingId.value
     await persistChannel()
     ElMessage.success(
@@ -471,7 +487,7 @@ async function testFromEditor() {
   if (!(await validateRequiredFields())) return
   testing.value = true
   try {
-    if (!(await confirmDingtalkSecretClear())) return
+    if (!(await confirmSecretClear())) return
     const res = await testChannelConfig({
       ...(editingId.value ? { channel_id: editingId.value } : {}),
       name: form.name,
@@ -800,6 +816,57 @@ watch(() => form.type, () => {
                       </p>
                     </el-form-item>
                   </div>
+                  <el-form-item
+                    :label="t('ops.notification.formSecret')"
+                    class="fullscreen-form-item--in-card"
+                  >
+                    <template v-if="!editingId || form.webhook.secret_editing">
+                      <el-input
+                        v-model="form.webhook.secret"
+                        type="password"
+                        show-password
+                        :placeholder="t('ops.notification.phSecret')"
+                      />
+                      <p class="fullscreen-form-field__hint">
+                        {{ editingId && form.webhook.secret_configured
+                          ? t('ops.notification.tipRewriteSecret')
+                          : t('ops.notification.tipWebhookSecret') }}
+                      </p>
+                      <div
+                        v-if="editingId && form.webhook.secret_editing"
+                        class="flex items-center gap-3"
+                      >
+                        <el-button
+                          link
+                          type="info"
+                          @click="cancelWebhookSecretEdit"
+                        >
+                          {{ t('common.cancel') }}
+                        </el-button>
+                      </div>
+                    </template>
+                    <template v-else>
+                      <div class="flex flex-wrap items-center gap-3">
+                        <el-input
+                          :model-value="form.webhook.secret_configured ? '••••••••' : t('ops.notification.secretNotConfigured')"
+                          :type="form.webhook.secret_configured ? 'password' : 'text'"
+                          readonly
+                          disabled
+                        />
+                        <el-button
+                          size="small"
+                          @click="startWebhookSecretEdit"
+                        >
+                          {{ form.webhook.secret_configured
+                            ? t('ops.notification.rewriteSecret')
+                            : t('ops.notification.configureSecret') }}
+                        </el-button>
+                      </div>
+                      <p class="fullscreen-form-field__hint">
+                        {{ t('ops.notification.tipWebhookSecret') }}
+                      </p>
+                    </template>
+                  </el-form-item>
                   <el-form-item
                     :label="t('ops.notification.webhookHeaders')"
                     prop="webhook.headers"

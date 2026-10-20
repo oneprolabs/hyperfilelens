@@ -35,3 +35,46 @@ describe('DingTalk Secret draft', () => {
     expect(buildNotificationChannelConfig(form)).not.toHaveProperty('clear_secret')
   })
 })
+
+describe('Webhook Secret draft', () => {
+  it('starts without signing and submits a new signing key', () => {
+    const form = defaultNotificationChannelForm()
+    form.type = 'webhook'
+    expect(buildNotificationChannelConfig(form)).not.toHaveProperty('secret')
+    expect(buildNotificationChannelConfig(form)).not.toHaveProperty('clear_secret')
+    form.webhook.secret = '  new-secret  '
+    expect(buildNotificationChannelConfig(form)).toHaveProperty('secret', 'new-secret')
+  })
+
+  it('loads only configured state and preserves existing keys unless explicitly cleared', () => {
+    const form = defaultNotificationChannelForm()
+    form.type = 'webhook'
+    loadNotificationChannelConfig(form, 'webhook', {
+      url: 'https://open.feishu.cn/open-apis/bot/v2/hook/test',
+      secret: '********',
+    })
+    expect(form.webhook.secret).toBe('')
+    expect(form.webhook.secret_configured).toBe(true)
+    expect(buildNotificationChannelConfig(form)).not.toHaveProperty('secret')
+    expect(buildNotificationChannelConfig(form)).not.toHaveProperty('clear_secret')
+    form.webhook.secret_editing = true
+    expect(buildNotificationChannelConfig(form)).toHaveProperty('clear_secret', true)
+    form.webhook.secret = 'replacement'
+    expect(buildNotificationChannelConfig(form)).toHaveProperty('secret', 'replacement')
+    expect(buildNotificationChannelConfig(form)).not.toHaveProperty('clear_secret')
+    form.webhook.secret = ''
+    form.webhook.secret_editing = false
+    expect(buildNotificationChannelConfig(form)).not.toHaveProperty('clear_secret')
+  })
+
+  it('resets stale credential editing state when loading another channel', () => {
+    const form = defaultNotificationChannelForm()
+    form.webhook.secret = 'unsaved'
+    form.webhook.secret_editing = true
+    loadNotificationChannelConfig(form, 'webhook', { endpoint: 'https://example.com/hook' })
+    expect(form.webhook.secret).toBe('')
+    expect(form.webhook.secret_configured).toBe(false)
+    expect(form.webhook.secret_editing).toBe(false)
+    expect(form.webhook.url).toBe('https://example.com/hook')
+  })
+})

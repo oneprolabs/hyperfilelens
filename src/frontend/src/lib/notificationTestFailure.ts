@@ -32,7 +32,7 @@ function findRejection(value: unknown, depth = 0): { code: string; diagnostic: s
   const object = record(value)
   if (!object || depth > 5) return null
   const code = object.errorCode ?? object.error_code ?? object.code
-  if (code === 'NOTIFICATION.DINGTALK_REJECTED') {
+  if (code === 'NOTIFICATION.DINGTALK_REJECTED' || code === 'NOTIFICATION.FEISHU_REJECTED') {
     const nested = [object.detail, object.body, object.data]
       .map((child) => findRejection(child, depth + 1))
       .find((found) => found?.diagnostic)
@@ -54,6 +54,23 @@ export function notificationTestFailureDetails(
 ): ErrorDetailsPayload {
   const title = t('ops.notification.testFailed')
   const rejection = findRejection(error)
+  if (rejection?.code === 'NOTIFICATION.FEISHU_REJECTED') {
+    const diagnostic = rejection.diagnostic
+    const keywordFailure = /\bcode=19024\b|key\s*words?.{0,30}(?:not found|not match|mismatch)/i.test(diagnostic)
+      || isKeywordRejection(diagnostic)
+    const signatureFailure = /\bsign(?:ature)?.{0,40}(?:fail|invalid|mismatch|expired)/i.test(diagnostic)
+    const category = keywordFailure ? 'Keyword' : signatureFailure ? 'Signature' : 'Delivery'
+    const summary = t('errors.codes.notificationFeishuRejected')
+    return toErrorDetails(error, {
+      title,
+      summary,
+      issue: summary,
+      errorCode: rejection.code,
+      reasons: [t(`ops.notification.feishu${category}Reason`)],
+      resolutions: [t(`ops.notification.feishu${category}Resolution`)],
+      rawDetail: record(error)?.detail ?? error,
+    })
+  }
   if (rejection) {
     const isKeywordFailure = isKeywordRejection(rejection.diagnostic)
     const summary = t('errors.codes.notificationDingtalkRejected')

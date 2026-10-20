@@ -1,4 +1,8 @@
-from unittest.mock import patch
+import hashlib
+import hmac
+import json
+from base64 import b64encode
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -304,6 +308,103 @@ def test_webhook_test_returns_structured_failure(org_client):
         "message": "The webhook request timed out.",
         "error": "<urlopen error timed out>",
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("draft", [False, True])
+def test_feishu_http_success_with_business_rejection_returns_failure(org_client, draft):
+    client, org = org_client
+    channel = NotificationChannel.objects.create(
+        organization=org,
+        name="Feishu",
+        channel_type="webhook",
+        config={"url": "https://open.feishu.cn/open-apis/bot/v2/hook/test"},
+    )
+    response = MagicMock()
+    response.status = 200
+    response.read.return_value = b'{"code":9499,"msg":"Bad Request"}'
+    endpoint = (
+        "/api/v1/notifications/channels/test-config/"
+        if draft else f"/api/v1/notifications/channels/{channel.id}/test/"
+    )
+    data = {"type": "webhook", "config": channel.config} if draft else {}
+    with patch("apps.notification.channels.webhook.urlrequest.urlopen") as send:
+        send.return_value.__enter__.return_value = response
+        result = client.post(endpoint, data, format="json", HTTP_X_ORG_KEY=org.key)
+    assert result.status_code == 400, result.content
+    assert result.data["status"] == "failed"
+    assert result.data["code"] == "NOTIFICATION.FEISHU_REJECTED"
+    assert "9499" in result.data["error"]
+    assert send.call_count == 1
+
+
+@pytest.mark.django_db
+def test_webhook_secret_update_preserves_masks_replaces_and_clears(org_client):
+    client, org = org_client
+    channel = NotificationChannel.objects.create(
+        organization=org,
+        name="Feishu signed",
+        channel_type="webhook",
+        config={"url": "https://open.feishu.cn/open-apis/bot/v2/hook/test", "secret": "original"},
+    )
+    for extra, expected in [
+        ({}, "original"),
+        ({"secret": "********"}, "original"),
+        ({"secret": "replacement"}, "replacement"),
+        ({"clear_secret": True}, None),
+    ]:
+        response = client.patch(
+            f"/api/v1/notifications/channels/{channel.id}/",
+            {"config": {"url": channel.config["url"], **extra}},
+            format="json",
+            HTTP_X_ORG_KEY=org.key,
+        )
+        assert response.status_code == 200, response.content
+        channel.refresh_from_db()
+        assert channel.config.get("secret") == expected
+        assert response.data["config"].get("secret") == ("********" if expected else None)
+        assert "clear_secret" not in channel.config
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("override,expected", [
+    ({}, "original"),
+    ({"secret": "replacement"}, "replacement"),
+    ({"clear_secret": True}, None),
+])
+def test_webhook_draft_signing_uses_saved_replacement_or_clear_without_persisting(org_client, override, expected):
+    client, org = org_client
+    channel = NotificationChannel.objects.create(
+        organization=org,
+        name="Feishu signed",
+        channel_type="webhook",
+        config={"url": "https://open.feishu.cn/open-apis/bot/v2/hook/test", "secret": "original"},
+    )
+    response = MagicMock()
+    response.status = 200
+    response.read.return_value = b'{"code":0}'
+    with patch("apps.notification.channels.webhook.urlrequest.urlopen") as send:
+        send.return_value.__enter__.return_value = response
+        result = client.post(
+            "/api/v1/notifications/channels/test-config/",
+            {
+                "channel_id": channel.id,
+                "type": "webhook",
+                "config": {"url": channel.config["url"], **override},
+            },
+            format="json",
+            HTTP_X_ORG_KEY=org.key,
+        )
+    assert result.status_code == 200, result.content
+    payload = json.loads(send.call_args.args[0].data)
+    if expected:
+        digest = hmac.new(f'{payload["timestamp"]}\n{expected}'.encode(), b"", hashlib.sha256).digest()
+        assert payload["sign"] == b64encode(digest).decode()
+    else:
+        assert "sign" not in payload
+        assert "timestamp" not in payload
+    channel.refresh_from_db()
+    assert channel.config["secret"] == "original"
 
 
 @pytest.mark.django_db

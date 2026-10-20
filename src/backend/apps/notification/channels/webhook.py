@@ -10,12 +10,25 @@ from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
 
 from apps.notification.channels.base import BaseChannel
-from apps.notification.exceptions import ChannelConfigError, DingTalkDeliveryError
+from apps.notification.exceptions import ChannelConfigError, DingTalkDeliveryError, FeishuDeliveryError
 from apps.notification.models import NotificationChannel, NotificationDelivery
 
 
 def webhook_url(cfg: dict) -> str:
     return str(cfg.get("url") or cfg.get("webhook_url") or cfg.get("endpoint") or "").strip()
+
+
+def _webhook_platform(cfg: dict) -> str:
+    platform = str(cfg.get("webhook_platform") or "").strip().lower()
+    if platform and platform != "webhook":
+        return platform
+    parsed = urlparse(webhook_url(cfg))
+    if (
+        parsed.hostname in ("open.feishu.cn", "open.larksuite.com")
+        and parsed.path.startswith("/open-apis/bot/v2/hook/")
+    ):
+        return "feishu"
+    return platform
 
 
 def _list_config(value) -> list[str]:
@@ -60,8 +73,20 @@ def _dingtalk_url(url: str, secret: str) -> str:
 
 
 def _platform_payload(cfg: dict, delivery: NotificationDelivery) -> dict | None:
-    platform = str(cfg.get("webhook_platform") or "").lower()
+    platform = _webhook_platform(cfg)
     text = _delivery_text(delivery)
+    if platform == "feishu":
+        payload = {"msg_type": "text", "content": {"text": text}}
+        secret = str(cfg.get("secret") or "").strip()
+        if secret:
+            timestamp = str(int(time.time()))
+            digest = hmac.new(
+                f"{timestamp}\n{secret}".encode("utf-8"),
+                b"",
+                hashlib.sha256,
+            ).digest()
+            payload.update(timestamp=timestamp, sign=b64encode(digest).decode("utf-8"))
+        return payload
     if platform == "dingtalk":
         return {
             "msgtype": "text",
@@ -89,6 +114,22 @@ def _platform_payload(cfg: dict, delivery: NotificationDelivery) -> dict | None:
 
 def _validate_platform_response(platform: str, response_body: bytes) -> None:
     """Raise when a platform reports an application-level delivery failure."""
+    if platform == "feishu":
+        try:
+            result = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FeishuDeliveryError("invalid_response", "Invalid JSON response") from exc
+        if not isinstance(result, dict):
+            raise FeishuDeliveryError("invalid_response", "Expected a JSON object")
+        # Current responses use code/msg; older bots use StatusCode/StatusMessage.
+        codes = [result[key] for key in ("code", "StatusCode") if key in result]
+        failures = [code for code in codes if type(code) not in (int, str) or str(code) != "0"]
+        if not codes or failures:
+            raise FeishuDeliveryError(
+                failures[0] if failures else "missing_code",
+                result.get("msg") or result.get("StatusMessage") or "Unconfirmed delivery",
+            )
+        return
     if platform != "dingtalk":
         return
 
@@ -107,7 +148,7 @@ def _validate_platform_response(platform: str, response_body: bytes) -> None:
 class WebhookChannel(BaseChannel):
     def send(self, *, channel: NotificationChannel, delivery: NotificationDelivery) -> None:
         cfg = channel.config or {}
-        url = str(cfg.get("url") or cfg.get("endpoint") or "").strip()
+        url = webhook_url(cfg)
         if not url:
             raise ChannelConfigError("webhook channel missing config.url")
 
@@ -136,9 +177,11 @@ class WebhookChannel(BaseChannel):
                     headers[str(key)] = str(value)
 
         secret = str(cfg.get("secret") or "").strip()
-        platform = str(cfg.get("webhook_platform") or "").lower()
+        platform = _webhook_platform(cfg)
         if platform == "dingtalk":
             url = _dingtalk_url(url, secret)
+            secret = ""
+        if platform == "feishu":
             secret = ""
         if secret:
             sig = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()

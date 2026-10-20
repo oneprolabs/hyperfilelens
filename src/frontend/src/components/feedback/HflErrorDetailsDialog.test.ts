@@ -7,12 +7,14 @@ import { en } from '../../locales/en'
 import { closeErrorDetails, errorDetailsState, openErrorDetails } from '../../lib/errors/details'
 import type { ErrorDetailsPayload } from '../../lib/errors/details'
 import HflErrorDetailsDialog from './HflErrorDetailsDialog.vue'
+import { notificationTestFailureDetails } from '../../lib/notificationTestFailure'
 
 const { push, resolve } = vi.hoisted(() => ({
   push: vi.fn(),
   resolve: vi.fn(({ path, query }) => ({ href: `${path}?taskUuid=${encodeURIComponent(query.taskUuid)}` })),
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push, resolve }) }))
+vi.mock('../../lib/api', () => ({ apiErrorMessageI18n: () => 'Request failed' }))
 vi.mock('../../lib/taskDetailsLifecycle', () => ({ refreshTaskDetails: vi.fn(async (details) => details) }))
 vi.mock('../../lib/unregisterFailureDetails', () => ({
   mergeUnregisterDetails: (_t: unknown, items: ErrorDetailsPayload[]) => ({
@@ -32,6 +34,31 @@ function mountDialog() {
     },
   })
 }
+
+describe('notification rejection presentation', () => {
+  afterEach(() => closeErrorDetails())
+
+  it('renders Feishu keyword reasons and remedies in the shared error sections', async () => {
+    const wrapper = mountDialog()
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    openErrorDetails(notificationTestFailureDetails({
+      status: 400,
+      errorCode: 'NOTIFICATION.FEISHU_REJECTED',
+      detail: {
+        code: 'NOTIFICATION.FEISHU_REJECTED',
+        error: 'Feishu rejected the message (code=19024): Key Words Not Found',
+      },
+    }, (key) => i18n.global.t(key)))
+    await flushPromises()
+    const reasons = wrapper.get('.hfl-error-details__list')
+    const resolutions = wrapper.get('.hfl-error-details__list--resolve')
+    expect(reasons.text()).toContain(en.ops.notification.feishuKeywordReason)
+    expect(resolutions.text()).toContain(en.ops.notification.feishuKeywordResolution)
+    expect(wrapper.text()).toContain(en.feedback.errorDetails.reasons)
+    expect(wrapper.text()).toContain(en.feedback.errorDetails.resolutions)
+    wrapper.unmount()
+  })
+})
 
 describe('related task navigation', () => {
   afterEach(() => { closeErrorDetails(); push.mockClear(); resolve.mockClear() })
