@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Cloud, HardDrive, Layers, RefreshCw, Server } from 'lucide-vue-next'
-import HflPopover from '../../../components/HflPopover.vue'
+import { Check, Cloud, HardDrive, Layers, RefreshCw, Search, Server } from 'lucide-vue-next'
 import TargetRepositoryDetailCard from './TargetRepositoryDetailCard.vue'
 
 export type NasTargetMode = 'single_repo' | 'per_directory_repo'
@@ -43,25 +42,16 @@ const props = withDefaults(defineProps<{
   repoType: string
   nasMode?: NasTargetMode
   targets: TargetRepositoryItem[]
-  allTargets?: TargetRepositoryItem[]
   selectedTarget?: TargetRepositoryItem | null
-  repoTypeOptions: string[]
   targetPlaceholder: string
   repoTypePlaceholder: string
   noDataText: string
-  teleported?: boolean
-  showNasMode?: boolean
-  compact?: boolean
   refreshable?: boolean
   refreshing?: boolean
   refreshTitle?: string
 }>(), {
-  allTargets: () => [],
   nasMode: 'per_directory_repo',
   selectedTarget: null,
-  teleported: true,
-  showNasMode: true,
-  compact: false,
   refreshable: false,
   refreshing: false,
   refreshTitle: '',
@@ -71,568 +61,606 @@ const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:repoType': [value: string]
   'update:nasMode': [value: NasTargetMode]
-  search: [query: string]
-  visibleChange: [visible: boolean]
   refresh: []
 }>()
 
 const { t } = useI18n()
-const ALL_REPO_TYPE_VALUE = '__all__'
+const radioGroupName = useId()
 const localSearch = ref('')
-type TargetSelectExpose = {
-  focus?: () => void
-  toggleMenu?: () => void
-}
-const targetSelectRef = ref<TargetSelectExpose | null>(null)
-const targetSelectOpen = ref(false)
-type HflPopoverInstance = InstanceType<typeof HflPopover>
-const optionPopoverRefs = ref<HflPopoverInstance[]>([])
-let openTargetSelectTimer: ReturnType<typeof setTimeout> | null = null
-
-const resolvedSelectedTarget = computed<TargetRepositoryItem | null>(() =>
-  props.selectedTarget ?? props.targets.find((target) => target.id === props.modelValue) ?? null,
-)
-
-
-function autoNasModeForTarget(target: TargetRepositoryItem | null | undefined): NasTargetMode {
-  if (!target || target.repoType !== 'NAS') return 'per_directory_repo'
-  if (target.bindNodeType === 'proxy' && target.bindNodeId) return 'single_repo'
-  return 'per_directory_repo'
-}
-
-watch(
-  () => resolvedSelectedTarget.value,
-  (target) => {
-    if (target && target.repoType === 'NAS') {
-      emit('update:nasMode', autoNasModeForTarget(target))
-    }
-  },
-  { immediate: true },
-)
-
-
-
-const TARGET_TYPE_LABELS: Record<string, string> = {
-  S3: 'protection.backupsPage.repoTypeS3',
-  NAS: 'protection.backupsPage.repoTypeNas',
-  PROXY_FS: 'protection.backupsPage.repoTypeProxyFs',
-}
-
-function labelForRepoType(type: string): string {
-  if (type === 'S3') return 'Object Storage'
-  if (type === 'NAS') return 'NAS'
-  if (type === 'PROXY_FS') return 'Local Disk'
-  const key = TARGET_TYPE_LABELS[type]
-  if (key) return String(t(key))
-  return type
-}
-
-const repoTypeFilterOptions = [
-  { label: 'All', value: ALL_REPO_TYPE_VALUE, icon: markRaw(Layers) },
-  { label: 'Object Storage', value: 'S3', icon: markRaw(Cloud) },
-  { label: 'NAS', value: 'NAS', icon: markRaw(Server) },
-  { label: 'Local Disk', value: 'PROXY_FS', icon: markRaw(HardDrive) },
+const inspectedId = ref('')
+const resultsRef = ref<HTMLDivElement | null>(null)
+const typeOptions = [
+  { key: 'repoTypeAll', value: '', icon: Layers },
+  { key: 'repoTypeS3', value: 'S3', icon: Cloud },
+  { key: 'repoTypeNas', value: 'NAS', icon: Server },
+  { key: 'repoTypeProxyFs', value: 'PROXY_FS', icon: HardDrive },
 ]
-
-const activeRepoTypeValue = computed(() => props.repoType || ALL_REPO_TYPE_VALUE)
-
+const availableSelection = computed(() =>
+  props.targets.find((target) => target.id === props.modelValue),
+)
+const selected = computed(() =>
+  availableSelection.value ??
+    (props.selectedTarget?.id === props.modelValue ? props.selectedTarget : null),
+)
+const selectionUnavailable = computed(() => Boolean(props.modelValue && (
+  !availableSelection.value || availableSelection.value.disabled ||
+  !['online', 'unverified'].includes(health(availableSelection.value))
+)))
+const inspected = computed(() =>
+  props.targets.find((target) => target.id === inspectedId.value) ?? selected.value,
+)
+const inspectingSelection = computed(() => inspected.value?.id === props.modelValue)
 const filteredTargets = computed(() => {
   const query = localSearch.value.trim().toLowerCase()
-  if (!query) return props.targets
   return props.targets.filter((target) =>
-    target.name.toLowerCase().includes(query) ||
-    target.location.toLowerCase().includes(query) ||
-    target.repoType.toLowerCase().includes(query),
+    (!props.repoType || target.repoType === props.repoType) &&
+    (!query || [target.name, target.location, target.repoType, typeLabel(target.repoType)]
+      .some((value) => value.toLowerCase().includes(query))),
   )
 })
+const selectionHidden = computed(() => !selectionUnavailable.value && selected.value &&
+  !filteredTargets.value.some((target) => target.id === props.modelValue),
+)
 
-function updateRepoType(value: string) {
-  emit('update:repoType', value === ALL_REPO_TYPE_VALUE ? '' : value)
+watch(() => props.modelValue, () => { inspectedId.value = '' })
+watch(selected, (target) => {
+  if (target?.repoType === 'NAS' && !selectionUnavailable.value) {
+    emit('update:nasMode', target.bindNodeType === 'proxy' && target.bindNodeId
+      ? 'single_repo' : 'per_directory_repo')
+  }
+}, { immediate: true })
+
+function typeLabel(type: string) {
+  const option = typeOptions.find((option) => option.value === type)
+  return option ? t(`protection.backupsPage.${option.key}`) : type
 }
-
-function isRepoTypeFilterChecked(value: string): boolean {
-  return activeRepoTypeValue.value === value
+function typeCount(type: string) {
+  return props.targets.filter((target) => !type || target.repoType === type).length
 }
-
-function repoTypeFilterCount(value: string): number {
-  const source = props.allTargets && props.allTargets.length > 0 ? props.allTargets : props.targets
-  if (value === ALL_REPO_TYPE_VALUE) return source.length
-  return source.filter((target) => target.repoType === value).length
+function health(target: TargetRepositoryItem) {
+  return target.health || target.status || 'unverified'
 }
-
-function clearTargetSearch() {
+function healthLabel(target: TargetRepositoryItem) {
+  const value = health(target)
+  return t(`protection.backupsPage.${value === 'online' ? 'targetHealthOnline'
+    : value === 'offline' ? 'targetHealthOffline'
+      : value === 'unverified' ? 'targetHealthUnverified' : 'targetPickerUnknown'}`)
+}
+function choose(target: TargetRepositoryItem) {
+  if (target.disabled) return
+  inspectedId.value = ''
+  if (target.id !== props.modelValue) emit('update:modelValue', target.id)
+}
+function restoreSelectedDetails(target: TargetRepositoryItem) {
+  if (target.id === props.modelValue && !target.disabled) inspectedId.value = ''
+}
+async function locateSelection() {
+  const targetId = props.modelValue
   localSearch.value = ''
-  emit('search', '')
-}
+  emit('update:repoType', '')
+  inspectedId.value = ''
+  await nextTick()
 
-function cancelScheduledTargetSelectOpen() {
-  if (openTargetSelectTimer === null) return
-  clearTimeout(openTargetSelectTimer)
-  openTargetSelectTimer = null
-}
+  const results = resultsRef.value
+  if (!results || !targetId || targetId !== props.modelValue || selectionUnavailable.value) return
+  const radio = Array.from(results.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
+    .find((input) => input.value === targetId)
+  const row = radio?.closest<HTMLElement>('.target-repository-picker__row')
+  if (!radio || !row || radio.disabled) return
 
-function scheduleTargetSelectOpen(delay = 0) {
-  cancelScheduledTargetSelectOpen()
-  void nextTick(() => {
-    openTargetSelectTimer = setTimeout(() => {
-      const select = targetSelectRef.value
-      select?.focus?.()
-      if (!targetSelectOpen.value) {
-        select?.toggleMenu?.()
-      }
-      openTargetSelectTimer = null
-    }, delay)
-  })
-}
-
-function selectRepoTypeFilter(value: string) {
-  clearTargetSearch()
-  if (!isRepoTypeFilterChecked(value)) {
-    updateRepoType(value)
+  // Scroll only this list, not the surrounding dialog or wizard.
+  const viewportTop = results.getBoundingClientRect().top + results.clientTop
+  const viewportBottom = viewportTop + results.clientHeight
+  const bounds = row.getBoundingClientRect()
+  if (bounds.top < viewportTop || bounds.height > results.clientHeight) {
+    results.scrollTop += bounds.top - viewportTop
+  } else if (bounds.bottom > viewportBottom) {
+    results.scrollTop += bounds.bottom - viewportBottom
   }
-  scheduleTargetSelectOpen()
-}
-
-function updateSearch(query: string) {
-  localSearch.value = query
-  emit('search', query)
-}
-
-function hideOptionPopovers() {
-  for (const popover of optionPopoverRefs.value) {
-    popover?.hide?.()
-  }
-}
-
-function updateTargetValue(value: unknown) {
-  hideOptionPopovers()
-  emit('update:modelValue', String(value || ''))
-}
-
-function handleVisibleChange(visible: boolean) {
-  targetSelectOpen.value = visible
-  if (visible) localSearch.value = ''
-  else hideOptionPopovers()
-  emit('visibleChange', visible)
-}
-
-onMounted(() => {
-  if (activeRepoTypeValue.value === ALL_REPO_TYPE_VALUE && !props.modelValue) {
-    scheduleTargetSelectOpen(120)
-  }
-})
-
-onBeforeUnmount(() => {
-  cancelScheduledTargetSelectOpen()
-  hideOptionPopovers()
-})
-
-function resolveHealth(target: TargetRepositoryItem): TargetRepositoryHealth {
-  if (target.health) return target.health
-  return target.status ?? 'unverified'
-}
-
-function healthLabel(health: TargetRepositoryHealth): string {
-  if (health === 'online') return 'Online'
-  if (health === 'offline') return 'Offline'
-  if (health === 'unverified') return 'Unverified'
-  return 'Unknown'
-}
-
-function healthTagType(health: TargetRepositoryHealth): 'success' | 'warning' | 'danger' | 'info' {
-  if (health === 'online') return 'success'
-  if (health === 'offline') return 'danger'
-  if (health === 'unverified') return 'warning'
-  return 'info'
-}
-
-function nasProtocolLabel(protocol?: string | null): string {
-  if (!protocol) return ''
-  if (protocol === 'nfs') return 'NFS'
-  if (protocol === 'smb') return 'SMB'
-  return protocol.toUpperCase()
+  radio.focus({ preventScroll: true })
 }
 </script>
 
 <template>
-  <div
-    class="target-repository-picker"
-    :class="{ 'target-repository-picker--compact': compact }"
-  >
-    <ElFormItem>
-      <template #label>
-        <span class="target-repository-picker__label-row">
-          <span>{{ t('protection.backupsPage.targetRepositoryListLabel') }}</span>
-          <ElButton
-            v-if="refreshable"
-            class="hfl-refresh-button target-repository-picker__refresh"
-            :title="refreshTitle || t('common.refresh')"
-            :aria-label="refreshTitle || t('common.refresh')"
-            :disabled="refreshing"
-            @click.stop="emit('refresh')"
-          >
-            <RefreshCw
-              :size="15"
-              stroke-width="2"
-              :class="{ 'is-spinning': refreshing }"
-            />
-          </ElButton>
-        </span>
-      </template>
-      <div class="target-repository-picker__selector">
+  <div class="target-repository-picker">
+    <div class="target-repository-picker__toolbar">
+      <ElInput
+        v-model="localSearch"
+        clearable
+        :placeholder="targetPlaceholder"
+        :aria-label="t('protection.backupsPage.targetRepositorySearchLabel')"
+      >
+        <template #prefix>
+          <Search :size="16" />
+        </template>
+      </ElInput>
+      <ElButton
+        v-if="refreshable"
+        class="hfl-refresh-button"
+        :title="refreshTitle || t('common.refresh')"
+        :aria-label="refreshTitle || t('common.refresh')"
+        :disabled="refreshing"
+        @click="emit('refresh')"
+      >
+        <RefreshCw
+          :size="16"
+          :class="{ 'is-spinning': refreshing }"
+        />
+      </ElButton>
+    </div>
+    <div
+      class="target-repository-picker__filters"
+      role="group"
+      :aria-label="repoTypePlaceholder"
+    >
+      <button
+        v-for="option in typeOptions"
+        :key="option.value"
+        type="button"
+        class="target-repository-picker__filter"
+        :aria-pressed="repoType === option.value"
+        @click="emit('update:repoType', option.value)"
+      >
+        <component
+          :is="option.icon"
+          :size="15"
+        />
+        {{ t(`protection.backupsPage.${option.key}`) }}
+        <span class="target-repository-picker__count">{{ typeCount(option.value) }}</span>
+      </button>
+    </div>
+    <div
+      v-if="selectionUnavailable"
+      class="target-repository-picker__notice target-repository-picker__notice--unavailable"
+      role="status"
+    >
+      {{ t('protection.backupsPage.targetPickerSelectionUnavailable') }}
+    </div>
+    <div
+      v-else-if="selectionHidden"
+      class="target-repository-picker__notice"
+      role="status"
+    >
+      {{ t('protection.backupsPage.targetPickerSelectionHidden') }}
+      <ElButton
+        link
+        type="primary"
+        @click="locateSelection"
+      >
+        {{ t('protection.backupsPage.targetPickerLocate') }}
+      </ElButton>
+    </div>
+    <div class="target-repository-picker__panels">
+      <div
+        ref="resultsRef"
+        class="target-repository-picker__results scrollbar"
+        :aria-busy="refreshing"
+      >
         <div
-          class="target-repository-picker__type-panel"
-          role="listbox"
-          :aria-label="repoTypePlaceholder"
+          class="target-repository-picker__results-heading"
+          aria-live="polite"
         >
-          <button
-            v-for="option in repoTypeFilterOptions"
-            :key="option.value"
-            type="button"
-            class="target-repository-picker__type-option"
-            :class="{ 'is-selected': isRepoTypeFilterChecked(option.value) }"
-            role="option"
-            :aria-selected="isRepoTypeFilterChecked(option.value)"
-            @click="selectRepoTypeFilter(option.value)"
-          >
-            <span class="target-repository-picker__type-option-content">
-              <component
-                :is="option.icon"
-                :size="14"
-                stroke-width="2"
-                class="target-repository-picker__type-option-icon"
-              />
-              <span class="target-repository-picker__type-option-label">{{ option.label }}</span>
-            </span>
-            <span class="target-repository-picker__type-option-count">{{ repoTypeFilterCount(option.value) }}</span>
-          </button>
+          {{ t('protection.backupsPage.targetPickerResults', { n: filteredTargets.length }) }}
         </div>
-
-        <div class="target-repository-picker__select-column">
-          <el-select
-            ref="targetSelectRef"
-            :model-value="modelValue"
-            filterable
-            clearable
-            :teleported="teleported"
-            :filter-method="updateSearch"
-            :reserve-keyword="false"
-            :placeholder="targetPlaceholder"
-            :no-data-text="noDataText"
-            popper-class="target-repository-picker-popper"
-            @update:model-value="updateTargetValue"
-            @visible-change="handleVisibleChange"
+        <div
+          role="group"
+          :aria-label="t('protection.backupsPage.targetRepositoryListLabel')"
+        >
+          <div
+            v-for="target in filteredTargets"
+            :key="target.id"
+            class="target-repository-picker__row"
+            :class="{ 'is-selected': target.id === modelValue, 'is-disabled': target.disabled }"
           >
-            <el-option
-              v-for="target in filteredTargets"
-              :key="target.id"
-              :label="target.name"
-              :value="target.id"
-              :disabled="target.disabled"
+            <label
+              class="target-repository-picker__choice"
+              @click="restoreSelectedDetails(target)"
             >
-              <HflPopover
-                ref="optionPopoverRefs"
-                trigger="hover"
-                placement="right-start"
-                :width="420"
-                :show-after="300"
-                :persistent="false"
-                teleported
-                :disabled="!target.repoType"
+              <input
+                type="radio"
+                :name="radioGroupName"
+                :checked="target.id === modelValue"
+                :disabled="target.disabled"
+                :value="target.id"
+                @change="choose(target)"
               >
-                <template #reference>
-                  <div
-                    class="target-repository-picker-option"
-                    :class="{ 'is-disabled': target.disabled }"
-                    @pointerdown.capture="hideOptionPopovers"
+              <span class="target-repository-picker__row-content">
+                <span class="target-repository-picker__row-heading">
+                  <span class="target-repository-picker__name">{{ target.name }}</span>
+                  <span
+                    class="target-repository-picker__health"
+                    :class="`is-${health(target)}`"
                   >
-                    <div class="target-repository-picker-option__head">
-                      <span class="target-repository-picker-option__name">{{ target.name }}</span>
-                      <span class="target-repository-picker-option__tags">
-                        <el-tag
-                          size="small"
-                          effect="plain"
-                          :class="`wizard-repo-type-tag wizard-repo-type-tag--${target.repoType.toLowerCase()}`"
-                        >
-                          {{ labelForRepoType(target.repoType) }}
-                        </el-tag>
-                        <el-tag
-                          v-if="target.repoType === 'NAS' && target.nasProtocol"
-                          size="small"
-                          effect="plain"
-                          :class="`wizard-protocol-tag wizard-protocol-tag--${target.nasProtocol}`"
-                        >
-                          {{ nasProtocolLabel(target.nasProtocol) }}
-                        </el-tag>
-                        <el-tag
-                          size="small"
-                          :type="healthTagType(resolveHealth(target))"
-                          effect="plain"
-                        >
-                          {{ healthLabel(resolveHealth(target)) }}
-                        </el-tag>
-                      </span>
-                    </div>
-                    <span class="target-repository-picker-option__location">{{ target.location }}</span>
-                  </div>
-                </template>
-                <TargetRepositoryDetailCard :target="target" />
-              </HflPopover>
-            </el-option>
-          </el-select>
+                    <span aria-hidden="true" />{{ healthLabel(target) }}
+                  </span>
+                </span>
+                <span class="target-repository-picker__meta">
+                  <span class="target-repository-picker__type">
+                    {{ typeLabel(target.repoType) }}<template v-if="target.nasProtocol"> · {{ target.nasProtocol.toUpperCase() }}</template>
+                  </span>
+                  <span
+                    class="target-repository-picker__location"
+                    :title="target.location"
+                  >{{ target.location }}</span>
+                </span>
+              </span>
+            </label>
+            <div
+              v-if="target.disabled"
+              class="target-repository-picker__disabled-reason"
+            >
+              <span>{{ target.disabledReason }}</span>
+              <ElButton
+                link
+                type="primary"
+                @click="inspectedId = target.id"
+              >
+                {{ t('protection.backupsPage.targetPickerViewReason') }}
+              </ElButton>
+            </div>
+          </div>
+        </div>
+        <div
+          v-if="!filteredTargets.length"
+          class="target-repository-picker__empty"
+          role="status"
+        >
+          <Search
+            :size="28"
+            aria-hidden="true"
+          />
+          {{ noDataText }}
         </div>
       </div>
-    </ElFormItem>
+      <aside
+        class="target-repository-picker__detail scrollbar"
+        :aria-label="t('protection.backupsPage.targetPickerDetails')"
+      >
+        <div class="target-repository-picker__detail-heading">
+          <Check
+            v-if="inspected && inspectingSelection"
+            :size="16"
+          />
+          {{ t(`protection.backupsPage.${inspected && inspectingSelection ? 'targetRepositorySelectedLabel' : 'targetPickerDetails'}`) }}
+        </div>
+        <template v-if="inspected">
+          <TargetRepositoryDetailCard :target="inspected" />
+          <slot
+            v-if="inspectingSelection && !selectionUnavailable"
+            name="selection-options"
+          />
+          <ElButton
+            v-else-if="selected"
+            link
+            type="primary"
+            @click="inspectedId = ''"
+          >
+            {{ t('protection.backupsPage.targetPickerReturnToSelection') }}
+          </ElButton>
+        </template>
+        <div
+          v-else
+          class="target-repository-picker__empty"
+        >
+          <HardDrive
+            :size="32"
+            aria-hidden="true"
+          />
+          <strong>{{ t('protection.backupsPage.targetPickerChoose') }}</strong>
+          <span>{{ t('protection.backupsPage.targetPickerChooseHint') }}</span>
+        </div>
+      </aside>
+    </div>
+    <div
+      class="target-repository-picker__summary"
+      role="status"
+    >
+      <Check
+        v-if="selected"
+        :size="16"
+        aria-hidden="true"
+      />
+      <span>{{ selected
+        ? t('protection.backupsPage.targetPickerSelected', { name: selected.name })
+        : t('protection.backupsPage.targetPickerChoose') }}</span>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .target-repository-picker {
   display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--el-text-color-primary);
+}
+
+.target-repository-picker__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.target-repository-picker__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.target-repository-picker__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 7px;
+  background: var(--el-bg-color-overlay);
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.target-repository-picker__filter[aria-pressed='true'] {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--el-bg-color-overlay));
+  color: var(--color-primary);
+}
+
+.target-repository-picker__filter:focus-visible,
+.target-repository-picker__choice:has(input:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.target-repository-picker__count {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--el-fill-color);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.target-repository-picker__panels {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: stretch;
+  border: 1px solid var(--el-border-color);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.target-repository-picker__results,
+.target-repository-picker__detail {
+  min-width: 0;
+  max-height: min(480px, 48dvh);
+  overflow-y: auto;
+}
+
+.target-repository-picker__results {
+  padding: 12px 12px 8px;
+  background: var(--el-bg-color-overlay);
+}
+
+.target-repository-picker__results-heading {
+  padding: 0 4px 10px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.target-repository-picker__row {
+  border-bottom: 1px solid var(--el-border-color-light);
+}
+
+.target-repository-picker__row:last-child {
+  border-bottom: 0;
+}
+
+.target-repository-picker__row:hover:not(.is-disabled) {
+  background: var(--el-fill-color-light);
+}
+
+.target-repository-picker__row.is-selected,
+.target-repository-picker__row.is-selected:hover {
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--el-bg-color-overlay));
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
+.target-repository-picker__choice {
+  display: flex;
+  min-height: 56px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.target-repository-picker__choice input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin: 0;
+  accent-color: var(--color-primary);
+}
+
+.target-repository-picker__row-content {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.target-repository-picker__row-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.target-repository-picker__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.target-repository-picker__health {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.target-repository-picker__health > span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+
+.target-repository-picker__health.is-online {
+  color: var(--el-color-success);
+}
+
+.target-repository-picker__health.is-unverified {
+  color: var(--el-color-warning);
+}
+
+.target-repository-picker__health.is-offline {
+  color: var(--el-color-danger);
+}
+
+.target-repository-picker__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.target-repository-picker__type {
+  flex: 0 0 auto;
+}
+
+.target-repository-picker__location {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding-left: 8px;
+  border-left: 1px solid var(--el-border-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+}
+
+.target-repository-picker__row.is-disabled .target-repository-picker__choice {
+  color: var(--el-text-color-secondary);
+  cursor: not-allowed;
+}
+
+.target-repository-picker__disabled-reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0 12px 8px 36px;
+  color: var(--el-color-warning);
+  font-size: 12px;
+}
+
+.target-repository-picker__detail {
+  display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 20px;
+  border-left: 1px solid var(--el-border-color);
+  background: var(--el-fill-color-light);
 }
 
-.target-repository-picker-option.is-disabled {
-  cursor: not-allowed;
-  filter: grayscale(1);
-  opacity: 0.52;
-}
-
-.target-repository-picker--compact {
-  gap: 10px;
-}
-
-.target-repository-picker :deep(.el-form-item) {
-  margin-bottom: 0;
-}
-
-.target-repository-picker :deep(.el-form-item__label) {
-  padding-bottom: 7px;
-  color: rgb(71 85 105);
-  font-size: 13px;
-  font-weight: 650;
-  line-height: 18px;
-}
-
-.target-repository-picker__label-row {
-  display: inline-flex;
+.target-repository-picker__detail-heading {
+  display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
-}
-
-.target-repository-picker__refresh {
-  width: 28px !important;
-  height: 28px !important;
-  min-width: 28px !important;
-  min-height: 28px !important;
-  flex: 0 0 28px;
-  box-sizing: border-box;
-  line-height: 1;
-  --el-button-size: 28px;
-  transform: translateZ(0);
-  -webkit-font-smoothing: antialiased;
-  backface-visibility: hidden;
-}
-
-.target-repository-picker__refresh :deep(svg) {
-  display: block;
-  shape-rendering: geometricPrecision;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.target-repository-picker__refresh :deep(.el-icon) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.target-repository-picker :deep(.el-select) {
-  width: 100%;
-}
-
-.target-repository-picker__selector {
-  display: grid;
-  grid-template-columns: 178px minmax(0, 1fr);
-  gap: 12px;
-  align-items: stretch;
-  width: 100%;
-}
-
-.target-repository-picker__type-panel {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  border-radius: 8px;
-  background: rgb(248 250 252);
-  padding: 6px;
-}
-
-.target-repository-picker__type-option {
-  position: relative;
-  display: flex;
-  width: 100%;
-  min-height: 34px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 0 9px 0 10px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: rgb(71 85 105);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-  transition:
-    background 0.16s ease,
-    border-color 0.16s ease,
-    box-shadow 0.16s ease,
-    color 0.16s ease;
-}
-
-.target-repository-picker__type-option::before {
-  position: absolute;
-  top: 7px;
-  bottom: 7px;
-  left: 0;
-  width: 3px;
-  border-radius: 0 999px 999px 0;
-  background: transparent;
-  content: '';
-}
-
-.target-repository-picker__type-option:hover {
-  background: #ffffff;
-  border-color: rgba(203, 213, 225, 0.82);
-}
-
-.target-repository-picker__type-option:focus-visible {
-  outline: none;
-  border-color: color-mix(in srgb, var(--color-primary) 46%, rgb(203 213 225));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 14%, transparent);
-}
-
-.target-repository-picker__type-option.is-selected {
-  background: #ffffff;
-  border-color: color-mix(in srgb, var(--color-primary) 20%, rgb(203 213 225));
-  color: color-mix(in srgb, var(--color-primary) 82%, #000);
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
-}
-
-.target-repository-picker__type-option.is-selected::before {
-  background: var(--color-primary);
-}
-
-.target-repository-picker__type-option-content {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  align-items: center;
-  gap: 7px;
   font-size: 12px;
-  font-weight: 650;
-  line-height: 1;
-}
-
-.target-repository-picker__type-option-icon {
-  flex: 0 0 auto;
-  color: rgb(100 116 139);
-}
-
-.target-repository-picker__type-option.is-selected .target-repository-picker__type-option-icon {
-  color: color-mix(in srgb, var(--color-primary) 76%, #000);
-}
-
-.target-repository-picker__type-option-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.target-repository-picker__type-option-count {
-  display: inline-flex;
-  min-width: 22px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: rgb(226 232 240);
-  color: rgb(71 85 105);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 18px;
-}
-
-.target-repository-picker__type-option.is-selected .target-repository-picker__type-option-count {
-  background: color-mix(in srgb, var(--color-primary) 12%, #ffffff);
-  color: color-mix(in srgb, var(--color-primary) 86%, #000);
-}
-
-.target-repository-picker__select-column {
-  min-width: 0;
-}
-
-.target-repository-picker-option__location {
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  line-height: 1.45;
-  color: rgb(100 116 139);
-}
-
-.target-repository-picker-option {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 2px 0;
-  cursor: default;
-}
-
-.target-repository-picker-option__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.target-repository-picker-option__name {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 13px;
   font-weight: 600;
-  color: var(--color-primary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--el-text-color-secondary);
 }
 
-.target-repository-picker-option__tags {
-  display: inline-flex;
-  flex: 0 0 auto;
+.target-repository-picker__empty {
+  display: flex;
+  min-height: 180px;
+  flex: 1;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-@media (max-width: 767.98px) {
-  .target-repository-picker__selector {
+.target-repository-picker__notice,
+.target-repository-picker__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.target-repository-picker__summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.target-repository-picker__notice--unavailable {
+  color: var(--el-color-warning);
+}
+
+.target-repository-picker__summary svg {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+@media (max-width: 760px) {
+  .target-repository-picker__panels {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .target-repository-picker__type-panel {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .target-repository-picker__results {
+    max-height: 32dvh;
   }
 
-  .target-repository-picker-option__head {
-    align-items: flex-start;
+  .target-repository-picker__detail {
+    max-height: none;
+    border-top: 1px solid var(--el-border-color);
+    border-left: 0;
+  }
+
+  .target-repository-picker__row-heading {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .target-repository-picker__meta {
+    align-items: stretch;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
+  }
+
+  .target-repository-picker__location {
+    padding-left: 0;
+    border-left: 0;
   }
 }
 </style>

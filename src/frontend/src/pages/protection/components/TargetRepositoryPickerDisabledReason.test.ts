@@ -16,10 +16,11 @@ const detailCard = readFileSync(
 )
 
 describe('target repository disabled reasons', () => {
-  it('grays incompatible targets while keeping the repository detail hover available', () => {
+  it('disables incompatible targets while keeping an explicit reason action available', () => {
     expect(picker).toContain(':disabled="target.disabled"')
-    expect(picker).toContain("{ 'is-disabled': target.disabled }")
-    expect(picker).toContain(':disabled="!target.repoType"')
+    expect(picker).toContain("'is-disabled': target.disabled")
+    expect(picker).toContain("targetPickerViewReason")
+    expect(picker).toContain('@click="inspectedId = target.id"')
     expect(picker).not.toContain('HflHelpTip')
   })
 
