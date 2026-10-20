@@ -25,12 +25,13 @@ from apps.storage.repositories.models import (
 from apps.storage.services.internal import orphan_delete_runner
 from apps.storage.services.internal.orphan_delete_execution import (
     ControllerDelete, confirmed_stopped, _open_lease, _require_local_filesystem,
-    _root, repository_delete_revision,
+    _root, controller_result_registration, recover_controller_deletions,
+    repository_delete_revision,
 )
 from apps.storage.services.internal.kopia_cli import KopiaCliError
 from apps.storage.services.internal.orphan_reconciliation_errors import OrphanReconciliationError
 from apps.storage.services.internal.orphan_snapshot_fence import assert_no_orphan_cleanup
-from apps.storage.services.internal.orphan_snapshots import run_orphan_reconciliation
+from apps.storage.services.internal.orphan_snapshots import _finish, _record, run_orphan_reconciliation
 from apps.storage.services.internal.repository_operations import (
     create_repository_operation_task, discover_repository_execution_targets,
 )
@@ -83,6 +84,92 @@ class ControllerRecoveryTests(TransactionTestCase):
         self.candidate.save(update_fields=["status"])
         RepositoryTask.objects.filter(pk=self.rt.pk).update(execution_token=attempt.id)
         return attempt
+
+    def advance_past_stale_recovery(self) -> tuple[RepositoryOrphanSnapshot, ControllerDelete]:
+        """Interleave two advances after loss of the shared cache lock."""
+        first = self.stopped_attempt()
+        first.state, first.exit_code, first.finished_at = "finished", 0, timezone.now()
+        first.save(update_fields=["state", "exit_code", "finished_at"])
+        second = RepositoryOrphanSnapshot.objects.create(
+            target=self.target, snapshot_id="b" * 32, source={},
+            first_seen_at=timezone.now() - timedelta(days=3),
+            last_seen_at=timezone.now(),
+        )
+        # B recovers the stopped first command, then pauses before finalizing.
+        self.assertTrue(recover_controller_deletions(self.rt, [{
+            "snapshot_id": second.snapshot_id, "source": {}, "operation_id": "",
+        }]))
+        # A registers its valid first result and moves to the second snapshot.
+        previous = SimpleNamespace(attempt=first, revision=first.observation_revision)
+        with controller_result_registration(self.rt, previous):
+            self.candidate.status = "deleted"
+            self.candidate.save(update_fields=["status"])
+            _record(self.rt, self.candidate, "deleted")
+        execution = ControllerDelete(self.rt, second)
+        original_popen = subprocess.Popen
+        observed = {}
+
+        def launch_then_finish_old_recovery(*args, **kwargs):
+            process = original_popen(*args, **kwargs)
+            # Intent two is committed and its executor owns the lease when B
+            # resumes the stale finalization of recovery one.
+            observed["result"] = _finish(
+                self.rt, False, "Previous command recovered",
+                scanned=2, error_code="ORPHAN_DELETE_RECOVERED",
+            )
+            self.rt.task.refresh_from_db()
+            self.target.refresh_from_db()
+            observed["status"] = self.rt.task.status
+            observed["active_task"] = self.target.active_task_id
+            return process
+
+        with patch(
+            "apps.storage.services.internal.orphan_delete_execution.subprocess.Popen",
+            side_effect=launch_then_finish_old_recovery,
+        ):
+            result = execution.run(
+                [self.fake_cli("pass"), "snapshot", "delete", second.snapshot_id, "--delete"],
+                os.environ.copy(), 3,
+            )
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(observed, {
+            "result": {"status": "recovering"},
+            "status": Task.Status.RUNNING, "active_task": self.rt.task_id,
+        })
+        second.refresh_from_db()
+        self.assertEqual(second.status, "deleting")
+        with self.assertRaises(ValidationError):
+            assert_no_orphan_cleanup(self.repository.id)
+        return second, execution
+
+    def test_stale_recovery_finish_does_not_strand_next_delete_result(self):
+        second, execution = self.advance_past_stale_recovery()
+        with controller_result_registration(self.rt, execution):
+            second.status = "deleted"
+            second.deleted_at = timezone.now()
+            second.save(update_fields=["status", "deleted_at"])
+            _record(self.rt, second, "deleted")
+        self.assertEqual(_finish(self.rt, True, scanned=2), {"status": "success"})
+        self.target.refresh_from_db()
+        self.assertIsNone(self.target.active_task_id)
+        assert_no_orphan_cleanup(self.repository.id)
+
+    @patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory", return_value=[])
+    def test_stale_recovery_finish_preserves_recovery_of_next_lost_result(self, inventory):
+        second, execution = self.advance_past_stale_recovery()
+        # A disappears after command two completes, without registering it.
+        RepositoryTask.objects.filter(pk=self.rt.pk).update(
+            due_at=timezone.now() - timedelta(seconds=1),
+        )
+        self.assertEqual(run_orphan_reconciliation(self.rt.id)["status"], "failed")
+        second.refresh_from_db()
+        execution.attempt.refresh_from_db()
+        self.target.refresh_from_db()
+        self.assertEqual(second.status, "absent")
+        self.assertEqual(execution.attempt.state, "recovered")
+        self.assertEqual(second.delete_attempts.count(), 1)
+        self.assertIsNone(self.target.active_task_id)
+        assert_no_orphan_cleanup(self.repository.id)
 
     @patch("apps.storage.services.internal.orphan_snapshots.delete_s3_snapshots")
     @patch("apps.storage.services.internal.orphan_snapshots.controller_snapshot_inventory", return_value=[ITEM])
@@ -684,13 +771,17 @@ time.sleep(60)
                 parent.wait(timeout=5)
                 deadline = time.monotonic() + 10
                 receipt = root / f"{attempt}.json"
+                stopped = False
                 while time.monotonic() < deadline:
                     if receipt.exists() and json.loads(receipt.read_text()).get("phase") == "finished":
-                        break
+                        # The receipt is published just before supervisor exit;
+                        # its inherited lease may still be open briefly.
+                        with confirmed_stopped(SimpleNamespace(pk=attempt, journal_root=directory)) as stopped:
+                            if stopped:
+                                break
                     time.sleep(0.05)
                 self.assertEqual(json.loads(receipt.read_text())["phase"], "finished")
-                with confirmed_stopped(SimpleNamespace(pk=attempt, journal_root=directory)) as stopped:
-                    self.assertTrue(stopped)
+                self.assertTrue(stopped)
             finally:
                 if parent.poll() is None:
                     parent.kill()

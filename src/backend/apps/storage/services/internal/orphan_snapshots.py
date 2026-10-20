@@ -519,6 +519,12 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
     }:
         return {"status": rt.task.status}
     target = RepositoryExecutionTarget.objects.select_for_update().get(pk=rt.execution_target_id)
+    # Another advance may have committed a newer delete after recovery. Intent
+    # creation takes this same Repository lock, so check and finish atomically.
+    if rt.owner_type == "controller" and RepositoryOrphanSnapshot.objects.filter(
+        target_id=rt.execution_target_id, status="deleting",
+    ).exists():
+        return _wait(rt, "Automatically confirming the current Controller deletion before finishing.")
     counts = {}
     for row in rt.task.events.filter(
         metadata__event_type="orphan_snapshot_result",
