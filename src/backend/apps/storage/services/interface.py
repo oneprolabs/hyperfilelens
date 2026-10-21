@@ -70,6 +70,12 @@ from apps.storage.provider_catalog.operations import (
     reset_confirm as confirm_provider_catalog_reset,
     reset_review as review_provider_catalog_reset,
 )
+from apps.storage.provider_catalog.deletion import (
+    delete_confirm as confirm_provider_catalog_deletion,
+    delete_review as review_provider_catalog_deletion,
+)
+from apps.storage.provider_catalog.catalog import effective_provider
+from apps.storage.provider_catalog.locks import lock_provider_ids
 
 __all__ = [
     "RepositoryCleanupBlocked",
@@ -85,6 +91,8 @@ __all__ = [
     "export_provider_catalog",
     "review_provider_catalog_import",
     "review_provider_catalog_reset",
+    "review_provider_catalog_deletion",
+    "confirm_provider_catalog_deletion",
 ]
 
 
@@ -200,6 +208,18 @@ def delete_credential(*, credential: Credential) -> None:
     credential.delete()
 
 
+def _lock_repository_provider(repo_type: str, s3_platform: str | None) -> None:
+    if repo_type != Repository.Type.S3 or not s3_platform or s3_platform == Repository.S3Platform.CUSTOM:
+        return
+    # Serialize new references with Catalog deletion after S3 preflight finishes.
+    lock_provider_ids([s3_platform])
+    record = effective_provider(s3_platform)
+    if not record or not record["config"].get("enabled"):
+        raise DRFValidationError(
+            {"s3_platform": "Managed S3 Provider is not enabled in the current Catalog."}
+        )
+
+
 @prepare_s3_creation
 def create_repository(
     *,
@@ -251,6 +271,7 @@ def create_repository(
     org = Organization.objects.filter(id=organization_id).first()
     try:
         with transaction.atomic():
+            _lock_repository_provider(repo_type, s3_platform)
             if org is not None:
                 # Keep the quota check in the same transaction as creation so
                 # concurrent repository requests observe one serialized fact.
@@ -355,6 +376,8 @@ def update_repository(
         return repository
 
     with transaction.atomic():
+        if s3_platform is not None and s3_platform != repository.s3_platform:
+            _lock_repository_provider(repository.repo_type, s3_platform)
         repository = Repository.objects.select_for_update().get(
             pk=repository.id,
             organization_id=repository.organization_id,

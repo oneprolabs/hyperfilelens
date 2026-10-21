@@ -9,6 +9,10 @@ import {
   exportProviders,
   normalizedStorageProviderSnapshot,
   reviewProviderReset,
+  reviewProviderImport,
+  reviewProviderDeletion,
+  confirmProviderDeletion,
+  type ProviderDeleteReview,
   type ProviderImportReview,
   type ProviderResetReview,
 } from './storageProviderCatalogApi'
@@ -21,6 +25,40 @@ vi.mock('./api', async (importOriginal) => {
 afterEach(() => vi.clearAllMocks())
 
 describe('Storage Provider Catalog API', () => {
+  it('reviews an explicit deletion selection and confirms exactly the pinned token and IDs', async () => {
+    const review: ProviderDeleteReview = {
+      provider_ids: ['custom-a', 'custom-b'], providers: [],
+      expires_at: '2099-01-01T00:00:00Z', delete_token: 'delete-review-token',
+    }
+    vi.mocked(api).mockResolvedValue(review)
+    await reviewProviderDeletion(review.provider_ids)
+    await confirmProviderDeletion(review)
+    expect(api).toHaveBeenNthCalledWith(1, '/api/v1/platform-ops/storage-providers/delete-selected/review', {
+      method: 'POST', body: JSON.stringify({ provider_ids: review.provider_ids }),
+    })
+    expect(api).toHaveBeenNthCalledWith(2, '/api/v1/platform-ops/storage-providers/delete-selected', {
+      method: 'POST', body: JSON.stringify({ provider_ids: review.provider_ids, delete_token: review.delete_token }),
+    })
+  })
+
+  it('does not fall back to global deletion for empty or duplicate selections or missing tokens', () => {
+    expect(() => reviewProviderDeletion([])).toThrow()
+    expect(() => reviewProviderDeletion(['custom-a', 'custom-a'])).toThrow()
+    expect(() => confirmProviderDeletion({ provider_ids: [], delete_token: 'x' } as unknown as ProviderDeleteReview)).toThrow()
+    expect(() => confirmProviderDeletion({ provider_ids: ['custom-a'], delete_token: '' } as unknown as ProviderDeleteReview)).toThrow()
+    expect(api).not.toHaveBeenCalled()
+  })
+  it('sends Add/Edit intent only on scoped reviews and preserves bulk Import requests', async () => {
+    vi.mocked(api).mockResolvedValue({ review_token: 'review' })
+    await reviewProviderImport('{}')
+    await reviewProviderImport('{}', { operation: 'add' })
+    await reviewProviderImport('{}', { operation: 'edit', provider_id: 'aliyun' })
+    expect(vi.mocked(api).mock.calls.map(([, options]) => JSON.parse(options!.body as string))).toEqual([
+      { content: '{}' },
+      { content: '{}', operation: 'add' },
+      { content: '{}', operation: 'edit', provider_id: 'aliyun' },
+    ])
+  })
   it('submits credentials only to the write-only validation endpoint', async () => {
     vi.mocked(api).mockResolvedValue({ id: 'run-1' })
 

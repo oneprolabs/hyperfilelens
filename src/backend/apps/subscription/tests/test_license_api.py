@@ -20,7 +20,6 @@ from apps.subscription.services.internal.crypto import (
 from apps.subscription.services.internal.license_ops import _determine_change_type
 from apps.subscription.services.interface import get_or_create_machine_code
 from common.extension_spi import get_authz_provider
-from common.platform_authz import ensure_platform_role
 
 
 def _clear_license_state() -> None:
@@ -46,6 +45,18 @@ def _signed_payload(payload: dict) -> str:
     return f"HFL-ACT-{encoded}"
 
 
+def _ensure_admin_role(organization):
+    """Explicit test fixture: production no longer seeds organization roles."""
+    if get_authz_provider() is not None:
+        from apps.iam.permission_catalog import PERMISSION_KEYS
+        from apps.membership.models import CustomOrganizationRole
+
+        CustomOrganizationRole.objects.get_or_create(
+            organization=organization, key="admin",
+            defaults={"name": "Administrator", "permissions": sorted(PERMISSION_KEYS)},
+        )
+
+
 class LicenseApiTests(TestCase):
     def setUp(self):
         # keepdb can leave licenses/quotas from earlier runs; pin-to-host must start clean.
@@ -58,10 +69,13 @@ class LicenseApiTests(TestCase):
             password="test-pass",
         )
         if get_authz_provider() is not None:
+            from apps.membership.testing import ensure_platform_role
+
             self.user.is_staff = True
             self.user.save(update_fields=["is_staff"])
             ensure_platform_role(self.user)
         self.org = Organization.objects.create(key="license-test-org", name="License Test Org")
+        _ensure_admin_role(self.org)
         Membership.objects.create(
             user=self.user,
             organization=self.org,
@@ -268,6 +282,7 @@ class LicenseApiTests(TestCase):
         self.assertEqual(activate.status_code, status.HTTP_200_OK)
 
         org2 = Organization.objects.create(key="license-secondary-org", name="Secondary Org")
+        _ensure_admin_role(org2)
         Membership.objects.create(
             user=self.user,
             organization=org2,
@@ -357,6 +372,91 @@ class LicenseApiTests(TestCase):
         self.assertEqual(resp.data["license"]["features"], ["quota_governance"])
         self.assertEqual(lic.get_limits()["max_protected_sources"], 15)
         self.assertTrue(lic.signature)
+
+    def test_exact_signed_activation_replay_preserves_version_and_history(self):
+        from apps.subscription.services.interface import activate_license
+
+        machine_code = get_or_create_machine_code(organization=self.org, user=self.user)
+        code = generate_activation_code(
+            license_key="IDEMPOTENT-001",
+            machine_code=machine_code,
+            limits={"max_users": 100},
+            features=["quota_governance"],
+        )
+        lic, _ = activate_license(
+            organization=self.org, user=self.user, activation_code=code
+        )
+        snapshot = (lic.version, lic.updated_at, LicenseHistory.objects.count())
+        with patch(
+            "apps.subscription.services.internal.license_ops._notify_license_activated"
+        ) as notify:
+            repeated, _ = activate_license(
+                organization=self.org, user=self.user, activation_code=code
+            )
+        self.assertEqual(repeated.pk, lic.pk)
+        self.assertEqual(
+            (repeated.version, repeated.updated_at, LicenseHistory.objects.count()),
+            snapshot,
+        )
+        notify.assert_not_called()
+
+    def test_same_license_id_with_changed_claims_still_updates(self):
+        from apps.subscription.services.interface import activate_license
+
+        machine_code = get_or_create_machine_code(organization=self.org, user=self.user)
+        claims = {
+            "license_key": "CLAIMS-001",
+            "machine_code": machine_code,
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": None,
+            "limits": {"max_users": 100},
+            "features": ["quota_governance"],
+        }
+        lic, _ = activate_license(
+            organization=self.org, user=self.user,
+            activation_code=_signed_payload(claims),
+        )
+        changes = (
+            {"limits": {"max_users": 200}},
+            {"features": ["quota_governance", "ai_insights"]},
+            {"expires_at": "2099-01-01T00:00:00+00:00"},
+            {"issued_at": "2025-01-01T00:00:00+00:00"},
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                version = lic.version
+                history_count = LicenseHistory.objects.count()
+                claims.update(change)
+                lic, _ = activate_license(
+                    organization=self.org, user=self.user,
+                    activation_code=_signed_payload(claims),
+                )
+                self.assertEqual(lic.version, version + 1)
+                self.assertEqual(LicenseHistory.objects.count(), history_count + 1)
+
+    def test_activation_replay_still_verifies_signature_and_machine(self):
+        from apps.subscription.services.interface import activate_license
+
+        machine_code = get_or_create_machine_code(organization=self.org, user=self.user)
+        claims = {
+            "license_key": "REPLAY-VALIDATION-001",
+            "machine_code": machine_code,
+            "issued_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": None,
+            "limits": {},
+        }
+        lic, _ = activate_license(
+            organization=self.org, user=self.user,
+            activation_code=_signed_payload(claims),
+        )
+        snapshot = (lic.version, LicenseHistory.objects.count())
+        for code in ("invalid-code", _signed_payload({**claims, "machine_code": "other"})):
+            with self.subTest(code_type=code[:8]), self.assertRaises(ValueError):
+                activate_license(
+                    organization=self.org, user=self.user, activation_code=code
+                )
+        lic.refresh_from_db()
+        self.assertEqual((lic.version, LicenseHistory.objects.count()), snapshot)
 
     def test_signed_license_rejects_sub_mib_capacity_increment(self):
         machine_code = get_or_create_machine_code(
