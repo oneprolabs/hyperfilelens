@@ -1,4 +1,8 @@
 {
+  "settings.rolesPage.selectAll": "全选",
+  "settings.rolesPage.deselectAll": "取消全选",
+  "settings.rolesPage.selectResults": "全选搜索结果",
+  "settings.rolesPage.deselectResults": "取消选择搜索结果",
   "platformOps.users.addUser": "添加用户",
   "platformOps.users.userInformation": "用户信息",
   "platformOps.users.organizationAssignment": "组织关联",

@@ -1,4 +1,8 @@
 {
+  "settings.rolesPage.selectAll": "b4b26e40f8a7751154caf18674c2c96c11dc56900e0ec7d3e69da00e7a41fcea",
+  "settings.rolesPage.deselectAll": "71f326287bbaec8f3add56909d7bc74c5ee6b50d3928c5c95f0c283e653ca359",
+  "settings.rolesPage.selectResults": "eb227a18ba6db030823971e58b271de0ba29f02aff70a3e8de81c3105dea6ef4",
+  "settings.rolesPage.deselectResults": "88ec338b1ac2e0ab3b608f54ebaab9048e43ca5d11ba69919163982c8cf947f5",
   "platformOps.storageProviders.importOtherNotice": "e7aab506dc9277777e432af654fc1bf7feeece7a352bc3d8d6ab257ac7a9e68f",
   "platformOps.storageProviders.importCoverageNotice": "67bbc2759ddf362a8cf8b10f917a98b776e8a2e531e10705e6b5889f1de31934",
   "platformOps.storageProviders.importConnectionNotice": "ffb3509e826bfc7db6b07ef0edebbce17fea9297871e9ba5821e72d33c97aeec",

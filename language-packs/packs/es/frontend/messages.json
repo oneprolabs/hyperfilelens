@@ -1,4 +1,8 @@
 {
+  "settings.rolesPage.selectAll": "Seleccionar todo",
+  "settings.rolesPage.deselectAll": "Deseleccionar todo",
+  "settings.rolesPage.selectResults": "Seleccionar resultados",
+  "settings.rolesPage.deselectResults": "Deseleccionar resultados",
   "platformOps.users.addUser": "Añadir usuario",
   "platformOps.users.userInformation": "Información del usuario",
   "platformOps.users.organizationAssignment": "Asignación de organización",
