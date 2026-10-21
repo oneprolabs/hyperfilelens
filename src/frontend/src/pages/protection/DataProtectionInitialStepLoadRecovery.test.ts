@@ -19,7 +19,7 @@ describe('backup wizard initial step load recovery', () => {
   })
 
   it('uses the initial Step 1 page count instead of requesting it twice', () => {
-    expect(page).toContain('if (flowMainStep.value !== 0) await refreshBackupSourcePoolCount()')
+    expect(page).toContain('if (flowMainStep.value !== 0) await refreshBackupSourcePoolCount(signal)')
   })
 
   it('never reuses an aborted Step 1 request', () => {
@@ -60,5 +60,41 @@ describe('backup wizard initial step load recovery', () => {
     expect(page).toContain('if (step !== 0) clearFlowStepLoadRetry(0)')
     expect(page).toContain('if (step !== 1) clearFlowStepLoadRetry(1)')
     expect(page).toContain('clearFlowStepLoadRetries()')
+  })
+
+  it('settles every primed table flag even when the count bootstrap fails', () => {
+    const initialization = sourceBetween('async function initializeFlow()', 'onMounted(async () => {')
+    expect(initialization).toContain('await flowLoad.initialize(')
+    for (const assignment of [
+      'backupSelectableLoading.value = false',
+      'flowStepDataLoading[1] = false', 'flowStepDataLoading[2] = false',
+      'step3EntryLoadingPrimed = false', 'step3InitialLoadPending.value = false',
+      'flowBootstrapping.value = false',
+    ]) expect(initialization).toContain(assignment)
+    expect(initialization).not.toContain('throw err')
+  })
+
+  it('cancels the failed bootstrap before releasing its controller', () => {
+    const initialization = sourceBetween('async function initializeFlow()', 'onMounted(async () => {')
+    const cancel = initialization.indexOf('if (failed && pageRequests.isCurrentSignal(scope, signal)) pageRequests.abortScope(scope)')
+    const release = initialization.indexOf('pageRequests.releaseSignal(scope, signal)')
+    expect(initialization).toContain('}, (failed) => {')
+    expect(cancel).toBeGreaterThan(-1)
+    expect(release).toBeGreaterThan(cancel)
+  })
+
+  it('does not retry or poll a denied page, or show the normal workspace on error', () => {
+    expect(sourceBetween('function scheduleFlowStepLoadRetry', 'function clearFlowStepLoadRetries')).toContain('flowLoadError.value')
+    expect(sourceBetween('function ensureStep3AutoRefreshInterval', 'async function refreshStep3SourceList')).toContain('flowLoadError.value')
+    expect(sourceBetween('function handleFlowLoadError', 'function flowRowFromSourceId')).toContain('status === 401 || status === 403')
+    expect(page).toContain('v-if="flowLoadError"')
+    expect(page).toContain('v-if="!flowAccessDenied"')
+  })
+
+  it('does not bootstrap source inventory counts for standalone snapshot restore', () => {
+    const initialization = sourceBetween('async function initializeFlow()', 'onMounted(async () => {')
+    const restoreBranch = initialization.slice(initialization.indexOf('if (isFixedSnapshotRestore.value)'), initialization.indexOf('} else {'))
+    expect(restoreBranch).toContain('await initializeFixedSnapshotRestore()')
+    expect(restoreBranch).not.toContain('bootstrapPipeline')
   })
 })

@@ -5,6 +5,7 @@ import {
   bulkDeleteBackupSources,
   createBackupSourceDirectory,
   listBackupSelectableSources,
+  setBackupSourcePipelineStep,
   listSourcesForTag,
   listSourceTagFilterOptions,
   createSourceTag,
@@ -18,6 +19,26 @@ import {
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('setBackupSourcePipelineStep', () => {
+  it('forwards the component signal without changing the pipeline POST payload', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      updated: ['agent:7'], step: 2,
+    }), { headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    const payload = { ids: ['agent:7'], step: 2 as const }
+    await expect(setBackupSourcePipelineStep(payload, { signal: controller.signal })).resolves.toEqual({
+      updated: ['agent:7'], step: 2,
+    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/source/backup-selectable/pipeline/',
+      expect.objectContaining({
+        signal: controller.signal, method: 'POST', body: JSON.stringify(payload),
+      }),
+    )
+  })
 })
 
 describe('source tag editing', () => {

@@ -32,7 +32,8 @@ const RegisterPage = lazyRoute(() => import('../pages/auth/Register.vue'))
 const OAuthCallbackPage = lazyRoute(() => import('../pages/auth/OAuthCallback.vue'))
 const OAuthErrorPage = lazyRoute(() => import('../pages/auth/OAuthError.vue'))
 const DashboardPage = lazyRoute(() => import('../pages/Dashboard.vue'))
-const ProtectionDataPage = lazyRoute(() => import('../pages/protection/DataProtection.vue'))
+const ProtectionDataPage = lazyRoute(() => import('../pages/protection/ProtectionOverview.vue'))
+const ProtectionBackupConfigurationDirectoryPage = lazyRoute(() => import('../pages/protection/BackupConfigurationDirectory.vue'))
 const ProtectionSnapshotRestorePage = lazyRoute(() => import('../pages/protection/SnapshotRestorePage.vue'))
 const ProtectionBackupCreateWizardPage = lazyRoute(() => import('../pages/protection/BackupCreateWizard.vue'))
 const ProtectionBackupSourcesPage = lazyRoute(() => import('../pages/protection/BackupSources.vue'))
@@ -83,8 +84,16 @@ export const router = createRouter({
       children: [
         { path: '', component: DashboardPage },
         { path: 'account/organizations/new', component: lazyRoute(() => import('../pages/account/CreateOrganization.vue')), meta: fullscreenRouteMeta },
-        { path: 'protection', redirect: '/protection/backups' },
+        {
+          path: 'protection',
+          component: { render: () => null },
+          beforeEnter: async (to) => {
+            const { enterProtection } = await import('./protectionEntry')
+            return enterProtection(to)
+          },
+        },
         { path: 'protection/backups', component: ProtectionDataPage },
+        { path: 'protection/backup-configurations', component: ProtectionBackupConfigurationDirectoryPage },
         { path: 'protection/backups/create', component: ProtectionBackupCreateWizardPage, meta: fullscreenRouteMeta },
         {
           path: 'protection/restore/snapshots/:snapshotId',

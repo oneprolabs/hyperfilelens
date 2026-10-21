@@ -24,6 +24,7 @@ import TaskStatusTag from '../../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../../components/TaskTypeLabel.vue'
 import SnapshotStatusTag from '../../components/SnapshotStatusTag.vue'
 import { apiErrorMessage } from '../../lib/api'
+import { backupConfigurationDirectoryPath, resolveBackupDetailReturnPath } from '../../lib/protectionAccess'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerScrollReset } from '../../composables/useDrawerScrollReset'
@@ -57,6 +58,7 @@ import { listTasks, type TaskRow } from '../../lib/taskApi'
 const { t, te, locale } = useI18n()
 const { tableMaxHeight: snapshotDrawerTableMaxHeight, containerRef: snapshotDrawerTableRef } = useDrawerTableMaxHeight()
 const route = useRoute()
+const backTarget = computed(() => resolveBackupDetailReturnPath(route.query.returnTo))
 const store = useProtectionDemoStore()
 
 const backupId = computed(() => String(route.params.backupId || ''))
@@ -1039,7 +1041,7 @@ function closeDeleteSnapshotDialog() {
       class="space-y-[var(--card-gap)]"
     >
       <div class="flex flex-wrap items-center gap-3">
-        <RouterLink to="/protection/backups">
+        <RouterLink :to="backTarget">
           <ElButton text>
             <ArrowLeft
               :size="16"
@@ -1363,9 +1365,11 @@ function closeDeleteSnapshotDialog() {
       class="py-16 text-center"
     >
       <el-empty :description="detailLoadError || t('protection.backupDetail.notFound')">
-        <RouterLink to="/protection/backups">
+        <RouterLink :to="backTarget">
           <ElButton type="primary">
-            {{ t('protection.backupDetail.backToDataProtection') }}
+            {{ backTarget === backupConfigurationDirectoryPath
+              ? t('protection.backupDetail.backToList')
+              : t('protection.backupDetail.backToDataProtection') }}
           </ElButton>
         </RouterLink>
       </el-empty>
