@@ -10,6 +10,11 @@ import { useInsightSideNav } from './useInsightSideNav'
 const organization = ref<string[]>([])
 const group = ref<string[]>([])
 vi.mock('vue-router', () => ({ useRoute: () => ({ path: '/insight/copilot' }) }))
+vi.mock('../governance/resolveRoutes', () => ({
+  resolveGovernanceRoutes: () => [
+    { path: 'node/roles' }, { path: 'node/subscription' },
+  ],
+}))
 vi.mock('./useTenantPermissions', () => ({
   useTenantPermissions: () => ({
     has: (key: string, organizationOnly = false) =>
@@ -34,7 +39,7 @@ describe('Insights navigation visibility', () => {
   beforeEach(() => { organization.value = []; group.value = [] })
 
   it('hides inaccessible Insights and Protection for a Configuration-only user, on both primary navigation surfaces', () => {
-    organization.value = ['configuration.roles.manage']
+    organization.value = ['configuration.roles.manage', 'configuration.roles.view']
     const { primary, sidebar, wrapper } = navigation()
     expect(primary.items.value.map(item => item.to)).toEqual(['/', '/node'])
     expect(primary.itemsWithActiveState.value.some(item => item.to === '/insight')).toBe(false)

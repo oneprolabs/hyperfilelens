@@ -44,6 +44,12 @@ vi.mock('./useDeployProfile', () => ({
   shouldForceDeployProfileRefresh: vi.fn().mockReturnValue(false),
 }))
 
+// These authentication contracts exercise an installed Roles page. Community
+// builds otherwise register only Subscription and correctly redirect elsewhere.
+vi.mock('../governance/resolveRoutes', () => ({
+  resolveGovernanceRoutes: () => [{ path: 'node/roles' }, { path: 'node/subscription' }],
+}))
+
 import { clearAuth, getEffectiveOrgKey, setStoredOrgKey, setupAuthGuard } from './useAuth'
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -74,7 +80,8 @@ describe('login route authentication guard', () => {
         id: 1, email: 'root@test.local', is_staff: true,
         access_profile: {
           org_key: 'target-org', role: '', authority_source: 'installation_admin',
-          permissions: ['configuration.roles.manage'], visible_features: ['settings'], landing_path: '/',
+          permissions: ['configuration.roles.manage', 'configuration.roles.view'],
+          visible_features: ['settings'], landing_path: '/',
         },
       },
     }))

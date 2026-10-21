@@ -23,6 +23,8 @@ import { insightPermissionHints, insightRouteRedirect } from '../lib/insightAcce
 import { protectionRouteRedirect } from '../lib/protectionAccess'
 import { operationsRouteRedirect } from '../lib/operationsAccess'
 import { hasTenantHostMonitor } from '../ops/resolveRoutes'
+import { configurationRouteRedirect } from '../lib/configurationAccess'
+import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
 
 export interface User {
   id: number
@@ -453,6 +455,8 @@ function authenticatedRouteRedirect(to: { path: string; meta: Record<string, unk
   if (protectionRedirect) return protectionRedirect
   const operationsRedirect = operationsRouteRedirect(to, has, hasTenantHostMonitor())
   if (operationsRedirect) return operationsRedirect
+  const configurationRedirect = configurationRouteRedirect(to, resolveGovernanceRoutes(), has)
+  if (configurationRedirect) return configurationRedirect
   if (!hasRequiredRouteRole(to)) return '/node'
 }
 
