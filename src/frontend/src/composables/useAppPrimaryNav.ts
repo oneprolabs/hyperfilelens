@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import { useTenantPermissions } from './useTenantPermissions'
 import { resolveInsightEntry } from '../lib/insightAccess'
 import { resolveProtectionEntry } from '../lib/protectionAccess'
+import { resolveOperationsEntry } from '../lib/operationsAccess'
+import { hasTenantHostMonitor } from '../ops/resolveRoutes'
 import {
   Activity,
   LayoutDashboard,
@@ -47,6 +49,7 @@ export function useAppPrimaryNav() {
   ].filter(item => {
     if (item.to === '/insight') return resolveInsightEntry(has) !== '/'
     if (item.to === '/protection') return resolveProtectionEntry(has) !== '/'
+    if (item.to === '/ops') return resolveOperationsEntry(has, hasTenantHostMonitor()) !== '/'
     return true
   }))
 

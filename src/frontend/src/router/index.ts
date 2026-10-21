@@ -7,9 +7,6 @@ import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
 const platformOpsRoutes = resolvePlatformOpsRoutes()
 const tenantOpsRoutes = resolveTenantOpsRoutes()
 const governanceRoutes = resolveGovernanceRoutes()
-const tenantOpsEntryPath = tenantOpsRoutes.some((route) => route.path === 'ops/host-monitor')
-  ? '/ops/host-monitor'
-  : '/ops/events'
 import { beginRouteRequestScope } from '../lib/routeRequestAbort'
 import { beginRouteTransition, finishRouteTransition } from '../lib/routeTransition'
 import { lazyRoute } from './lazyRoute'
@@ -185,7 +182,15 @@ export const router = createRouter({
         { path: 'node/ai-settings/:uuid/edit', redirect: (to) => `/platform-ops/engine/ai-settings/${to.params.uuid}/edit` },
         ...governanceRoutes,
         { path: 'node/snapshots', component: AssetsSnapshotsPage },
-        { path: 'ops', redirect: tenantOpsEntryPath },
+        {
+          path: 'ops',
+          component: { render: () => null },
+          meta: { permissionEntry: true },
+          beforeEnter: async (to) => {
+            const { enterOperations } = await import('./operationsEntry')
+            return enterOperations(to)
+          },
+        },
         ...tenantOpsRoutes,
         { path: 'ops/events', component: OpsEventsPage },
         { path: 'ops/health', redirect: '/ops/events' },
@@ -234,10 +239,10 @@ router.beforeEach((to) => {
 })
 
 router.beforeEach((to, from) => {
-  // /node is only a permission-aware intermediate destination. Let its final
+  // Permission-aware module entries are intermediate destinations. Let the final
   // target start the transition; a redirect back to the current page must not
   // cancel that page's in-flight requests.
-  if (to.meta.configurationEntry) return
+  if (to.meta.configurationEntry || to.meta.permissionEntry) return
   if (to.fullPath !== from.fullPath) {
     beginRouteTransition()
     beginRouteRequestScope()

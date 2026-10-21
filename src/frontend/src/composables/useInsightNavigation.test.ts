@@ -36,7 +36,7 @@ describe('Insights navigation visibility', () => {
   it('hides inaccessible Insights and Protection for a Configuration-only user, on both primary navigation surfaces', () => {
     organization.value = ['configuration.roles.manage']
     const { primary, sidebar, wrapper } = navigation()
-    expect(primary.items.value.map(item => item.to)).toEqual(['/', '/node', '/ops'])
+    expect(primary.items.value.map(item => item.to)).toEqual(['/', '/node'])
     expect(primary.itemsWithActiveState.value.some(item => item.to === '/insight')).toBe(false)
     expect(sidebar.value).toEqual([])
     wrapper.unmount()

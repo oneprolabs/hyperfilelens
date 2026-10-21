@@ -62,6 +62,19 @@ function mountTopNav() {
   })
 }
 
+async function clickOperations(wrapper: ReturnType<typeof mountTopNav>) {
+  const completed = new Promise<void>(resolve => {
+    const remove = router.afterEach((_to, _from, failure) => {
+      if (failure && isNavigationFailure(failure, NavigationFailureType.cancelled)) return
+      remove()
+      resolve()
+    })
+  })
+  wrapper.get<HTMLAnchorElement>('a[href="/ops"]').element.click()
+  await completed
+  await flushPromises()
+}
+
 describe('Configuration intermediate navigation with real request cancellation', () => {
   beforeEach(async () => {
     mocks.permissions = ['configuration.subscriptions.view']
@@ -163,14 +176,72 @@ describe('Configuration intermediate navigation with real request cancellation',
     expect((await request.result).error).toBeNull()
   })
 
-  it('keeps the desktop immediate-cancellation behavior for other modules', async () => {
+  it('still cancels desktop requests when Operations resolves to a different page', async () => {
+    mocks.permissions.push('operations.events.view')
     const wrapper = mountTopNav()
     const request = pendingRequest()
-    await wrapper.get('a[href="/ops"]').trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.path.startsWith('/ops/')).toBe(true)
+    await clickOperations(wrapper)
+    expect(router.currentRoute.value.path).toBe('/ops/events')
     expect(request.signal.aborted).toBe(true)
     expect(await request.result).toMatchObject({ error: { name: 'AbortError' } })
     expect(mocks.beginTransition).toHaveBeenCalled()
+  })
+
+  it.each(['router', 'desktop'])('preserves current Operations requests when its %s entry resolves to the same page', async method => {
+    mocks.permissions = ['operations.tasks.view']
+    await router.replace('/ops/tasks')
+    mocks.beginTransition.mockClear()
+    const request = pendingRequest()
+    if (method === 'desktop') {
+      const wrapper = mountTopNav()
+      await clickOperations(wrapper)
+    } else {
+      const navigation = await router.push('/ops')
+      expect(isNavigationFailure(navigation, NavigationFailureType.duplicated)).toBe(true)
+    }
+    expect(router.currentRoute.value.path).toBe('/ops/tasks')
+    expect(request.signal.aborted).toBe(false)
+    expect(mocks.beginTransition).not.toHaveBeenCalled()
+    request.complete()
+    expect((await request.result).error).toBeNull()
+  })
+
+  it('does not cancel Dashboard requests when no Operations page is permitted', async () => {
+    await router.replace('/')
+    mocks.permissions = []
+    mocks.beginTransition.mockClear()
+    const request = pendingRequest()
+    await router.push('/ops')
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(request.signal.aborted).toBe(false)
+    expect(mocks.beginTransition).not.toHaveBeenCalled()
+    request.complete()
+    expect((await request.result).error).toBeNull()
+  })
+
+  it('waits for Operations grants before cancelling a request for a different final page', async () => {
+    mocks.permissions = []
+    const request = pendingRequest()
+    let release!: () => void
+    let started!: () => void
+    const authStarted = new Promise<void>(resolve => { started = resolve })
+    const auth = new Promise<void>(resolve => { release = resolve })
+    const remove = router.beforeEach(async to => {
+      if (to.meta.permissionEntry) { started(); await auth }
+    })
+    try {
+      const navigation = router.push('/ops')
+      await authStarted
+      expect(request.signal.aborted).toBe(false)
+      mocks.permissions = ['operations.tasks.view']
+      release()
+      await navigation
+      expect(router.currentRoute.value.path).toBe('/ops/tasks')
+      expect(request.signal.aborted).toBe(true)
+      expect(await request.result).toMatchObject({ error: { name: 'AbortError' } })
+    } finally {
+      release()
+      remove()
+    }
   })
 })

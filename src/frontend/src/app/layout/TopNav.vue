@@ -35,9 +35,10 @@ const { items: navItems, isActive: navActive } = useAppPrimaryNav()
 
 function navigateImmediately(to: string) {
   if (to === route.fullPath) return
-  // Configuration may resolve back to the current page. Its final route's
-  // guard owns request cancellation, just as it does for mobile RouterLinks.
-  if (!router.resolve(to).meta.configurationEntry) {
+  // Permission-aware entries may resolve back to the current page. Their final
+  // route owns cancellation, just as it does for mobile RouterLinks.
+  const meta = router.resolve(to).meta
+  if (!meta.configurationEntry && !meta.permissionEntry) {
     beginRouteTransition()
     beginRouteRequestScope()
   }
