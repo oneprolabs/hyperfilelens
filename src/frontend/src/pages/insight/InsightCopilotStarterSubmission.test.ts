@@ -10,11 +10,20 @@ import { en } from '../../locales/en'
 import InsightCopilot from './InsightCopilot.vue'
 import CopilotComposer from './copilot/CopilotComposer.vue'
 import CopilotMessageList from './copilot/CopilotMessageList.vue'
+import { fetchCopilotReadiness, listCopilotGatewayOptions } from '../../lib/lensApi'
 
+const canUseChat = ref(true)
+const visibilityRestores: Array<() => void> = []
+function mockVisibility(value: DocumentVisibilityState) {
+  const spy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(value)
+  visibilityRestores.push(() => spy.mockRestore())
+  return spy
+}
 const mocks = vi.hoisted(() => ({
   createCopilotRun: vi.fn(),
   createCopilotSessionFromExisting: vi.fn(),
   routerReplace: vi.fn(),
+  routerPush: vi.fn(),
   deleteCopilotAttachment: vi.fn(),
   forceDeleteCopilotSession: vi.fn(),
   listCopilotAssistants: vi.fn(),
@@ -27,7 +36,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ path: '/insight/copilot', query: {} }),
-  useRouter: () => ({ push: vi.fn(), replace: mocks.routerReplace }),
+  useRouter: () => ({ push: mocks.routerPush, replace: mocks.routerReplace }),
+}))
+
+vi.mock('../../composables/useTenantPermissions', () => ({
+  useTenantPermissions: () => ({
+    has: (key: string) => key !== 'insights.chats.use' || canUseChat.value,
+  }),
 }))
 
 vi.mock('../../composables/useResponsiveLayout', () => ({
@@ -94,6 +109,11 @@ const NewFromTriggerSidebar = defineComponent({
   },
   emits: ['newFrom'],
   template: '<button class="new-from-trigger" @click="$emit(\'newFrom\', sessions[0])">New From</button>',
+})
+const UnreadProbeSidebar = defineComponent({
+  props: { sessions: { type: Array, default: () => [] } },
+  emits: ['select'],
+  template: '<aside><button v-for="row in sessions" :key="row.id" :data-session="row.id" :data-unread="Boolean(row.has_unread)" @click="$emit(\'select\', row.id)">{{ row.title }}</button></aside>',
 })
 const DangerConfirmDialogStub = defineComponent({
   props: {
@@ -175,6 +195,7 @@ function mountCopilot(
 describe('InsightCopilot question submission', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    canUseChat.value = true
     mocks.routerReplace.mockResolvedValue(undefined)
     mocks.listCopilotSessions.mockResolvedValue([sessionRow()])
     mocks.listCopilotAssistants.mockResolvedValue([{
@@ -215,7 +236,126 @@ describe('InsightCopilot question submission', () => {
   })
 
   afterEach(() => {
+    visibilityRestores.splice(0).forEach(restore => restore())
     vi.useRealTimers()
+  })
+
+  it('does not request creation-only catalogs or navigate to New Chat for a read-only empty history', async () => {
+    canUseChat.value = false
+    mocks.listCopilotSessions.mockResolvedValue([])
+    const sidebar = defineComponent({
+      emits: ['newChat'],
+      template: '<button class="new-chat-trigger" @click="$emit(\'newChat\')">New Chat</button>',
+    })
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n, sidebar)
+    await flushPromises()
+    expect(mocks.listCopilotSessions).toHaveBeenCalledOnce()
+    expect(fetchCopilotReadiness).not.toHaveBeenCalled()
+    expect(listCopilotGatewayOptions).not.toHaveBeenCalled()
+    expect(mocks.listCopilotAssistants).not.toHaveBeenCalled()
+    await wrapper.get('.new-chat-trigger').trigger('click')
+    expect(mocks.routerPush).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps existing history read-only and refuses New Chat From even if a stale UI emits it', async () => {
+    canUseChat.value = false
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n, NewFromTriggerSidebar)
+    await flushPromises()
+    expect(wrapper.findComponent(CopilotComposer).props('disabled')).toBe(true)
+    expect(mocks.markCopilotSessionViewed).not.toHaveBeenCalled()
+    await wrapper.get('.new-from-trigger').trigger('click')
+    expect(mocks.createCopilotSessionFromExisting).not.toHaveBeenCalled()
+    expect(mocks.listCopilotAssistants).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('clears an initially unread Chat locally without sending a viewed mutation', async () => {
+    canUseChat.value = false
+    mockVisibility('visible')
+    const replyAt = '2026-10-21T01:00:00.000001Z'
+    mocks.listCopilotSessions.mockResolvedValue([{
+      ...sessionRow(), has_unread: true, last_assistant_message_at: replyAt,
+    }])
+    mocks.syncCopilotSession.mockResolvedValue({
+      session_id: 444, messages: [], active_run: null, run_outcomes: [],
+      has_unread: true, last_assistant_message_at: replyAt,
+    })
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n, UnreadProbeSidebar)
+    await flushPromises()
+    expect(wrapper.get('[data-session="444"]').attributes('data-unread')).toBe('false')
+    expect(mocks.markCopilotSessionViewed).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps known replies read after list refresh, but does not hide new offscreen replies', async () => {
+    canUseChat.value = false
+    mockVisibility('visible')
+    const originalReplyAt = '2026-10-21T01:00:00.000001Z'
+    const newReplyAt = '2026-10-21T01:00:00.000002Z'
+    const replies = new Map([[444, originalReplyAt], [445, originalReplyAt]])
+    mocks.listCopilotSessions.mockResolvedValue([
+      { ...sessionRow(), has_unread: true, last_assistant_message_at: originalReplyAt },
+      { ...sessionRow(null, 'ready', 445, '2026-08-10T08:00:00Z'), last_assistant_message_at: originalReplyAt },
+    ])
+    mocks.syncCopilotSession.mockImplementation(async (id: number) => ({
+      session_id: id, messages: [], active_run: null, run_outcomes: [],
+      has_unread: true, last_assistant_message_at: replies.get(id),
+    }))
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n, UnreadProbeSidebar)
+    const page = wrapper.vm as unknown as {
+      bootstrap(): Promise<void>
+      applySessionSyncMeta(id: number, payload: { has_unread: boolean; last_assistant_message_at: string }): void
+    }
+    await flushPromises()
+    await wrapper.get('[data-session="445"]').trigger('click')
+    await flushPromises()
+    await page.bootstrap()
+    await flushPromises()
+    expect(wrapper.get('[data-session="444"]').attributes('data-unread')).toBe('false')
+    replies.set(444, newReplyAt)
+    page.applySessionSyncMeta(444, { has_unread: true, last_assistant_message_at: newReplyAt })
+    await nextTick()
+    expect(wrapper.get('[data-session="444"]').attributes('data-unread')).toBe('true')
+    await wrapper.get('[data-session="444"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-session="444"]').attributes('data-unread')).toBe('false')
+    expect(mocks.markCopilotSessionViewed).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('does not mark a newly synchronized reply read while the document is hidden', async () => {
+    canUseChat.value = false
+    const visibility = mockVisibility('visible')
+    const originalReplyAt = '2026-10-21T01:00:00Z'
+    const newReplyAt = '2026-10-21T01:00:01Z'
+    mocks.listCopilotSessions.mockResolvedValue([{
+      ...sessionRow(), has_unread: true, last_assistant_message_at: originalReplyAt,
+    }])
+    mocks.syncCopilotSession.mockResolvedValue({
+      session_id: 444, messages: [], active_run: null, run_outcomes: [],
+      has_unread: true, last_assistant_message_at: originalReplyAt,
+    })
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n, UnreadProbeSidebar)
+    await flushPromises()
+    const page = wrapper.vm as unknown as {
+      applySessionSyncMeta(id: number, payload: { has_unread: boolean; last_assistant_message_at: string }): void
+    }
+    visibility.mockReturnValue('hidden')
+    page.applySessionSyncMeta(444, { has_unread: true, last_assistant_message_at: newReplyAt })
+    await nextTick()
+    expect(wrapper.get('[data-session="444"]').attributes('data-unread')).toBe('true')
+    visibility.mockReturnValue('visible')
+    page.applySessionSyncMeta(444, { has_unread: true, last_assistant_message_at: newReplyAt })
+    await nextTick()
+    expect(wrapper.get('[data-session="444"]').attributes('data-unread')).toBe('false')
+    expect(mocks.markCopilotSessionViewed).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('passes the clicked answer Run to the dialog and retains other shared answer states', async () => {

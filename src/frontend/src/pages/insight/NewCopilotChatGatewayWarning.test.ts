@@ -23,6 +23,7 @@ const componentSource = readFileSync(
 )
 
 const mocks = vi.hoisted(() => ({
+  canUseChat: true,
   createCopilotSession: vi.fn(),
   fetchCopilotReadiness: vi.fn(),
   listCopilotGatewayOptions: vi.fn(),
@@ -50,6 +51,9 @@ vi.mock('../../composables/useCopilotSelectionPreview', () => ({
 }))
 vi.mock('../../composables/useResourceCapabilities', () => ({
   useResourceCapabilities: () => ({ permitted: () => true }),
+}))
+vi.mock('../../composables/useTenantPermissions', () => ({
+  useTenantPermissions: () => ({ has: () => mocks.canUseChat }),
 }))
 
 vi.mock('../../lib/api', () => ({
@@ -315,6 +319,7 @@ describe('New Chat Public Data Gateway warning', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.canUseChat = true
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
       unobserve() {}
@@ -332,6 +337,15 @@ describe('New Chat Public Data Gateway warning', () => {
   afterEach(() => {
     document.body.innerHTML = ''
     vi.unstubAllGlobals()
+  })
+
+  it('does not submit without Chat use permission even when resource capabilities allow it', async () => {
+    mocks.canUseChat = false
+    const wrapper = await mountNewChat({ gatewayResponse: [publicGateway] })
+    expect(startChatButton(wrapper).attributes('disabled')).toBeDefined()
+    await startChatButton(wrapper).trigger('click')
+    expect(mocks.createCopilotSession).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('does not announce an unavailable Gateway before the first request resolves', async () => {

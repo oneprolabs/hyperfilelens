@@ -17,10 +17,11 @@ export type CopilotReadiness = {
   canStartChat: boolean
 }
 
-defineProps<{
+withDefaults(defineProps<{
   phase: CopilotEmptyPhase
   readiness?: CopilotReadiness
-}>()
+  canCreateChat?: boolean
+}>(), { canCreateChat: true, readiness: undefined })
 
 const emit = defineEmits<{
   retry: []
@@ -84,13 +85,17 @@ const { t } = useI18n()
           <Sparkles :size="28" />
         </div>
         <h2 class="empty-title">
-          {{ t('insight.copilot.onboardingTitle') }}
+          {{ t(canCreateChat ? 'insight.copilot.onboardingTitle' : 'insight.copilot.emptyNoSessions') }}
         </h2>
-        <p class="empty-desc">
+        <p
+          v-if="canCreateChat"
+          class="empty-desc"
+        >
           {{ t('insight.copilot.onboardingSubtitle') }}
         </p>
 
         <ElButton
+          v-if="canCreateChat"
           type="primary"
           class="onboarding-primary"
           @click="emit('newChat')"

@@ -4,6 +4,7 @@ import { History, MessageSquare } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { useTenantPermissions } from './useTenantPermissions'
 import { dataGatewaySidebarIcon } from '../lib/resourceIcons'
+import { insightPages } from '../lib/insightAccess'
 
 /** Tenant Insights sidebar: Copilot + tenant Data Gateways only. */
 export function useInsightSideNav() {
@@ -32,12 +33,9 @@ export function useInsightSideNav() {
       ],
     },
   ] as MenuItem[]).map((section) => ({
-    ...section, children: section.children?.filter((item) => has(
-      item.to === '/insight/copilot'
-        ? 'insights.chats.view'
-        : item.to === '/insight/usage'
-          ? 'insights.usage.view'
-          : 'insights.private_data_gateways.view',
-    )),
+    ...section, children: section.children?.filter((item) => {
+      const page = insightPages.find(page => page.path === item.to)
+      return page && has(page.permission, page.organizationOnly)
+    }),
   })).filter((section) => section.children?.length))
 }

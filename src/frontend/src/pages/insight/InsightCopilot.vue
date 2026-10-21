@@ -57,6 +57,7 @@ import CopilotShareDialog from './copilot/CopilotShareDialog.vue'
 import CopilotExecutionSettingsDialog from './copilot/CopilotExecutionSettingsDialog.vue'
 import CopilotDataUpdateDialog from './copilot/CopilotDataUpdateDialog.vue'
 import { toSessionRows, type SessionRow } from './copilot/sessionOrdering'
+import { advanceLocalReadVersion, withLocalReadState } from './copilot/localReadState'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import type {
   CopilotComposerAttachment,
@@ -67,12 +68,15 @@ import type {
 import { appendRunOutcomeMessages } from './copilot/runOutcomes'
 import { Menu } from 'lucide-vue-next'
 import { useResponsiveLayout } from '../../composables/useResponsiveLayout'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const copilotStore = useCopilotRunStore()
 const { isPhone } = useResponsiveLayout()
+const { has } = useTenantPermissions()
+const canUseChat = computed(() => has('insights.chats.use'))
 const mobileSessionsOpen = ref(false)
 const clarificationResetToken = ref(0)
 const reuseSubmittingId = ref<number | null>(null)
@@ -91,6 +95,10 @@ const copilotGatewayOptions = ref<LensCopilotGatewayOption[]>([])
 const knowledgeSources = ref<LensKnowledgeSource[]>([])
 const modelReadiness = ref<LensCopilotReadiness | null>(null)
 const sessions = ref<SessionRow[]>([])
+const locallyViewedReplies = ref(new Map<number, string>())
+const sidebarSessions = computed(() => sessions.value.map(row =>
+  withLocalReadState(row, locallyViewedReplies.value.get(row.id)),
+))
 const activeSessionId = ref<number | null>(null)
 const deleteOpen = ref(false)
 const deleteLoading = ref(false)
@@ -245,13 +253,6 @@ function applyMessagesFromSync(
     ...messagesBySession.value,
     [sessionId]: withWelcomeMessage(sessionId, mapped, session?.created_at),
   }
-  if (
-    sessionId === activeSessionId.value
-    && route.path === '/insight/copilot'
-    && document.visibilityState === 'visible'
-  ) {
-    void markSessionViewed(sessionId)
-  }
 }
 
 function applySessionActiveMeta(sessionId: number, activeRun: LensCopilotActiveRun | null) {
@@ -275,6 +276,17 @@ function applySessionSyncMeta(sessionId: number, payload: { last_assistant_messa
         has_unread: payload.has_unread ?? row.has_unread,
       }
     : row)
+  // The message callback runs before metadata. Record the reply version only
+  // after both have arrived, rather than marking an old sidebar snapshot read.
+  if (
+    componentActive
+    && !componentUnmounted
+    && sessionId === activeSessionId.value
+    && route.path.replace(/\/+$/, '').toLowerCase() === '/insight/copilot'
+    && document.visibilityState === 'visible'
+  ) {
+    void markSessionViewed(sessionId)
+  }
   refreshPollerSessions()
 }
 
@@ -384,6 +396,7 @@ const runCanStop = computed(
 )
 
 const composerUnavailable = computed(() => {
+  if (!canUseChat.value) return true
   if (loading.value || !bridgeReady.value || activeSessionId.value == null) return true
   const session = sessions.value.find((row) => row.id === activeSessionId.value)
   if (session && session.lifecycle_status && session.lifecycle_status !== 'ready') return true
@@ -441,6 +454,15 @@ function sessionNeedsLifecyclePolling(session: LensSessionLink | SessionRow) {
 
 async function markSessionViewed(sessionId: number) {
   copilotStore.markSessionViewed(sessionId)
+  const session = sessions.value.find(row => row.id === sessionId)
+  if (!session) return
+  const version = advanceLocalReadVersion(
+    locallyViewedReplies.value.get(sessionId), session.last_assistant_message_at,
+  )
+  if (version) locallyViewedReplies.value.set(sessionId, version)
+  sessions.value = sessions.value.map(row => row.id === sessionId ? { ...row, has_unread: false } : row)
+  // A reader can clear the local indicator without posting a Chat mutation.
+  if (!canUseChat.value) return
   try {
     const updated = await markCopilotSessionViewed(sessionId)
     sessions.value = sessions.value.map((row) => row.id === sessionId
@@ -452,10 +474,12 @@ async function markSessionViewed(sessionId: number) {
 }
 
 async function loadOpenChatAssistants() {
+  if (!canUseChat.value) return
   assistants.value = await listCopilotAssistants().catch(() => [] as LensCopilotAssistant[])
 }
 
 async function loadEmptyChatCatalog() {
+  if (!canUseChat.value) return
   const [assistantRows, readiness, gatewayRows, copilotGatewayRows, ksRows] = await Promise.all([
     listCopilotAssistants().catch(() => [] as LensCopilotAssistant[]),
     fetchCopilotReadiness().catch(() => null),
@@ -564,6 +588,7 @@ async function selectSession(id: number) {
 }
 
 function openNewChatFlow() {
+  if (!canUseChat.value) return
   void router.push('/insight/copilot/new')
 }
 
@@ -681,7 +706,8 @@ async function retryProvision(row: SessionRow) {
 
 async function newChatFromSession(row: SessionRow) {
   if (
-    row.lifecycle_status !== 'ready'
+    !canUseChat.value
+    || row.lifecycle_status !== 'ready'
     || row.knowledge_source == null
     || !row.sl_assistant_uuid
     || reuseSubmittingId.value !== null
@@ -1379,7 +1405,8 @@ onUnmounted(() => {
   <div class="copilot-root">
     <CopilotSessionSidebar
       v-if="!isPhone"
-      :sessions="sessions"
+      :can-create-chat="canUseChat"
+      :sessions="sidebarSessions"
       :active-id="activeSessionId"
       :loading="loading"
       :pending-notifications="copilotStore.pendingNotifications.value"
@@ -1405,7 +1432,8 @@ onUnmounted(() => {
       append-to-body
     >
       <CopilotSessionSidebar
-        :sessions="sessions"
+        :can-create-chat="canUseChat"
+        :sessions="sidebarSessions"
         :active-id="activeSessionId"
         :loading="loading"
         :pending-notifications="copilotStore.pendingNotifications.value"
@@ -1514,6 +1542,7 @@ onUnmounted(() => {
 
       <CopilotEmptyState
         v-else
+        :can-create-chat="canUseChat"
         :phase="emptyPhase"
         :readiness="copilotReadiness"
         @retry="bootstrap"
