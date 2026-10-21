@@ -11,6 +11,46 @@ function readPack(lang: string, file: string) {
 }
 
 describe('Admin Console governance navigation copy', () => {
+  it.each(['zh-hans', 'es'])('keeps %s Platform Role editor and detail copy localized and current', (lang) => {
+    const messages = readPack(lang, 'messages.json')
+    const lock = readPack(lang, 'source-lock.json') as Record<string, string>
+    for (const key of ['namePlaceholder', 'descriptionPlaceholder', 'permissionSearchPlaceholder', 'noPermissionsConfigured'] as const) {
+      const path = `platformOps.roles.${key}`
+      const translated = messages[path] ?? messages.platformOps.roles[key]
+      expect(translated).toBeTypeOf('string')
+      expect(translated.trim()).not.toBe('')
+      expect(translated).not.toBe(en.platformOps.roles[key])
+      expect(lock[path]).toBe(
+        createHash('sha256').update(JSON.stringify(en.platformOps.roles[key])).digest('hex'),
+      )
+    }
+  })
+
+  it('uses concise Account and Organization card titles while retaining Platform Access', () => {
+    expect([
+      en.platformOps.users.userInformation,
+      en.platformOps.users.organizationAssignment,
+      en.platformOps.users.platformAccess,
+    ]).toEqual(['Account', 'Organization', 'Platform Access'])
+  })
+
+  it.each(['zh-hans', 'es'])('keeps %s Add User card copy and source locks current', (lang) => {
+    const messages = readPack(lang, 'messages.json')
+    const lock = readPack(lang, 'source-lock.json') as Record<string, string>
+    for (const key of [
+      'userInformation', 'organizationAssignment', 'platformAccess',
+      'noOrganizations', 'noPlatformRoles', 'addPlatformRole',
+    ] as const) {
+      const path = `platformOps.users.${key}`
+      expect(messages[path]).toBeTypeOf('string')
+      expect(messages[path]?.trim()).not.toBe('')
+      expect(messages[path]).not.toBe(en.platformOps.users[key])
+      expect(lock[path]).toBe(
+        createHash('sha256').update(JSON.stringify(en.platformOps.users[key])).digest('hex'),
+      )
+    }
+  })
+
   it('uses Name consistently for tenant directory columns without changing the member detail label', () => {
     expect([
       en.settings.membersPage.name, en.settings.groupsPage.name,
@@ -114,15 +154,27 @@ describe('Admin Console governance navigation copy', () => {
     }
   })
 
-  it('distinguishes platform roles without renaming the other entries or tenant roles', () => {
+  it('names platform role and subscription plan catalogs without renaming tenant roles', () => {
     const nav = en.platformOps.nav
     expect([
       nav.orgs, nav.users, nav.roles, nav.resources,
       nav.platformQuotaUsage, nav.platformInstanceLicense,
     ]).toEqual([
-      'Organizations', 'Users', 'Platform Roles', 'Resources', 'Subscriptions', 'License',
+      'Organizations', 'Users', 'Platform Roles', 'Resources', 'Subscription Plans', 'License',
     ])
     expect(en.settings.nav.roles).toBe('Roles')
+  })
+
+  it.each(['zh-hans', 'es'])('keeps %s subscription plan description and default confirmation copy current', (lang) => {
+    const messages = readPack(lang, 'messages.json') as typeof en
+    const lock = readPack(lang, 'source-lock.json') as Record<string, string>
+    for (const key of ['description', 'defaultColumn', 'defaultPlanTitle', 'setAsDefault', 'defaultPlanHint'] as const) {
+      expect(messages.platformOps.quotaUsage[key].trim()).not.toBe('')
+      expect(messages.platformOps.quotaUsage[key]).not.toBe(en.platformOps.quotaUsage[key])
+      expect(lock[`platformOps.quotaUsage.${key}`]).toBe(
+        createHash('sha256').update(JSON.stringify(en.platformOps.quotaUsage[key])).digest('hex'),
+      )
+    }
   })
 
   it.each(['zh-hans', 'es'])('updates the %s label and its English source lock', (lang) => {

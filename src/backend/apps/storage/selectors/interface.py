@@ -33,6 +33,11 @@ def list_effective_storage_providers() -> list[dict]:
     return [
         {
             **record["config"],
+            "provider_type": (
+                "system"
+                if record["config"]["id"] in default_provider_ids
+                else "custom"
+            ),
             "source": record["source"],
             "checksum": record["checksum"],
             "updated_at": record["updated_at"],
@@ -40,6 +45,10 @@ def list_effective_storage_providers() -> list[dict]:
             "can_restore_default": (
                 record["source"] == "override"
                 and record["config"]["id"] in default_provider_ids
+            ),
+            "can_delete": (
+                record["source"] == "override"
+                and record["config"]["id"] not in default_provider_ids
             ),
         }
         for record in records.values()

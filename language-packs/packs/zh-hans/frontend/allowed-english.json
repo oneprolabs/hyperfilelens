@@ -129,6 +129,7 @@
   "platformOps.settings.turnstileTitle",
   "platformOps.storageProviders.accessKeyId",
   "platformOps.storageProviders.endpoint",
+  "platformOps.storageProviders.id",
   "platformOps.storageProviders.region",
   "platformOps.storageProviders.secretAccessKey",
   "protection.backupDetail.durationDash",

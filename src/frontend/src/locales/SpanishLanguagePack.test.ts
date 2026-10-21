@@ -146,8 +146,8 @@ describe('Spanish language pack', () => {
     expect(allowedEnglish).toContain('insight.aiSettings.topP')
     expect(allowedEnglish).toContain('repositoriesPage.cleanupResourceSeparator')
     expect(spanish.repositoriesPage.cleanupResourceSeparator).toBe(en.repositoriesPage.cleanupResourceSeparator)
-    // These are also valid Spanish terms or product module names, not
-    // untranslated governance descriptions.
+    // These are also valid Spanish terms, standard identifiers or product
+    // module names, not untranslated descriptions.
     const sharedGovernanceTerms = [
       'platformOps.orgGovernance.general',
       'platformOps.orgGovernance.roles',
@@ -159,6 +159,8 @@ describe('Spanish language pack', () => {
       'settings.rolesPage.names.auditor',
       'settings.rolesPage.resourceLabels.configuration_roles',
       'settings.rolesPage.resourceLabels.insights_chats',
+      'platformOps.storageProviders.general',
+      'platformOps.storageProviders.id',
     ]
     expect(allowedEnglish.filter(key => key !== 'repositoriesPage.cleanupResourceSeparator').length).toBeLessThanOrEqual(326 + sharedGovernanceTerms.length)
     const englishFlat = flatten(en)

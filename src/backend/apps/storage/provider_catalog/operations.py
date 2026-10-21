@@ -195,9 +195,51 @@ def import_diff(raw: str | bytes) -> dict[str, Any]:
     return preview
 
 
-def import_review(raw: str | bytes, *, user_id: int) -> dict[str, Any]:
+def _validate_import_operation(
+    *,
+    operation: str,
+    provider_id: str | None,
+    states: dict[str, dict[str, Any]],
+) -> None:
+    """Keep single-Provider Add/Edit distinct from bulk import."""
+    if operation == "import" and provider_id is None:
+        return
+    if operation not in {"add", "edit"} or len(states) != 1:
+        raise ProviderCatalogValidationError(
+            "Add and Edit require exactly one Provider."
+        )
+    target_id, state = next(iter(states.items()))
+    if operation == "add":
+        if provider_id is not None:
+            raise ProviderCatalogValidationError("Add does not accept a Provider target.")
+        if state["effective_checksum"] is not None:
+            _conflict(
+                "Provider already exists. Use Edit to change its configuration.",
+                code="PROVIDER_CATALOG_ALREADY_EXISTS",
+            )
+    elif provider_id != target_id:
+        raise ProviderCatalogValidationError(
+            "Edit must contain only the selected Provider. Its Provider ID cannot be changed."
+        )
+    elif state["effective_checksum"] is None:
+        _conflict(
+            "Provider no longer exists. Refresh the Provider list.",
+            code="PROVIDER_CATALOG_NOT_FOUND",
+        )
+
+
+def import_review(
+    raw: str | bytes,
+    *,
+    user_id: int,
+    operation: str = "import",
+    provider_id: str | None = None,
+) -> dict[str, Any]:
     catalog, preview = _build_import_preview(raw)
     states = _states(preview["target_provider_ids"])
+    _validate_import_operation(
+        operation=operation, provider_id=provider_id, states=states
+    )
     candidate_checksums = {
         item["provider_id"]: item["candidate_checksum"] for item in preview["providers"]
     }
@@ -229,11 +271,11 @@ def import_review(raw: str | bytes, *, user_id: int) -> dict[str, Any]:
     )
     token_providers = []
     for item in preview["providers"]:
-        provider_id = item["provider_id"]
+        target_id = item["provider_id"]
         token_providers.append(
             {
-                "provider_id": provider_id,
-                **states[provider_id],
+                "provider_id": target_id,
+                **states[target_id],
                 "candidate_checksum": item["candidate_checksum"],
                 "persistence_action": item["persistence_action"],
                 "run_id": next(
@@ -244,17 +286,19 @@ def import_review(raw: str | bytes, *, user_id: int) -> dict[str, Any]:
                         else None
                     )
                     for evidence_item in evidence
-                    if evidence_item["provider_id"] == provider_id
+                    if evidence_item["provider_id"] == target_id
                 ),
                 "validation_status": next(
                     evidence_item["status"]
                     for evidence_item in evidence
-                    if evidence_item["provider_id"] == provider_id
+                    if evidence_item["provider_id"] == target_id
                 ),
             }
         )
     payload = {
         "kind": "import",
+        "operation": operation,
+        "edit_provider_id": provider_id,
         "user_id": user_id,
         "schema_version": catalog["schema_version"],
         "input_checksum": preview["input_checksum"],
@@ -346,6 +390,11 @@ def import_apply(
         _conflict(
             "Review token scope is invalid.", code="PROVIDER_CATALOG_REVIEW_INVALID"
         )
+    _validate_import_operation(
+        operation=token.get("operation", "import"),
+        provider_id=token.get("edit_provider_id"),
+        states=token_items,
+    )
 
     with transaction.atomic():
         lock_provider_ids(provider_ids)

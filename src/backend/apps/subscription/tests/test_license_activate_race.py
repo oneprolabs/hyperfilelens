@@ -12,6 +12,7 @@ from django.test import TransactionTestCase, override_settings
 from apps.iam.models import Membership, Organization
 from apps.subscription.models import License, LicenseHistory, MachineCode
 from apps.subscription.services.interface import activate_license
+from common.extension_spi import get_authz_provider
 
 
 @override_settings(DEBUG=True)
@@ -50,6 +51,15 @@ class ConcurrentLicenseActivateTests(TransactionTestCase):
         self.org_b = Organization.objects.create(
             key=f"lic-race-b-{self.suffix}", name="Race B"
         )
+        if get_authz_provider() is not None:
+            from apps.iam.permission_catalog import PERMISSION_KEYS
+            from apps.membership.models import CustomOrganizationRole
+
+            for organization in (self.org_a, self.org_b):
+                CustomOrganizationRole.objects.create(
+                    organization=organization, key="admin", name="Administrator",
+                    permissions=sorted(PERMISSION_KEYS),
+                )
         Membership.objects.create(
             user=self.user_a,
             organization=self.org_a,

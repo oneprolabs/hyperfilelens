@@ -491,6 +491,20 @@ def activate_license(
 
     existing = License.objects.filter(organization=organization).first()
     if existing:
+        # An exact replay of verified, normalized claims is not a renewal.
+        # Keep history/version stable while still validating signature, expiry,
+        # machine binding and every limit above. Changed claims with the same
+        # License ID must continue through the normal update/quota hook path.
+        if (
+            existing.status == License.Status.ACTIVE
+            and existing.license_key == license_key
+            and existing.machine_code == machine_code
+            and existing.issued_at == issued_at
+            and existing.expires_at == expires_at
+            and _normalize_features(existing.features) == features
+            and all(getattr(existing, field) == value for field, value in limits.items())
+        ):
+            return existing, existing.change_type
         change_type, reason = _determine_change_type(
             existing,
             limits,

@@ -21,11 +21,13 @@ export type StorageProviderConfig = {
 }
 
 export type StorageProvider = StorageProviderConfig & {
+  provider_type: 'system' | 'custom'
   source: 'default' | 'override'
   checksum: string
   updated_at: string | null
   region_count: number
   can_restore_default: boolean
+  can_delete?: boolean
 }
 
 export type ProviderDiff = {
@@ -138,6 +140,13 @@ export type ProviderResetReview = {
   reset_token: string
 }
 
+export type ProviderDeleteReview = {
+  provider_ids: string[]
+  providers: Array<{ id: string; display_name: string; region_count: number }>
+  expires_at: string
+  delete_token: string
+}
+
 export function normalizedStorageProviderSnapshot(provider: StorageProviderConfig) {
   return JSON.stringify({
     id: provider.id,
@@ -182,11 +191,15 @@ export function diffProviderImport(content: string) {
   )
 }
 
-export function reviewProviderImport(content: string) {
+export type ProviderImportOperation =
+  | { operation: 'add' }
+  | { operation: 'edit'; provider_id: string }
+
+export function reviewProviderImport(content: string, operation?: ProviderImportOperation) {
   return payload<ProviderImportReview>(
     api<unknown>('/api/v1/platform-ops/storage-providers/import/review', {
       method: 'POST',
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, ...operation }),
     }),
   )
 }
@@ -224,6 +237,25 @@ export function exportProviders(providerIds: string[]) {
   const query = `?provider_ids=${encodeURIComponent(providerIds.join(','))}`
   return payload<{ schema_version: number; providers: StorageProviderConfig[] }>(
     api<unknown>(`/api/v1/platform-ops/storage-providers/export${query}`),
+  )
+}
+
+export function reviewProviderDeletion(providerIds: string[]) {
+  requireProviderSelection(providerIds)
+  return payload<ProviderDeleteReview>(api<unknown>('/api/v1/platform-ops/storage-providers/delete-selected/review', {
+    method: 'POST',
+    body: JSON.stringify({ provider_ids: providerIds }),
+  }))
+}
+
+export function confirmProviderDeletion(review: ProviderDeleteReview) {
+  requireProviderSelection(review.provider_ids)
+  if (!review.delete_token?.trim()) throw new Error('A reviewed deletion token is required.')
+  return payload<{ deleted: boolean; idempotent: boolean; provider_ids: string[] }>(
+    api<unknown>('/api/v1/platform-ops/storage-providers/delete-selected', {
+      method: 'POST',
+      body: JSON.stringify({ provider_ids: review.provider_ids, delete_token: review.delete_token }),
+    }),
   )
 }
 
