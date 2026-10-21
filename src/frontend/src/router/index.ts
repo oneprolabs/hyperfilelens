@@ -112,7 +112,14 @@ export const router = createRouter({
         { path: 'protection/policies/:id/edit', component: ProtectionPolicyEditorPage, meta: fullscreenRouteMeta },
         { path: 'protection/file-filter-rules/help', component: ProtectionFileFilterRuleGuidePage },
         PROTECTION_RETENTION_LEGACY_ROUTE,
-        { path: 'insight', redirect: '/insight/copilot' },
+        {
+          path: 'insight',
+          component: { render: () => null },
+          beforeEnter: async () => {
+            const { enterInsights } = await import('./insightEntry')
+            return enterInsights()
+          },
+        },
         { path: 'insight/copilot', component: InsightPage },
         {
           path: 'insight/copilot/shared',
@@ -129,7 +136,7 @@ export const router = createRouter({
           path: 'insight/gateways',
           component: lazyRoute(() => import('../pages/insight/InsightGateways.vue')),
         },
-        { path: 'insight/:section', redirect: '/insight/copilot' },
+        { path: 'insight/:section', redirect: '/insight' },
         {
           path: 'node',
           component: { render: () => null },

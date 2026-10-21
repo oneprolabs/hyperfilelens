@@ -23,6 +23,7 @@ import { useI18n } from 'vue-i18n'
 import HflPopover from '../../components/HflPopover.vue'
 import { useCopilotSelectionPreview } from '../../composables/useCopilotSelectionPreview'
 import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
 import { useKnowledgeSourceForm, type BackupScopePickerNode, type KnowledgeSourceType } from '../../composables/useKnowledgeSourceForm'
 import { apiErrorMessage } from '../../lib/api'
 import { formatBytes } from '../../lib/kopiaProgress'
@@ -40,6 +41,7 @@ import {
 
 const router = useRouter()
 const { n, t } = useI18n()
+const { has } = useTenantPermissions()
 
 type SubmitBlockCode =
   | 'agent_model'
@@ -241,7 +243,8 @@ const selectedScopeSummary = computed(() => sourceScopes.value.length > 0
     : pathCountLabel(sourceScopes.value.length)
   : '—')
 const canCreate = computed(() => Boolean(
-  effectiveSnapshotId.value
+  has('insights.chats.use')
+  && effectiveSnapshotId.value
   && sourceScopes.value.length > 0
   && selectedGateway.value
   && agentModelReady.value
@@ -497,7 +500,7 @@ async function load() {
 async function createChat() {
   if (!canCreate.value || !selectedBackupConfigId.value) return
   const scopesValid = await validateAllBackupScopeEntries(true)
-  if (!scopesValid || sourceScopes.value.length === 0 || !selectionPreviewReady.value) return
+  if (!has('insights.chats.use') || !scopesValid || sourceScopes.value.length === 0 || !selectionPreviewReady.value) return
 
   submitting.value = true
   const requestPayload = {

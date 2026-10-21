@@ -1,6 +1,8 @@
 import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
+import { useTenantPermissions } from './useTenantPermissions'
+import { resolveInsightEntry } from '../lib/insightAccess'
 import {
   Activity,
   LayoutDashboard,
@@ -33,6 +35,7 @@ const insightRoutePrefixes = ['/node/ai-settings', '/node/knowledge-base', '/nod
 export function useAppPrimaryNav() {
   const { t } = useI18n()
   const route = useRoute()
+  const { has } = useTenantPermissions()
 
   const items = computed<AppPrimaryNavItem[]>(() => [
     { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
@@ -40,7 +43,7 @@ export function useAppPrimaryNav() {
     { to: '/insight', label: t('nav.insight'), icon: Sparkles },
     { to: '/node', label: t('nav.node'), icon: Settings },
     { to: '/ops', label: t('nav.ops'), icon: Activity },
-  ])
+  ].filter(item => item.to !== '/insight' || resolveInsightEntry(has) !== '/'))
 
   function isActive(to: string) {
     const path = route.path

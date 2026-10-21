@@ -19,6 +19,7 @@ import {
 import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
 import { readStoredOrganizationKey } from '../lib/organizationStorage'
+import { insightPermissionHints, insightRouteRedirect } from '../lib/insightAccess'
 
 export interface User {
   id: number
@@ -439,6 +440,14 @@ function hasRequiredRouteRole(to: { meta: Record<string, unknown> }): boolean {
   return requiredRoles.includes(role)
 }
 
+function authenticatedRouteRedirect(to: { path: string; meta: Record<string, unknown> }): string | undefined {
+  const insightRedirect = insightRouteRedirect(
+    to.path, insightPermissionHints(currentUser.value?.access_profile),
+  )
+  if (insightRedirect) return insightRedirect
+  if (!hasRequiredRouteRole(to)) return '/node'
+}
+
 // Watch for router changes to check auth state
 export function setupAuthGuard() {
   router.beforeEach(async (to, from, next) => {
@@ -519,8 +528,9 @@ export function setupAuthGuard() {
       if (isLoggedIn.value && !isPlatformOpsPath && !hasCompleteAccessProfile(currentUser.value)) {
         const refreshed = await fetchCurrentUser()
         if (refreshed) {
-          if (!hasRequiredRouteRole(to)) {
-            next('/node')
+          const redirect = authenticatedRouteRedirect(to)
+          if (redirect) {
+            next(redirect)
             return
           }
           next()
@@ -549,8 +559,9 @@ export function setupAuthGuard() {
             return
           }
         }
-        if (!hasRequiredRouteRole(to)) {
-          next('/node')
+        const redirect = authenticatedRouteRedirect(to)
+        if (redirect) {
+          next(redirect)
           return
         }
         next()
@@ -577,8 +588,9 @@ export function setupAuthGuard() {
               return
             }
           }
-          if (!hasRequiredRouteRole(to)) {
-            next('/node')
+          const redirect = authenticatedRouteRedirect(to)
+          if (redirect) {
+            next(redirect)
             return
           }
           next()

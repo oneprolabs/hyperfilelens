@@ -2,8 +2,10 @@
 import ModulePage from '../../components/ModulePage.vue'
 import { useInsightSideNav } from '../../composables/useInsightSideNav'
 import InsightCopilot from './InsightCopilot.vue'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
 
 const insightMenus = useInsightSideNav()
+const { has } = useTenantPermissions()
 </script>
 
 <template>
@@ -13,7 +15,10 @@ const insightMenus = useInsightSideNav()
     body-fill
     hide-page-title
   >
-    <KeepAlive include="InsightCopilot">
+    <KeepAlive
+      v-if="has('insights.chats.view')"
+      include="InsightCopilot"
+    >
       <InsightCopilot />
     </KeepAlive>
   </ModulePage>

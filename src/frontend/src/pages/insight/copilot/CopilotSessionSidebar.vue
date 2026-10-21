@@ -5,13 +5,14 @@ import { AlertCircle, Ellipsis, Pencil, Pin, PinOff, Plus, RotateCcw, Share2, Tr
 import { isActiveRunStatus } from '../../../composables/useLensRunStream'
 import type { SessionGroupKey, SessionRow } from './sessionOrdering'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sessions: SessionRow[]
   activeId: number | null
   loading?: boolean
   pendingNotifications?: Set<number>
   newFromId?: number | null
-}>()
+  canCreateChat?: boolean
+}>(), { canCreateChat: true, pendingNotifications: undefined, newFromId: undefined })
 
 const emit = defineEmits<{
   select: [id: number]
@@ -138,6 +139,7 @@ function onRenameKeydown(event: KeyboardEvent, row: SessionRow) {
 }
 
 function handleAction(command: string, row: SessionRow) {
+  if (command === 'new-from' && !props.canCreateChat) return
   if (command === 'share') emit('share', row)
   if (command === 'pin') emit('pin', row, true)
   if (command === 'unpin') emit('pin', row, false)
@@ -151,7 +153,10 @@ function handleAction(command: string, row: SessionRow) {
 
 <template>
   <aside class="copilot-aside">
-    <div class="copilot-aside__new">
+    <div
+      v-if="canCreateChat"
+      class="copilot-aside__new"
+    >
       <ElButton
         class="w-full !justify-center"
         type="primary"
@@ -286,7 +291,7 @@ function handleAction(command: string, row: SessionRow) {
                       {{ t('insight.copilot.share') }}
                     </ElDropdownItem>
                     <ElDropdownItem
-                      v-if="row.lifecycle_status === 'ready' && row.knowledge_source != null && row.sl_assistant_uuid"
+                      v-if="canCreateChat && row.lifecycle_status === 'ready' && row.knowledge_source != null && row.sl_assistant_uuid"
                       class="copilot-session-menu__new-from"
                       command="new-from"
                       :icon="Plus"

@@ -61,6 +61,15 @@ function mountSidebar(row: SessionRow) {
 }
 
 describe('CopilotSessionSidebar pin actions', () => {
+  it('retains Chat history without New Chat or New Chat From actions for a reader', async () => {
+    const wrapper = mountSidebar(session('ready'))
+    await wrapper.setProps({ canCreateChat: false })
+    expect(wrapper.find('.copilot-aside__new').exists()).toBe(false)
+    expect(wrapper.find('.copilot-session-menu__new-from').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Quarterly review')
+    wrapper.unmount()
+  })
+
   it('offers data updates on prepared Chats and a retry after update failure', () => {
     const ready = mountSidebar(session('ready', {
       backup_config_id: 10,
