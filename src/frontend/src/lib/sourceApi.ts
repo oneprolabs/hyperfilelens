@@ -486,9 +486,12 @@ export async function createBackupSourceDirectory(
   )
 }
 
-export async function setBackupSourcePipelineStep(payload: { ids: string[]; step: BackupPipelineStep }) {
+export async function setBackupSourcePipelineStep(
+  payload: { ids: string[]; step: BackupPipelineStep }, init?: RequestInit,
+) {
   return unwrapApiPayload<{ updated: string[]; step: BackupPipelineStep }>(
     await api<unknown>(`${backupSelectableBase}/pipeline/`, {
+      ...init,
       method: 'POST',
       body: JSON.stringify(payload),
       headers: orgHeaders(),

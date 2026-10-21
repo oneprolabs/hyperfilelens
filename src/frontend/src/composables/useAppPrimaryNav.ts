@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { useTenantPermissions } from './useTenantPermissions'
 import { resolveInsightEntry } from '../lib/insightAccess'
+import { resolveProtectionEntry } from '../lib/protectionAccess'
 import {
   Activity,
   LayoutDashboard,
@@ -43,7 +44,11 @@ export function useAppPrimaryNav() {
     { to: '/insight', label: t('nav.insight'), icon: Sparkles },
     { to: '/node', label: t('nav.node'), icon: Settings },
     { to: '/ops', label: t('nav.ops'), icon: Activity },
-  ].filter(item => item.to !== '/insight' || resolveInsightEntry(has) !== '/'))
+  ].filter(item => {
+    if (item.to === '/insight') return resolveInsightEntry(has) !== '/'
+    if (item.to === '/protection') return resolveProtectionEntry(has) !== '/'
+    return true
+  }))
 
   function isActive(to: string) {
     const path = route.path

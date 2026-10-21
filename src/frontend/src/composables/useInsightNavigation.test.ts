@@ -33,10 +33,10 @@ function navigation() {
 describe('Insights navigation visibility', () => {
   beforeEach(() => { organization.value = []; group.value = [] })
 
-  it('hides only Insights for a Configuration-only user, on both primary navigation surfaces', () => {
+  it('hides inaccessible Insights and Protection for a Configuration-only user, on both primary navigation surfaces', () => {
     organization.value = ['configuration.roles.manage']
     const { primary, sidebar, wrapper } = navigation()
-    expect(primary.items.value.map(item => item.to)).toEqual(['/', '/protection', '/node', '/ops'])
+    expect(primary.items.value.map(item => item.to)).toEqual(['/', '/node', '/ops'])
     expect(primary.itemsWithActiveState.value.some(item => item.to === '/insight')).toBe(false)
     expect(sidebar.value).toEqual([])
     wrapper.unmount()

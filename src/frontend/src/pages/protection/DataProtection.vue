@@ -82,6 +82,8 @@ import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDis
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeight'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
+import { useProtectionLoadState } from '../../composables/useProtectionLoadState'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
 import {
   isExplicitRestoreCancelRejection,
@@ -1217,6 +1219,11 @@ const step3SelectableCount = ref(0)
 const step3InitialLoadPending = ref(initialFlowMainStep === 2)
 const flowRefreshing = ref(false)
 const flowBootstrapping = ref(false)
+const flowLoad = useProtectionLoadState()
+const flowLoadError = flowLoad.error
+const flowAccessDenied = flowLoad.denied
+const { has: hasTenantPermission } = useTenantPermissions()
+let flowDisposed = false
 const flowStepDataLoading = reactive({
   1: initialFlowMainStep === 1,
   2: initialFlowMainStep === 2,
@@ -1678,7 +1685,7 @@ function clearFlowStepLoadRetry(step: 0 | 1) {
 }
 
 function scheduleFlowStepLoadRetry(step: 0 | 1) {
-  if (flowMainStep.value !== step || flowStepLoadRetryTimers[step] || flowStepLoadRetryAttempted[step]) return
+  if (flowDisposed || flowLoadError.value || flowMainStep.value !== step || flowStepLoadRetryTimers[step] || flowStepLoadRetryAttempted[step]) return
   flowStepLoadRetryAttempted[step] = true
   flowStepLoadRetryTimers[step] = setTimeout(() => {
     delete flowStepLoadRetryTimers[step]
@@ -1713,6 +1720,7 @@ function setFlowStepDataLoading(step: 1 | 2, loading: boolean) {
 }
 
 async function loadBackupSelectable(options: { silent?: boolean; showError?: boolean } = {}) {
+  if (flowDisposed || flowLoadError.value) return
   clearFlowStepLoadRetry(0)
   const params = backupSelectableRequestParams()
   const key = backupSelectableRequestKey(params)
@@ -1753,6 +1761,7 @@ async function loadBackupSelectable(options: { silent?: boolean; showError?: boo
     } catch (e) {
       if (latestBackupSelectableRequestKey !== key) return
       if (pageRequests.isAbortError(e)) return
+      handleFlowLoadError(e)
       backupSelectableRows.value = []
       backupSelectableCount.value = 0
       if (options.showError !== false) showApiError(e)
@@ -1885,10 +1894,19 @@ async function refreshFlowStepData(
   step: 0 | 1 | 2 = flowMainStep.value,
   options: { showLoading?: boolean; showError?: boolean } = {},
 ) {
+  if (flowDisposed || flowLoadError.value) return
   const showLoading = options.showLoading ?? true
   if (step === 0) {
-    if (step1ServerFiltersActive()) await refreshBackupSourcePoolCount()
-    await loadBackupSelectable({ silent: !showLoading, showError: options.showError })
+    try {
+      if (step1ServerFiltersActive()) await refreshBackupSourcePoolCount()
+      await loadBackupSelectable({ silent: !showLoading, showError: options.showError })
+    } catch (error) {
+      if (pageRequests.isAbortError(error)) return
+      handleFlowLoadError(error)
+      backupSelectableLoading.value = false
+      if (options.showError !== false) showApiError(error)
+      scheduleFlowStepLoadRetry(0)
+    }
     return
   }
 
@@ -1909,6 +1927,7 @@ async function refreshFlowStepData(
     await loadStep3Selectable({ signal })
   } catch (e) {
     if (!pageRequests.isAbortError(e)) {
+      handleFlowLoadError(e)
       if (options.showError !== false) showApiError(e)
       if (step === 1) scheduleFlowStepLoadRetry(1)
     }
@@ -1916,6 +1935,15 @@ async function refreshFlowStepData(
   } finally {
     pageRequests.releaseSignal(scope, signal)
     if (showLoading || consumePrimedStep3Loading) setFlowStepDataLoading(step, false)
+  }
+}
+
+function handleFlowLoadError(error: unknown) {
+  const status = toApiError(error).status
+  if (flowBootstrapping.value || status === 401 || status === 403) {
+    flowLoad.fail(error)
+    clearFlowStepLoadRetries()
+    stopStep3AutoRefresh()
   }
 }
 
@@ -3148,17 +3176,27 @@ watch(
   },
 )
 
-onMounted(async () => {
-  lifecycleOps.restorePersisted()
-  scheduleInteractivePreload(preloadFlowBackupSourceDetailDrawer)
+async function initializeFlow() {
+  if (flowBootstrapping.value || flowDisposed) return
   flowBootstrapping.value = true
-  try {
-    await bootstrapPipeline()
-    syncWizardCountsFromPipeline()
+  if (flowMainStep.value === 0) backupSelectableLoading.value = true
+  else flowStepDataLoading[flowMainStep.value] = true
+  const scope = 'flow-bootstrap'
+  const signal = pageRequests.nextSignal(scope)
+  await flowLoad.initialize(async () => {
     if (isFixedSnapshotRestore.value) {
+      // Standalone restore has its own resource authorization. It must not
+      // depend on the Wizard's source inventory counts.
       await refreshBackupConfigs()
       await initializeFixedSnapshotRestore()
     } else {
+      await bootstrapPipeline({
+        signal,
+        migrateLegacy: hasTenantPermission('protection.source_hosts.manage')
+          && hasTenantPermission('protection.source_nas.manage'),
+      })
+      if (signal.aborted) return
+      syncWizardCountsFromPipeline()
       if (!applyRequestedFlowStep(route.query.step)) {
         const storedStep = consumeStoredFlowReturnStep()
         applyFlowStep(storedStep)
@@ -3167,22 +3205,40 @@ onMounted(async () => {
       // The active Step 1 page already returns its unfiltered global count.
       // Only issue the lightweight Step 1 count request when another step is
       // initially active and the Step 1 table will not be loaded.
-      if (flowMainStep.value !== 0) await refreshBackupSourcePoolCount()
+      if (flowMainStep.value !== 0) await refreshBackupSourcePoolCount(signal)
+      if (signal.aborted) return
       await refreshFlowStepData(flowMainStep.value)
       if (flowMainStep.value === 1) scheduleInteractivePreload(preloadBackupCreateWizard)
       if (flowMainStep.value === 2) scheduleInteractivePreload(preloadFlowBackupSourceDetailDrawer)
     }
-  } catch (err) {
-    if (!pageRequests.isAbortError(err)) throw err
-  } finally {
+  }, (failed) => {
+    // Promise.all can fail while a sibling count is still in flight. Keep the
+    // controller registered until we have cancelled this failed round.
+    if (failed && pageRequests.isCurrentSignal(scope, signal)) pageRequests.abortScope(scope)
+    // These flags are primed before bootstrap. A rejected count request can
+    // otherwise leave a table loading even though its loader was never called.
+    backupSelectableLoading.value = false
+    flowStepDataLoadingCounts[1] = 0
+    flowStepDataLoadingCounts[2] = 0
+    flowStepDataLoading[1] = false
+    flowStepDataLoading[2] = false
+    step3EntryLoadingPrimed = false
+    step3InitialLoadPending.value = false
     flowBootstrapping.value = false
-    syncStep3AutoRefresh()
+    pageRequests.releaseSignal(scope, signal)
+  })
+  if (signal.aborted || flowDisposed || flowLoadError.value) {
+    clearFlowStepLoadRetries()
+    stopStep3AutoRefresh()
+    return
   }
+  syncStep3AutoRefresh()
   resumePendingUnregisterMonitors()
   nextTick(() => {
     updateFlowTableMaxHeight()
     const toolbar = flowToolbarRef.value
     if (typeof ResizeObserver !== 'undefined' && toolbar) {
+      flowTableZoneObserver?.disconnect()
       flowTableZoneObserver = new ResizeObserver(() => {
         scheduleFlowTableMaxHeightUpdate()
       })
@@ -3197,9 +3253,16 @@ onMounted(async () => {
     window.addEventListener('resize', updateDrawerWidth)
     layoutFlowTables()
   })
+}
+
+onMounted(async () => {
+  lifecycleOps.restorePersisted()
+  scheduleInteractivePreload(preloadFlowBackupSourceDetailDrawer)
+  await initializeFlow()
 })
 
 onUnmounted(() => {
+  flowDisposed = true
   stopStep3AutoRefresh()
   clearFlowStepLoadRetries()
   stopRestoreTaskReconcileTimers()
@@ -4773,6 +4836,10 @@ function stopStep3AutoRefresh() {
 }
 
 function ensureStep3AutoRefreshInterval() {
+  if (flowDisposed || flowBootstrapping.value || flowLoadError.value || isFixedSnapshotRestore.value) {
+    stopStep3AutoRefresh()
+    return
+  }
   const nextInterval = hasRunningStep3Tasks() ? STEP3_REFRESH_ACTIVE_MS : STEP3_REFRESH_IDLE_MS
   if (step3RefreshTimer !== null && step3RefreshIntervalMs === nextInterval) return
   stopStep3AutoRefresh()
@@ -4784,7 +4851,7 @@ function ensureStep3AutoRefreshInterval() {
 }
 
 async function refreshStep3SourceList() {
-  if (flowMainStep.value !== 2 || document.hidden || step3RefreshInFlight || step3ActionRefreshInFlight) return
+  if (flowDisposed || flowLoadError.value || flowMainStep.value !== 2 || document.hidden || step3RefreshInFlight || step3ActionRefreshInFlight) return
   const scope = flowStepScope(2)
   const signal = pageRequests.nextSignal(scope)
   const resetTrackedIds = collectResetTrackedIds()
@@ -4823,7 +4890,8 @@ async function refreshStep3SourceList() {
     if (!pageRequests.isCurrentSignal(scope, signal)) return
     syncStep2WizardCountFromPipeline()
     untrackResetPipelineSources(finishedIds)
-  } catch {
+  } catch (error) {
+    handleFlowLoadError(error)
     // Auto-refresh is best-effort; keep the last known runtime state and retry
     // on the next interval without creating an unhandled promise rejection.
   } finally {
@@ -10369,7 +10437,23 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
     :body-flush="inlineEditorMode === null"
     :body-fill="inlineEditorMode === null"
   >
-    <template v-if="inlineEditorMode === null">
+    <div
+      v-if="flowLoadError"
+      class="p-6 text-center space-y-4"
+      role="alert"
+    >
+      <p class="text-sm text-slate-600 dark:text-slate-300">
+        {{ flowAccessDenied ? t('errors.codes.authForbidden') : t('errors.pageLoad.loadFailed.title') }}
+      </p>
+      <ElButton
+        v-if="!flowAccessDenied"
+        :loading="flowBootstrapping"
+        @click="initializeFlow"
+      >
+        {{ t('common.retry') }}
+      </ElButton>
+    </div>
+    <template v-else-if="inlineEditorMode === null">
       <div class="protection-flow-workspace">
         <div class="dp-flow-steps-row flex flex-col gap-2 xl:flex-row xl:items-stretch shrink-0">
           <button

@@ -36,6 +36,7 @@ import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
 import { useRouteResourceDetail } from '../../composables/useRouteResourceDetail'
 import FlowSourceReadyStatusCell from './components/FlowSourceReadyStatusCell.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
 import { sourceAgentSidebarIcon, nasMountProtocolIcon } from '../../lib/resourceIcons'
@@ -118,6 +119,7 @@ const PROXY_DEPLOY_ROUTE = { path: '/node/nodes/deploy', query: { role: 'proxy' 
 const { t, te } = useI18n()
 const sideNav = useProtectionSideNav()
 const pageRequests = usePageRequestScope()
+const { has: hasTenantPermission } = useTenantPermissions()
 
 /* ---------- View (sidebar: host / NAS) ---------- */
 type SourceViewTab = 'hostFileSystem' | 'nas'
@@ -537,6 +539,7 @@ async function saveForm() {
 
 /* ---------- actions ---------- */
 async function loadAgentNodes(signal?: AbortSignal) {
+  if (!hasTenantPermission('protection.source_hosts.view')) return
   try {
     const prev = agentNodes.value
     const next = await listNodes({ role: 'agent' }, { signal })
@@ -630,6 +633,7 @@ function resolveBackupSourceLifecycleStatus(node: ApiNode) {
 }
 
 async function loadProxyNodes(signal?: AbortSignal) {
+  if (!hasTenantPermission('protection.proxy_hosts.view')) return
   try {
     proxyNodes.value = await listNodes({ role: 'proxy' }, { signal })
   } catch (e) {

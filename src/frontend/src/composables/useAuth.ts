@@ -20,6 +20,7 @@ import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
 import { readStoredOrganizationKey } from '../lib/organizationStorage'
 import { insightPermissionHints, insightRouteRedirect } from '../lib/insightAccess'
+import { protectionRouteRedirect } from '../lib/protectionAccess'
 
 export interface User {
   id: number
@@ -440,11 +441,14 @@ function hasRequiredRouteRole(to: { meta: Record<string, unknown> }): boolean {
   return requiredRoles.includes(role)
 }
 
-function authenticatedRouteRedirect(to: { path: string; meta: Record<string, unknown> }): string | undefined {
+function authenticatedRouteRedirect(to: { path: string; meta: Record<string, unknown>; query?: Record<string, unknown> }): string | undefined {
+  const has = insightPermissionHints(currentUser.value?.access_profile)
   const insightRedirect = insightRouteRedirect(
-    to.path, insightPermissionHints(currentUser.value?.access_profile),
+    to.path, has,
   )
   if (insightRedirect) return insightRedirect
+  const protectionRedirect = protectionRouteRedirect(to, has)
+  if (protectionRedirect) return protectionRedirect
   if (!hasRequiredRouteRole(to)) return '/node'
 }
 
