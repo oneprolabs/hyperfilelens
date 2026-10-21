@@ -3869,6 +3869,10 @@ export const en = {
       selectAll_view: "View All",
       selectAll_manage: "Manage All",
       selectAll_delete: "Delete All",
+      selectAll: "Select All",
+      deselectAll: "Deselect All",
+      selectResults: "Select Results",
+      deselectResults: "Deselect Results",
       permissions: {
         configuration_organizations_view: "View Organization",
         configuration_members_view: "View Members",
