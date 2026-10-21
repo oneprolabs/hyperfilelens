@@ -21,6 +21,8 @@ import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
 import { readStoredOrganizationKey } from '../lib/organizationStorage'
 import { insightPermissionHints, insightRouteRedirect } from '../lib/insightAccess'
 import { protectionRouteRedirect } from '../lib/protectionAccess'
+import { operationsRouteRedirect } from '../lib/operationsAccess'
+import { hasTenantHostMonitor } from '../ops/resolveRoutes'
 
 export interface User {
   id: number
@@ -449,6 +451,8 @@ function authenticatedRouteRedirect(to: { path: string; meta: Record<string, unk
   if (insightRedirect) return insightRedirect
   const protectionRedirect = protectionRouteRedirect(to, has)
   if (protectionRedirect) return protectionRedirect
+  const operationsRedirect = operationsRouteRedirect(to, has, hasTenantHostMonitor())
+  if (operationsRedirect) return operationsRedirect
   if (!hasRequiredRouteRole(to)) return '/node'
 }
 

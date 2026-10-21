@@ -75,9 +75,9 @@ export function nodeRoleForSource(sourceType: NodeMonitorRole): NodeRole {
   return ROLE_BY_SOURCE[sourceType]
 }
 
-export async function fetchMonitorNodes(role: NodeMonitorRole): Promise<MonitorNodeItem[]> {
+export async function fetchMonitorNodes(role: NodeMonitorRole, init?: RequestInit): Promise<MonitorNodeItem[]> {
   const qs = new URLSearchParams({ role: nodeRoleForSource(role) }).toString()
-  const raw = await api<unknown>(`/api/v1/monitors/nodes/?${qs}`)
+  const raw = await api<unknown>(`/api/v1/monitors/nodes/?${qs}`, init)
   const payload = unwrapApiPayload<MonitorNodeListPayload>(raw)
   return payload.items || []
 }
@@ -85,6 +85,7 @@ export async function fetchMonitorNodes(role: NodeMonitorRole): Promise<MonitorN
 export async function fetchNodeMonitor(
   nodeId: number,
   params?: { hours?: number; startAt?: string; endAt?: string },
+  init?: RequestInit,
 ): Promise<SystemMonitorPayload> {
   const query: Record<string, string> = {}
   if (params?.hours !== undefined) query.hours = String(params.hours)
@@ -94,7 +95,7 @@ export async function fetchNodeMonitor(
   const path = qs
     ? `/api/v1/monitors/nodes/${nodeId}/?${qs}`
     : `/api/v1/monitors/nodes/${nodeId}/`
-  const raw = await api<unknown>(path)
+  const raw = await api<unknown>(path, init)
   return unwrapApiPayload<SystemMonitorPayload>(raw)
 }
 

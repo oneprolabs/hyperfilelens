@@ -7,3 +7,7 @@ import { tenantOpsRoutes as extTenantOpsRoutes } from '@ext/platform/ops/routes'
 export function resolveTenantOpsRoutes() {
   return (extTenantOpsRoutes || []) as Array<Record<string, unknown>>
 }
+
+export function hasTenantHostMonitor(): boolean {
+  return resolveTenantOpsRoutes().some(route => route.path === 'ops/host-monitor')
+}
