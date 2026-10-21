@@ -77,6 +77,16 @@ describe('Configuration entry', () => {
     )
   })
 
+  it('preserves explicit organization context, not stale page parameters', () => {
+    mocks.organization = ['configuration.resources.view']
+    expect(enterConfiguration(routes, { query: { org: 'tenant a', id: 'old', tab: 'members' } })).toEqual({
+      path: '/node/resources', query: { org: 'tenant a' }, replace: true,
+    })
+    expect(enterConfiguration(routes, { query: { org: ['tenant-a'] } }))
+      .toEqual({ path: '/node/resources', replace: true })
+    expect(mocks.warning).not.toHaveBeenCalled()
+  })
+
   it('waits for the global auth guard on a fresh /node entry', async () => {
     const node = appRouter.options.routes.find(route => route.path === '/')!
       .children!.find(route => route.path === 'node')!

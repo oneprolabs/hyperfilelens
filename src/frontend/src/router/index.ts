@@ -150,9 +150,9 @@ export const router = createRouter({
           // beforeEnter runs after the global auth guard has loaded the profile.
           // A static redirect runs before authentication and can pick a page
           // using an empty/stale profile on a direct Configuration visit.
-          beforeEnter: async () => {
+          beforeEnter: async (to) => {
             const { enterConfiguration } = await import('./configurationEntry')
-            return enterConfiguration(governanceRoutes)
+            return enterConfiguration(governanceRoutes, to)
           },
         },
         { path: 'node/agents', component: AssetsNodesPage },
