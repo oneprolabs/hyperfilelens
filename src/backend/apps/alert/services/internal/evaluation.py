@@ -326,6 +326,10 @@ def _maybe_resolve_metric(policy: AlertPolicy, resource_id: str) -> None:
     fingerprint = build_fingerprint(policy, resource_id, str(metric_key))
     alert = AlertRecord.objects.filter(
         organization_id=policy.organization_id,
+        policy_id=policy.id,
+        type=policy.type,
+        resource_type=policy.resource_type,
+        resource_id=resource_id,
         fingerprint=fingerprint,
         status__in=[
             AlertStatus.PENDING,
@@ -374,8 +378,31 @@ def _evaluate_availability_policy(policy: AlertPolicy) -> None:
                 alert_key=check_type,
                 metadata={"check_type": check_type, "node_status": node.status},
             )
-        else:
-            _maybe_resolve_metric(policy, str(node.id))
+        elif (policy.recovery_rule or {}).get("enabled") is not False:
+            _resolve_availability_alerts(policy, str(node.id), check_type)
+
+
+def _resolve_availability_alerts(policy: AlertPolicy, resource_id: str, check_type: str) -> None:
+    """Match the original heartbeat key without rewriting historical records."""
+    from apps.alert.constants import AlertStatus
+    from apps.alert.services.internal.fingerprint import build_fingerprint
+
+    fingerprints = [
+        build_fingerprint(policy, resource_id, check_type),
+        # Accept legacy records using the former metric/default lookup key.
+        build_fingerprint(policy, resource_id, "default"),
+    ]
+    alerts = AlertRecord.objects.filter(
+        organization_id=policy.organization_id,
+        policy_id=policy.id,
+        type=AlertType.AVAILABILITY,
+        resource_type=policy.resource_type,
+        resource_id=resource_id,
+        fingerprint__in=fingerprints,
+        status__in=[AlertStatus.PENDING, AlertStatus.FIRING, AlertStatus.ACKNOWLEDGED],
+    )
+    for alert in alerts:
+        resolve_alert(alert)
 
 
 def _evaluate_system_policy(policy: AlertPolicy) -> None:

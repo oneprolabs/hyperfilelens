@@ -56,9 +56,20 @@ def handle_task_event(task: Task) -> None:
 
 
 def recover_task_alerts(task: Task) -> None:
+    if task.status != Task.Status.SUCCESS:
+        return
     task_ids = [str(task.id), str(task.task_uuid)]
+    policies = {
+        policy.id: policy
+        for policy in AlertPolicy.objects.filter(
+            organization_id=task.organization_id,
+            type=AlertType.TASK,
+        )
+    }
     qs = AlertRecord.objects.filter(
         organization_id=task.organization_id,
+        type=AlertType.TASK,
+        policy_id__in=policies,
         resource_id__in=task_ids,
         status__in=[
             AlertStatus.PENDING,
@@ -67,6 +78,23 @@ def recover_task_alerts(task: Task) -> None:
         ],
     )
     for alert in qs:
+        # Legacy rules keep their existing default, but explicit opt-out applies
+        # to every automatic recovery path. Manual resolution is independent.
+        policy = policies[alert.policy_id]
+        if alert.resource_type != policy.resource_type:
+            continue
+        if (policy.recovery_rule or {}).get("enabled") is False:
+            continue
+        rule = policy.trigger_rule or {}
+        if rule.get("task_type") and rule["task_type"] != task.task_type:
+            continue
+        if rule.get("operation_type"):
+            operation = getattr(task, "repository_operation", None)
+            if operation is None or rule["operation_type"] != operation.operation_type:
+                continue
+        metadata = alert.metadata or {}
+        if metadata.get("task_uuid") and metadata["task_uuid"] != str(task.task_uuid):
+            continue
         resolve_alert(alert)
 
 

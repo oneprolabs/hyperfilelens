@@ -219,6 +219,33 @@ def test_metric_policy_rejects_metric_for_another_resource_type(org_user_client)
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("resource_type", [ResourceType.SYSTEM_SERVICE, ResourceType.TASK])
+def test_metric_policy_rejects_resources_without_a_metric_catalog(org_user_client, resource_type):
+    client, org = org_user_client
+    response = client.post(
+        "/api/v1/alerts/policies/",
+        {
+            "name": "Unsupported numeric alert",
+            "type": AlertType.METRIC,
+            "severity": "warning",
+            "resource_type": resource_type,
+            "scope": "all",
+            "trigger_rule": {
+                "metric_key": "cpu_usage", "operator": ">=", "threshold": 80,
+                "duration_seconds": 60,
+            },
+        },
+        format="json",
+        HTTP_X_ORG_KEY=org.key,
+    )
+    assert response.status_code == 400
+    assert "resource_type" in {
+        error["field"] for error in response.data["data"]["errors"]
+    }
+    assert not AlertPolicy.objects.filter(organization=org, name="Unsupported numeric alert").exists()
+
+
+@pytest.mark.django_db
 def test_selected_policy_returns_monitoring_resource_names(org_user_client):
     client, org = org_user_client
     source_host = Node.objects.create(
