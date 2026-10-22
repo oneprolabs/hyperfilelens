@@ -93,18 +93,15 @@ export const en = {
   errors: {
     pageLoad: {
       update: {
-        eyebrow: 'Update available',
         title: 'A newer version is ready',
         message:
           'This page belongs to a previous application version. Reload to continue with the latest version.',
       },
       loadFailed: {
-        eyebrow: 'Page unavailable',
         title: 'This page could not be loaded',
         message: 'Reload and try again. If the problem continues, contact your administrator.',
       },
-      reload: 'Reload now',
-      note: 'Your saved data and running server tasks are not affected.',
+      reload: 'Reload Now',
     },
     agentWsNotRoutable:
       'The agent node is offline or unreachable. Wait until the host is back online and try again, or use Force Cleanup to record the retained installation.',
@@ -6739,7 +6736,7 @@ export const en = {
       resetExpired: 'This confirmation has expired. Close it and review the reset again.',
       resetScopeChanged: 'The reset selection changed. Close this dialog and try again.',
       restoreSelectionHint: 'To restore defaults, select only customized Providers that have built-in defaults.',
-      confirmReset: 'Reset to Defaults',
+      confirmReset: 'Reset',
       resetSuccess: 'Default configuration restored',
       source: {
         default: 'Default',
@@ -6900,17 +6897,18 @@ export const en = {
       colLimits: 'Limits',
       colActions: 'Actions',
       viewPlan: 'View Details',
-      editPlan: 'Edit',
+      editPlan: 'Edit Plan',
       duplicatePlan: 'Duplicate',
       archivePlan: 'Archive',
       restorePlan: 'Restore',
       deletePlan: 'Delete',
-      planName: 'Plan Name',
-      planNamePlaceholder: 'Enter plan name',
-      planNameRequired: 'Plan name is required',
-      planBasicTitle: 'Basic information',
+      planName: 'Name',
+      planNamePlaceholder: 'e.g. Trial',
+      planNameRequired: 'Name is required',
+      planDescriptionPlaceholder: 'Optional. Who this plan is for and when to use it.',
+      planBasicTitle: 'Basic Information',
       planBasicHint: 'Name this subscription plan for organizations.',
-      planLimitsTitle: 'Resource limits',
+      planLimitsTitle: 'Resource Limits',
       planLimitHint: 'Use -1 for Unlimited. Enter storage and capacity in MB, GB, or TB.',
       planSaved: 'Subscription plan saved',
       planSaveFailed: 'Failed to save subscription plan',

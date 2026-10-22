@@ -113,17 +113,14 @@
   "errors": {
     "pageLoad": {
       "update": {
-        "eyebrow": "可用更新",
         "title": "新版本已准备就绪",
         "message": "此页面属于以前的应用程序版本。重新加载以继续使用最新版本。"
       },
       "loadFailed": {
-        "eyebrow": "页面不可用",
         "title": "该页面无法加载",
         "message": "重新加载并重试。如果问题仍然存在，请联系您的管理员。"
       },
-      "reload": "立即重新加载",
-      "note": "您保存的数据和正在运行的服务器任务不受影响。"
+      "reload": "立即重新加载"
     },
     "agentWsNotRoutable": "代理节点离线或不可达。等待主机重新联机并重试，或使用强制清理来记录保留的安装。",
     "agentWsReconnecting": "Agent 节点正在重连，请稍候后重试。",
@@ -8661,7 +8658,7 @@
       "applySuccessHint": "有效目录和所有 API 实例现在使用经过审核的配置。",
       "resetTitle": "恢复默认配置",
       "resetWarning": "移除此提供商的自定义配置，使用当前 HFL 版本自带的默认配置。不会删除存储桶、已存储的数据或现有仓库。",
-      "confirmReset": "恢复默认配置",
+      "confirmReset": "重置",
       "resetSuccess": "已还原默认配置",
       "source": {
         "default": "默认",
@@ -8929,14 +8926,15 @@
       "colLimits": "限额",
       "colActions": "操作",
       "viewPlan": "查看详情",
-      "editPlan": "编辑",
+      "editPlan": "编辑套餐",
       "duplicatePlan": "复制",
       "archivePlan": "归档",
       "restorePlan": "恢复",
       "deletePlan": "删除",
-      "planName": "方案名称",
-      "planNamePlaceholder": "输入方案名称",
-      "planNameRequired": "请输入方案名称",
+      "planName": "名称",
+      "planNamePlaceholder": "例如：试用版",
+      "planNameRequired": "请输入名称",
+      "planDescriptionPlaceholder": "可选。说明适用对象与使用场景。",
       "planBasicTitle": "基本信息",
       "planBasicHint": "为组织命名此订阅方案。",
       "planLimitsTitle": "资源限额",

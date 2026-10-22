@@ -113,17 +113,14 @@
   "errors": {
     "pageLoad": {
       "update": {
-        "eyebrow": "Actualización disponible",
         "title": "Una versión más nueva está lista",
         "message": "Esta página pertenece a una versión de aplicación anterior. Recargar para continuar con la última versión."
       },
       "loadFailed": {
-        "eyebrow": "Página no disponible",
         "title": "Esta página no se puede cargar",
         "message": "Recargar e intentar de nuevo. Si el problema continúa, contacte con su administrador."
       },
-      "reload": "Recarga ahora",
-      "note": "Los datos guardados y las tareas que se ejecutan en el servidor no se verán afectados."
+      "reload": "Recarga ahora"
     },
     "agentWsNotRoutable": "El nodo Agent está sin conexión o no se puede acceder a él. Espere a que el host vuelva a estar en línea e inténtelo de nuevo, o use la limpieza forzada para eliminar el registro de la instalación pendiente.",
     "agentWsReconnecting": "El nodo de agente está reconectándose.",
@@ -8661,7 +8658,7 @@
       "applySuccessHint": "El catálogo eficaz y todas las instancias API utilizan ahora la configuración revisada.",
       "resetTitle": "Restablecer valores predeterminados",
       "resetWarning": "Elimina la configuración personalizada de este proveedor y utiliza los valores predeterminados de la versión actual de HFL. No se eliminan buckets, datos almacenados ni repositorios existentes.",
-      "confirmReset": "Restablecer valores predeterminados",
+      "confirmReset": "Restablecer",
       "resetSuccess": "Configuración predeterminada restaurada",
       "source": {
         "default": "Predeterminado",
@@ -8929,14 +8926,15 @@
       "colLimits": "Límites",
       "colActions": "Acciones",
       "viewPlan": "Ver detalles",
-      "editPlan": "Editar",
+      "editPlan": "Editar plan",
       "duplicatePlan": "Duplicar",
       "archivePlan": "Archivar",
       "restorePlan": "Restaurar",
       "deletePlan": "Eliminar",
-      "planName": "Nombre del plan",
-      "planNamePlaceholder": "Introduzca el nombre del plan",
-      "planNameRequired": "El nombre del plan es obligatorio",
+      "planName": "Nombre",
+      "planNamePlaceholder": "p. ej. Trial",
+      "planNameRequired": "El nombre es obligatorio",
+      "planDescriptionPlaceholder": "Opcional. Para quién es este plan y cuándo usarlo.",
       "planBasicTitle": "Información básica",
       "planBasicHint": "Asigne un nombre a este plan de suscripción para las organizaciones.",
       "planLimitsTitle": "Límites de recursos",

@@ -6,7 +6,7 @@
   min-height: calc(var(--app-viewport-height, 100vh) - var(--topnav-height, 0px));
   place-items: center;
   overflow: hidden;
-  padding: clamp(28px, 7vh, 72px) clamp(20px, 5vw, 64px);
+  padding: clamp(36px, 8vh, 88px) clamp(24px, 6vw, 72px);
   background:
     radial-gradient(circle at 50% 22%, color-mix(in srgb, var(--color-primary, #6d5ef6) 8%, transparent), transparent 34%),
     linear-gradient(
@@ -22,7 +22,7 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  width: min(680px, 78vw);
+  width: min(760px, 82vw);
   aspect-ratio: 1;
   border: 1px solid color-mix(in srgb, var(--color-primary, #6d5ef6) 9%, transparent);
   border-radius: 50%;
@@ -35,91 +35,63 @@
   position: relative;
   box-sizing: border-box;
   display: flex;
-  width: min(520px, 100%);
+  width: min(600px, 100%);
   flex-direction: column;
   align-items: center;
-  padding: clamp(30px, 5vw, 44px);
+  padding: clamp(44px, 6vw, 64px) clamp(40px, 5vw, 56px);
   border: 1px solid var(--color-border, #e1e4eb);
-  border-radius: 14px;
+  border-radius: 18px;
   background: color-mix(in srgb, var(--color-card-bg, #fff) 96%, transparent);
   box-shadow:
-    0 24px 70px rgb(15 23 42 / 8%),
-    0 3px 12px rgb(15 23 42 / 4%);
+    0 28px 80px rgb(15 23 42 / 10%),
+    0 4px 16px rgb(15 23 42 / 5%);
   text-align: center;
-}
-
-.chunk-load-error__icon {
-  display: grid;
-  width: 58px;
-  height: 58px;
-  margin-bottom: 18px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--color-primary, #6d5ef6) 18%, var(--color-card-bg, #fff));
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--color-primary, #6d5ef6) 9%, var(--color-card-bg, #fff));
-  color: var(--color-primary, #6d5ef6);
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-primary, #6d5ef6) 12%, transparent);
-}
-
-.chunk-load-error__icon-svg {
-  width: 28px;
-  height: 28px;
-}
-
-.chunk-load-error__eyebrow {
-  margin: 0 0 8px;
-  color: var(--color-primary, #6d5ef6);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  line-height: 1.4;
-  text-transform: uppercase;
 }
 
 .chunk-load-error__title {
   margin: 0;
   color: var(--color-text-title, #1f2329);
-  font-size: clamp(23px, 3vw, 28px);
+  font-size: clamp(26px, 3.2vw, 32px);
   font-weight: 650;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.03em;
   line-height: 1.25;
 }
 
 .chunk-load-error__message {
-  max-width: 410px;
-  margin: 13px 0 0;
+  max-width: 440px;
+  margin: 16px 0 0;
   color: var(--color-text-secondary, #646a73);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.7;
 }
 
 .chunk-load-error__action {
   display: inline-flex;
-  min-width: 150px;
-  min-height: 40px;
+  min-width: 168px;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-top: 24px;
-  padding: 9px 20px;
+  margin-top: 32px;
+  padding: 11px 24px;
   border: 1px solid var(--color-primary, #6d5ef6);
-  border-radius: 7px;
+  border-radius: 8px;
   background: linear-gradient(
     135deg,
     var(--color-primary-gradient-start, #7e6cef),
     var(--color-primary-gradient-end, #6d5ef6)
   );
-  box-shadow: 0 7px 18px color-mix(in srgb, var(--color-primary, #6d5ef6) 20%, transparent);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--color-primary, #6d5ef6) 22%, transparent);
   color: #fff;
   cursor: pointer;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   transition: box-shadow 160ms ease, transform 160ms ease;
 }
 
 .chunk-load-error__action:hover {
-  box-shadow: 0 9px 22px color-mix(in srgb, var(--color-primary, #6d5ef6) 28%, transparent);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--color-primary, #6d5ef6) 30%, transparent);
   transform: translateY(-1px);
 }
 
@@ -134,15 +106,9 @@
 }
 
 .chunk-load-error__action-icon {
+  flex: 0 0 auto;
   width: 16px;
   height: 16px;
-}
-
-.chunk-load-error__note {
-  margin: 15px 0 0;
-  color: var(--color-text-tertiary, #8f959e);
-  font-size: 11px;
-  line-height: 1.55;
 }
 
 @media (max-width: 520px) {
@@ -156,8 +122,8 @@
   }
 
   .chunk-load-error__card {
-    padding: 30px 22px;
-    border-radius: 12px;
+    padding: 36px 24px;
+    border-radius: 14px;
   }
 
   .chunk-load-error__action {
