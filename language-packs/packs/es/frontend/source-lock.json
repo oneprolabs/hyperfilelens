@@ -1,4 +1,5 @@
 {
+  "settings.groupsPage.groupRoleAssignmentHint": "dc49eb30050e3cb91c9755fd11e869d8f03c5407f0d549e351080861acd6fa05",
   "settings.rolesPage.selectAll": "b4b26e40f8a7751154caf18674c2c96c11dc56900e0ec7d3e69da00e7a41fcea",
   "settings.rolesPage.deselectAll": "71f326287bbaec8f3add56909d7bc74c5ee6b50d3928c5c95f0c283e653ca359",
   "settings.rolesPage.selectResults": "eb227a18ba6db030823971e58b271de0ba29f02aff70a3e8de81c3105dea6ef4",
@@ -8538,8 +8539,8 @@
   "settings.groupsPage.continueEditing": "364ff81b4f5b9bcbcf4f8fde65a458a44a83c37ebcd46d903b87408e378fa2a5",
   "settings.groupsPage.changeLimit": "973a0bcd62d833dfeebf8c713dbbb129c9210928a71f002651a4356ea3aaf50f",
   "settings.groupsPage.managementDenied": "30ff892c6451efb8708c501474c83a51ff7355272218ada80b418726348c561f",
-  "settings.groupsPage.selectRole": "79bb37b70ebbd6efc3ffc67bc650c9e655bfc18c4fe24583b9a415322c614937",
-  "settings.groupsPage.roleRequired": "7ac602a85ef0ca12f891a197a3396099d8cfed3b11dc4701bfde9e4c2723e0c7",
+  "settings.groupsPage.selectRole": "4222cf4e78fad3b416d40339238ba42da17c9cb09e67adda1b3cbe09d5f9bb0c",
+  "settings.groupsPage.roleRequired": "4e3dd4474e623ea205a650e7815cc363498e83a0193dce5ad3c8e715768585ed",
   "settings.groupsPage.assignmentsChanged": "685efa34e0884136c3e9c574486fb2e5a5b972b605e09f9727e79df43523e8ce",
   "settings.groupsPage.createPageDescription": "b2930fbf1ff26ba41cb88d69fd2fdff31844bdcbcf5e2a3c21fc3c1651aef56b",
   "settings.groupsPage.editPageDescription": "2fe8d61c8a872c2f0c7445207cf43d0ae08622c86388cb1cc510fa8215e62f2d",

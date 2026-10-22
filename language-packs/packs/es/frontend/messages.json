@@ -1,4 +1,5 @@
 {
+  "settings.groupsPage.groupRoleAssignmentHint": "Crea y administra los roles en Configuración > Roles. Aquí puedes asignar un rol a los miembros seleccionados dentro de este grupo.",
   "settings.rolesPage.selectAll": "Seleccionar todo",
   "settings.rolesPage.deselectAll": "Deseleccionar todo",
   "settings.rolesPage.selectResults": "Seleccionar resultados",
@@ -9704,8 +9705,8 @@
   "settings.groupsPage.continueEditing": "Seguir editando",
   "settings.groupsPage.changeLimit": "Guarda como máximo 200 cambios a la vez.",
   "settings.groupsPage.managementDenied": "No tienes permiso para gestionar estas asignaciones del Grupo.",
-  "settings.groupsPage.selectRole": "Selecciona un rol",
-  "settings.groupsPage.roleRequired": "Selecciona un rol disponible para cada miembro añadido o modificado.",
+  "settings.groupsPage.selectRole": "Selecciona un rol para este grupo",
+  "settings.groupsPage.roleRequired": "Selecciona un rol de grupo disponible para cada miembro que se añada o cuyo rol en el grupo se modifique.",
   "settings.groupsPage.assignmentsChanged": "El Grupo ha cambiado desde que abriste la página. Recarga y revisa las asignaciones actuales antes de guardar.",
   "memberOnboarding": {
     "setupTitle": "Establece tu contraseña",
