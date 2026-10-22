@@ -3493,6 +3493,7 @@ export const en = {
     },
     groupsPage: {
       groupRole: 'Group Role',
+      groupRoleAssignmentHint: 'Create and manage Roles in Configuration > Roles. Choose a Role to assign to the selected members in this Group.',
       visibleResourceCountHint: 'Resources linked to this Group that you can view in the resource directory. This is not the total number of Group bindings.',
       role: 'Role',
       groupRoleScopeHint: 'Applies to this Group only. Organization-level permissions are not granted here.',
@@ -3539,8 +3540,8 @@ export const en = {
       continueEditing: 'Continue Editing',
       changeLimit: 'Save no more than 200 changes at a time.',
       managementDenied: 'You do not have permission to manage these Group assignments.',
-      selectRole: 'Select a Role',
-      roleRequired: 'Select an available Role for every added or changed member.',
+      selectRole: 'Select a Group Role',
+      roleRequired: 'Select an available Group Role for every member being added or having their Group Role changed.',
       assignmentsChanged: 'This Group changed since you opened the page. Reload to review the latest assignments before saving.',
       createPageDescription: 'Create a Group for members, roles, and resource assignments.',
       editPageDescription: 'Update this Group’s name and description.',

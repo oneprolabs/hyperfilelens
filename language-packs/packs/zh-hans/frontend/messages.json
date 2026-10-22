@@ -1,4 +1,5 @@
 {
+  "settings.groupsPage.groupRoleAssignmentHint": "角色在“配置 > 角色”中创建和管理。此处为所选成员分配其在当前组中的角色。",
   "settings.rolesPage.selectAll": "全选",
   "settings.rolesPage.deselectAll": "取消全选",
   "settings.rolesPage.selectResults": "全选搜索结果",
@@ -9704,8 +9705,8 @@
   "settings.groupsPage.continueEditing": "继续编辑",
   "settings.groupsPage.changeLimit": "一次最多保存 200 项更改。",
   "settings.groupsPage.managementDenied": "你没有管理此组关联的权限。",
-  "settings.groupsPage.selectRole": "选择角色",
-  "settings.groupsPage.roleRequired": "请为每个新增或修改的成员选择可用角色。",
+  "settings.groupsPage.selectRole": "请选择组内角色",
+  "settings.groupsPage.roleRequired": "请为每个新增成员或需要修改组内角色的成员选择可用的组内角色。",
   "settings.groupsPage.assignmentsChanged": "此组在页面打开后发生了变化，请重新加载并确认最新关联后再保存。",
   "memberOnboarding": {
     "setupTitle": "设置你的密码",
