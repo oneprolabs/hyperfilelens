@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import '../../styles/fullscreen-form-styles'
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
@@ -23,6 +23,7 @@ import {
   triggerSpecsForType,
   triggerValidationSpecs,
 } from './alertPolicyValidation'
+import { hasNumericRecovery, inverseOperator, recoveryKind, switchRecovery, switchTrigger } from './alertPolicyRecovery'
 
 export type AlertPolicyFormState = {
   name: string
@@ -76,7 +77,7 @@ function defaultForm(): AlertPolicyFormState {
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const { policyTypeLabel, policyTypeOptions, resourceTypeOptions, resourceTypeLabel, resourceTypeDescription } = useAlertPolicyLabels()
+const { policyTypeLabel, policyTypeOptions, policyTypeDescription, resourceTypeOptions, resourceTypeLabel, resourceTypeDescription } = useAlertPolicyLabels()
 const PREVIEW_EMPTY_VALUE = '—'
 
 const saving = ref(false)
@@ -84,6 +85,20 @@ const pageRef = ref<HTMLElement | null>(null)
 const mainRef = ref<HTMLElement | null>(null)
 const formRef = ref<FormInstance | null>(null)
 const form = reactive(defaultForm())
+// Preserve null/empty legacy settings when opening and saving an existing policy.
+const loadedRecovery = ref<Record<string, unknown> | null>(null)
+const loadedRecoverySnapshot = ref('')
+const currentRecoveryKind = computed(() => recoveryKind(form.type, form.triggerRule))
+const legacyNumericRecovery = computed(() =>
+  currentRecoveryKind.value === 'numeric' && !hasNumericRecovery(form.recoveryRule),
+)
+const legacyTaskRecovery = computed(() =>
+  form.type === 'task' && !!editingId.value && form.recoveryRule.enabled !== false,
+)
+const displayedAutoRecovery = computed(() =>
+  form.recoveryRule.enabled !== false
+  && (currentRecoveryKind.value !== 'manual' || legacyTaskRecovery.value),
+)
 const channels = ref<Array<{ id: number; name: string }>>([])
 const editingId = computed(() => {
   const id = route.params.id
@@ -94,6 +109,73 @@ const resourcesLoading = ref(false)
 const hydratingPolicy = ref(false)
 const resourceOptions = ref<Array<{ id: string; name: string; status?: string }>>([])
 const metricKeys = ref<string[]>([])
+const metricKeysLoading = ref(false)
+const metricKeysError = ref(false)
+const metricCatalogLoaded = ref(false)
+let metricRequestId = 0
+const metricConfigurationBlocked = computed(() =>
+  form.type === 'metric' && (
+    !metricCatalogLoaded.value || metricKeysLoading.value || metricKeysError.value
+    || !metricKeys.value.includes(String(metricKey.value))
+  ),
+)
+const metricCatalogHint = computed(() => {
+  if (!metricCatalogLoaded.value || metricKeysLoading.value) return t('ops.alertsCenter.editor.metricLoading')
+  if (metricKeysError.value) return t('ops.alertsCenter.editor.metricLoadFailed')
+  if (!metricKeys.value.length) return t('ops.alertsCenter.editor.metricUnsupported')
+  if (!metricKeys.value.includes(String(metricKey.value))) return t('ops.alertsCenter.editor.metricSelectAvailable')
+  return ''
+})
+const metadataKinds = ['task-types', 'event-types', 'availability-check-types', 'system-check-types'] as const
+type MetadataKind = typeof metadataKinds[number]
+const metadataState = reactive(Object.fromEntries(metadataKinds.map(kind => [
+  kind, { status: 'loading' as 'loading' | 'ready' | 'error' | 'empty', request: 0 },
+])) as Record<MetadataKind, { status: 'loading' | 'ready' | 'error' | 'empty'; request: number }>)
+const requiredMetadataKinds = computed<MetadataKind[]>(() => {
+  if (form.type === 'task') return ['task-types', 'event-types']
+  if (form.type === 'event') return ['event-types']
+  if (form.type === 'availability') return ['availability-check-types']
+  if (form.type === 'system') return ['system-check-types']
+  return []
+})
+function metadataStatus(kind: MetadataKind) {
+  const status = metadataState[kind].status
+  if (kind === 'event-types' && status === 'ready') {
+    if (form.type === 'task' && !taskEventTypes.value.length) return 'empty'
+    if (form.type === 'event' && !eventCategories.value.length) return 'empty'
+  }
+  return status
+}
+const metadataSelectionValid = computed(() => {
+  const rule = form.triggerRule
+  if (form.type === 'task') return taskTypes.value.includes(String(rule.task_type))
+    && taskEventTypes.value.includes(String(rule.event_type))
+  if (form.type === 'availability') return availabilityCheckTypes.value.includes(String(rule.check_type))
+  if (form.type === 'system') return systemCheckTypes.value.includes(String(rule.check_type))
+  if (form.type === 'event') {
+    const selected = rule.event_types
+    const allowed = eventTypesByCategory.value[String(rule.event_category)] || []
+    return eventCategories.value.includes(String(rule.event_category))
+      && Array.isArray(selected) && selected.length > 0 && selected.every(item => allowed.includes(item))
+  }
+  return true
+})
+const metadataConfigurationBlocked = computed(() =>
+  requiredMetadataKinds.value.some(kind => metadataStatus(kind) !== 'ready')
+  || !metadataSelectionValid.value,
+)
+function metadataLabel(kind: MetadataKind) {
+  const labels = {
+    'task-types': 'taskType', 'event-types': form.type === 'task' ? 'eventType' : 'eventCategory',
+    'availability-check-types': 'checkType', 'system-check-types': 'checkType',
+  }
+  return t(`ops.alertsCenter.editor.${labels[kind]}`)
+}
+function metadataMessage(kind: MetadataKind) {
+  const status = metadataStatus(kind)
+  const suffix = status === 'loading' ? 'Loading' : status === 'error' ? 'LoadFailed' : 'Empty'
+  return t(`ops.alertsCenter.editor.metadata${suffix}`, { field: metadataLabel(kind) })
+}
 const taskTypes = ref<string[]>([])
 const taskEventTypes = ref<string[]>([])
 const availabilityCheckTypes = ref<string[]>([])
@@ -167,16 +249,32 @@ const eventCategory = triggerField('event_category', 'configuration')
 const eventTypes = triggerField('event_types', [] as string[])
 
 const recoveryEnabled = recoveryField('enabled', true)
-const recoveryCondition = recoveryField('condition', 'below_threshold')
-const recoveryOperator = recoveryField('operator', '<')
-const recoveryThreshold = recoveryField('threshold', 70)
-const recoveryDuration = recoveryField('duration_seconds', 180)
+const recoveryOperator = computed({
+  get: () => String(form.recoveryRule.operator || inverseOperator(
+    form.type === 'system' && form.triggerRule.check_type === 'disk_space_low' ? '>=' : form.triggerRule.operator,
+  )),
+  set: (value: string) => { form.recoveryRule.operator = value },
+})
+const recoveryThreshold = computed({
+  get: () => Number(form.recoveryRule.threshold ?? form.triggerRule.threshold
+    ?? (form.type === 'system' && form.triggerRule.check_type === 'disk_space_low' ? 90 : 0)),
+  set: (value: number) => { form.recoveryRule.threshold = value },
+})
+const recoveryDuration = recoveryField('duration_seconds', 0)
 const notifyOnFiring = recoveryField('notify_on_firing', true)
 const notifyOnResolved = recoveryField('notify_on_resolved', true)
 const repeatIntervalSeconds = triggerField('repeat_interval_seconds', 3600)
 const mergeEnabled = triggerField('merge_enabled', false)
 const mergeKey = triggerField('merge_key', '')
 const mergeWindowSeconds = triggerField('merge_window_seconds', 300)
+
+function customizeRecovery() {
+  Object.assign(form.recoveryRule, { operator: '<', threshold: 70, duration_seconds: 180 })
+}
+
+function useManualRecovery() {
+  form.recoveryRule = switchRecovery(form.recoveryRule, 'manual')
+}
 
 function handleMergeEnabledChange(enabled: boolean) {
   if (!enabled) return
@@ -326,7 +424,16 @@ const previewTriggerText = computed(() => {
 
 const previewRecoveryText = computed(() => {
   const rule = form.recoveryRule
-  return `${rule.condition || 'below_threshold'} ${rule.operator || '<'} ${rule.threshold ?? '—'} ${durationLabel(rule.duration_seconds)}`
+  if (currentRecoveryKind.value === 'manual') {
+    return t(legacyTaskRecovery.value
+      ? 'ops.alertsCenter.editor.recoveryLegacyTask'
+      : 'ops.alertsCenter.editor.recoveryManual')
+  }
+  if (currentRecoveryKind.value === 'heartbeat') return t('ops.alertsCenter.editor.recoveryHeartbeat')
+  if (legacyNumericRecovery.value) return t('ops.alertsCenter.editor.recoveryTriggerCleared')
+  const duration = Number(rule.duration_seconds || 0) === 0
+    ? t('ops.alertsCenter.editor.recoveryImmediate') : durationLabel(rule.duration_seconds)
+  return `${recoveryOperator.value} ${recoveryThreshold.value} ${duration}`
 })
 
 const previewBasicRows = computed(() => {
@@ -355,14 +462,13 @@ const previewRuleRows = computed(() => [
   { label: t('ops.alertsCenter.editor.previewTrigger'), value: previewTriggerText.value },
   {
     label: t('ops.alertsCenter.editor.previewAutoRecovery'),
-    value: form.recoveryRule.enabled === false
-      ? t('ops.alertsCenter.editor.valueDisabled')
-      : t('ops.alertsCenter.editor.valueEnabled'),
-    tone: form.recoveryRule.enabled === false ? 'muted' : 'success',
+    value: legacyTaskRecovery.value ? t('ops.alertsCenter.editor.recoveryLegacyLabel') : displayedAutoRecovery.value
+      ? t('ops.alertsCenter.editor.valueEnabled')
+      : t('ops.alertsCenter.editor.valueDisabled'),
+    tone: displayedAutoRecovery.value && !legacyTaskRecovery.value ? 'success' : 'muted',
   },
-  ...(form.recoveryRule.enabled === false ? [] : [
-    { label: t('ops.alertsCenter.editor.previewRecovery'), value: previewRecoveryText.value },
-  ]),
+  { label: t('ops.alertsCenter.editor.previewRecovery'), value: form.recoveryRule.enabled === false
+    ? t('ops.alertsCenter.editor.recoveryManual') : previewRecoveryText.value },
 ])
 
 async function loadChannels() {
@@ -388,9 +494,11 @@ async function loadPolicy(id: string) {
     scope: row.scope,
     resourceIds: [...(row.resourceIds || row.resource_ids || [])],
     triggerRule: { ...defaultTriggerRule(row.type), ...loadedTriggerRule },
-    recoveryRule: { ...(row.recoveryRule || row.recovery_rule || { enabled: true }) },
+    recoveryRule: { ...(row.recoveryRule || row.recovery_rule || {}) },
     notificationChannelIds: [...(row.notificationChannelIds || row.notification_channel_ids || [])],
   })
+  loadedRecovery.value = row.recoveryRule ?? row.recovery_rule ?? null
+  loadedRecoverySnapshot.value = JSON.stringify(form.recoveryRule)
   await nextTick()
   hydratingPolicy.value = false
 }
@@ -406,7 +514,8 @@ function policyPayload() {
     scope: form.scope,
     resource_ids: form.scope === 'selected' ? form.resourceIds : [],
     trigger_rule: form.triggerRule,
-    recovery_rule: form.recoveryRule,
+    recovery_rule: editingId.value && JSON.stringify(form.recoveryRule) === loadedRecoverySnapshot.value
+      ? loadedRecovery.value : form.recoveryRule,
     notification_channel_ids: form.notificationChannelIds,
   }
 }
@@ -444,6 +553,14 @@ function applyBackendTriggerErrors(error: unknown) {
 }
 
 async function validateRequiredFields() {
+  if (metricConfigurationBlocked.value) {
+    locateRequiredField('metric_key')
+    return false
+  }
+  if (metadataConfigurationBlocked.value) {
+    locateRequiredField(form.type === 'task' ? 'task_type' : 'event_category')
+    return false
+  }
   try {
     await formRef.value?.validate()
     return true
@@ -493,40 +610,75 @@ function handleBack() {
   router.push('/ops/alerts/rules')
 }
 
-async function loadMetadata() {
-  const [tasks, events, availability, system] = await Promise.all([
-    fetchMetadata('task-types'),
-    fetchMetadata('event-types'),
-    fetchMetadata('availability-check-types'),
-    fetchMetadata('system-check-types'),
-  ])
-  taskTypes.value = Array.isArray(tasks) ? (tasks as string[]) : []
-  const eventPayload = events as {
-    taskEventTypes?: string[]
-    task_event_types?: string[]
-    categories?: string[]
-    types?: Record<string, string[]>
+function stringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+async function loadMetadataKind(kind: MetadataKind) {
+  const state = metadataState[kind]
+  const request = ++state.request
+  state.status = 'loading'
+  try {
+    const raw = await fetchMetadata(kind)
+    if (request !== state.request) return
+    if (kind === 'event-types') {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid event catalog')
+      const payload = raw as Record<string, unknown>
+      const tasks = payload.taskEventTypes ?? payload.task_event_types ?? []
+      const categories = payload.categories ?? []
+      const types = payload.types ?? {}
+      if (!stringList(tasks) || !stringList(categories) || !types || typeof types !== 'object'
+        || Array.isArray(types) || !Object.values(types).every(stringList)) throw new Error('Invalid event catalog')
+      taskEventTypes.value = tasks
+      eventCategories.value = categories
+      eventTypesByCategory.value = types as Record<string, string[]>
+      state.status = tasks.length || categories.length ? 'ready' : 'empty'
+    } else {
+      if (!stringList(raw)) throw new Error('Invalid rule catalog')
+      if (kind === 'task-types') taskTypes.value = raw
+      else if (kind === 'availability-check-types') availabilityCheckTypes.value = raw
+      else systemCheckTypes.value = raw
+      state.status = raw.length ? 'ready' : 'empty'
+    }
+  } catch {
+    if (request === state.request) state.status = 'error'
   }
-  taskEventTypes.value = eventPayload.taskEventTypes || eventPayload.task_event_types || []
-  availabilityCheckTypes.value = Array.isArray(availability) ? (availability as string[]) : []
-  systemCheckTypes.value = Array.isArray(system) ? (system as string[]) : []
-  eventCategories.value = eventPayload.categories || []
-  eventTypesByCategory.value = eventPayload.types || {}
+}
+
+async function loadMetadata() {
+  await Promise.all(metadataKinds.map(loadMetadataKind))
 }
 
 async function loadMetricKeys(resetInvalid = false) {
+  const requestId = ++metricRequestId
+  metricCatalogLoaded.value = false
+  metricKeysError.value = false
   if (form.type !== 'metric' && form.type !== 'system') {
     metricKeys.value = []
+    metricKeysLoading.value = false
     return
   }
+  metricKeysLoading.value = true
+  metricKeys.value = []
   try {
     const raw = await fetchMetadata('metrics', { resource_type: form.resourceType })
-    metricKeys.value = Array.isArray(raw) ? (raw as string[]) : []
+    if (requestId !== metricRequestId) return
+    if (!Array.isArray(raw) || !raw.every((value) => typeof value === 'string')) {
+      throw new Error('Invalid metric catalog')
+    }
+    metricKeys.value = raw as string[]
     if (resetInvalid && form.type === 'metric' && !metricKeys.value.includes(String(metricKey.value))) {
       metricKey.value = metricKeys.value[0] || ''
     }
   } catch {
+    if (requestId !== metricRequestId) return
     metricKeys.value = []
+    metricKeysError.value = true
+  } finally {
+    if (requestId === metricRequestId) {
+      metricKeysLoading.value = false
+      metricCatalogLoaded.value = true
+    }
   }
 }
 
@@ -583,13 +735,14 @@ function defaultTriggerRule(type: string): Record<string, unknown> {
 }
 
 function applyDefaultTriggerRule(type: string) {
-  Object.assign(form.triggerRule, defaultTriggerRule(type))
+  form.triggerRule = switchTrigger(form.triggerRule, defaultTriggerRule(type))
+  form.recoveryRule = switchRecovery(form.recoveryRule, recoveryKind(type, form.triggerRule))
 }
 
 watch(
   () => form.type,
   (type, prev) => {
-    if (type === prev) return
+    if (type === prev || hydratingPolicy.value) return
     applyDefaultTriggerRule(type)
     void loadMetricKeys()
     if (!monitoringResourcesRequired.value) {
@@ -598,6 +751,15 @@ watch(
     void nextTick(() => formRef.value?.clearValidate(
       (triggerValidationSpecs[prev] || []).map((spec) => spec.path),
     ))
+  },
+)
+
+watch(
+  () => [form.type, currentRecoveryKind.value] as const,
+  ([type, kind], [previousType, previousKind]) => {
+    if (!hydratingPolicy.value && type === previousType && kind !== previousKind) {
+      form.recoveryRule = switchRecovery(form.recoveryRule, kind)
+    }
   },
 )
 
@@ -619,6 +781,7 @@ watch(
 watch(
   () => eventCategory.value,
   (category) => {
+    if (hydratingPolicy.value) return
     const options = eventTypesByCategory.value[category] || []
     if (!Array.isArray(eventTypes.value) || !eventTypes.value.length) return
     eventTypes.value = eventTypes.value.filter((item) => options.includes(item))
@@ -639,9 +802,12 @@ onMounted(async () => {
       return
     }
   }
-  await loadMetadata()
-  await loadMetricKeys()
-  await loadResources()
+  await Promise.all([loadMetadata(), loadMetricKeys(), loadResources()])
+})
+
+onBeforeUnmount(() => {
+  metricRequestId++
+  for (const kind of metadataKinds) metadataState[kind].request++
 })
 </script>
 
@@ -725,7 +891,7 @@ onMounted(async () => {
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldTypeHint') }}
+                      {{ policyTypeDescription(form.type) }}
                     </p>
                   </el-form-item>
                   <el-form-item
@@ -802,10 +968,17 @@ onMounted(async () => {
                         :key="opt.value"
                         :value="opt.value"
                         :label="opt.label"
+                        :disabled="form.type === 'metric' && ['task', 'system_service'].includes(opt.value)"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldResourceTypeHint') }}
+                    </p>
+                    <p
+                      v-if="form.type === 'metric'"
+                      class="fullscreen-form-field__hint"
+                    >
+                      {{ t('ops.alertsCenter.editor.metricResourceHint') }}
                     </p>
                     <p
                       v-if="resourceTypeDescription(form.resourceType)"
@@ -904,8 +1077,9 @@ onMounted(async () => {
                       v-model="metricKey"
                       class="w-full"
                       filterable
-                      allow-create
-                      default-first-option
+                      :loading="metricKeysLoading"
+                      :disabled="!metricCatalogLoaded || metricKeysLoading || metricKeysError || !metricKeys.length"
+                      :no-data-text="metricCatalogHint"
                     >
                       <el-option
                         v-for="key in metricKeys"
@@ -917,6 +1091,19 @@ onMounted(async () => {
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldMetricHint') }}
                     </p>
+                    <p
+                      v-if="metricCatalogHint"
+                      class="fullscreen-form-field__hint"
+                      role="status"
+                    >
+                      {{ metricCatalogHint }}
+                    </p>
+                    <el-button
+                      v-if="metricKeysError"
+                      @click="loadMetricKeys(true)"
+                    >
+                      {{ t('ops.alertsCenter.editor.metricRetry') }}
+                    </el-button>
                   </el-form-item>
                   <el-form-item
                     :label="t('ops.alertsCenter.editor.fieldOperator')"
@@ -1012,6 +1199,8 @@ onMounted(async () => {
                     <el-select
                       v-model="taskType"
                       class="w-full"
+                      :loading="metadataState['task-types'].status === 'loading'"
+                      :disabled="metadataState['task-types'].status !== 'ready'"
                     >
                       <el-option
                         v-for="item in taskTypes"
@@ -1032,6 +1221,8 @@ onMounted(async () => {
                     <el-select
                       v-model="taskEventType"
                       class="w-full"
+                      :loading="metadataState['event-types'].status === 'loading'"
+                      :disabled="metadataState['event-types'].status !== 'ready'"
                     >
                       <el-option
                         v-for="item in taskEventTypes"
@@ -1058,6 +1249,8 @@ onMounted(async () => {
                     <el-select
                       v-model="checkType"
                       class="w-full"
+                      :loading="metadataState['availability-check-types'].status === 'loading'"
+                      :disabled="metadataState['availability-check-types'].status !== 'ready'"
                     >
                       <el-option
                         v-for="item in availabilityCheckTypes"
@@ -1118,6 +1311,8 @@ onMounted(async () => {
                     <el-select
                       v-model="systemCheckType"
                       class="w-full"
+                      :loading="metadataState['system-check-types'].status === 'loading'"
+                      :disabled="metadataState['system-check-types'].status !== 'ready'"
                     >
                       <el-option
                         v-for="item in systemCheckTypes"
@@ -1164,6 +1359,8 @@ onMounted(async () => {
                     <el-select
                       v-model="eventCategory"
                       class="w-full"
+                      :loading="metadataState['event-types'].status === 'loading'"
+                      :disabled="metadataState['event-types'].status !== 'ready'"
                     >
                       <el-option
                         v-for="item in eventCategories"
@@ -1183,6 +1380,8 @@ onMounted(async () => {
                   >
                     <el-select
                       v-model="eventTypes"
+                      :loading="metadataState['event-types'].status === 'loading'"
+                      :disabled="metadataState['event-types'].status !== 'ready'"
                       multiple
                       filterable
                       collapse-tags
@@ -1203,6 +1402,33 @@ onMounted(async () => {
                     </p>
                   </el-form-item>
                 </div>
+                <template
+                  v-for="kind in requiredMetadataKinds"
+                  :key="kind"
+                >
+                  <div
+                    v-if="metadataStatus(kind) !== 'ready'"
+                    role="status"
+                  >
+                    <p class="fullscreen-form-field__hint">
+                      {{ metadataMessage(kind) }}
+                    </p>
+                    <el-button
+                      v-if="metadataStatus(kind) !== 'loading'"
+                      @click="loadMetadataKind(kind)"
+                    >
+                      {{ t('ops.alertsCenter.editor.metadataRetry') }}
+                    </el-button>
+                  </div>
+                </template>
+                <p
+                  v-if="requiredMetadataKinds.length && requiredMetadataKinds.every(kind => metadataStatus(kind) === 'ready')
+                    && !metadataSelectionValid"
+                  class="fullscreen-form-field__hint"
+                  role="status"
+                >
+                  {{ t('ops.alertsCenter.editor.metadataSelectAvailable') }}
+                </p>
               </section>
 
               <section class="fullscreen-form-card fullscreen-form-section">
@@ -1210,36 +1436,60 @@ onMounted(async () => {
                   <span class="fullscreen-form-section__indicator" />
                   {{ t('ops.alertsCenter.editor.sectionRecovery') }}
                 </h3>
-                <p class="fullscreen-form-section__subtitle">
+                <p
+                  v-if="currentRecoveryKind !== 'manual'"
+                  class="fullscreen-form-section__subtitle"
+                >
                   {{ t('ops.alertsCenter.editor.sectionRecoveryDesc') }}
                 </p>
-                <el-form-item class="fullscreen-form-status-item">
+                <template v-if="currentRecoveryKind === 'manual'">
+                  <p class="fullscreen-form-field__label">
+                    {{ t(legacyTaskRecovery
+                      ? 'ops.alertsCenter.editor.recoveryLegacyLabel'
+                      : 'ops.alertsCenter.editor.recoveryManual') }}
+                  </p>
+                  <p class="fullscreen-form-field__hint">
+                    {{ legacyTaskRecovery ? previewRecoveryText
+                      : t(form.type === 'task'
+                        ? 'ops.alertsCenter.editor.recoveryManualTaskHint'
+                        : 'ops.alertsCenter.editor.recoveryManualHint') }}
+                  </p>
+                  <el-button
+                    v-if="legacyTaskRecovery"
+                    @click="useManualRecovery"
+                  >
+                    {{ t('ops.alertsCenter.editor.recoveryUseManual') }}
+                  </el-button>
+                </template>
+                <el-form-item
+                  v-else
+                  class="fullscreen-form-status-item"
+                >
                   <el-switch
                     v-model="recoveryEnabled"
                     :active-text="t('ops.alertsCenter.editor.fieldRecoveryEnabled')"
                   />
                 </el-form-item>
-                <p class="fullscreen-form-field__hint">
-                  {{ t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}
+                <p
+                  v-if="currentRecoveryKind !== 'manual'"
+                  class="fullscreen-form-field__hint"
+                >
+                  {{ currentRecoveryKind === 'heartbeat'
+                    ? t('ops.alertsCenter.editor.recoveryHeartbeat')
+                    : t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}
                 </p>
+                <template v-if="recoveryEnabled && legacyNumericRecovery">
+                  <p class="fullscreen-form-field__hint">
+                    {{ t('ops.alertsCenter.editor.recoveryTriggerCleared') }}
+                  </p>
+                  <el-button @click="customizeRecovery">
+                    {{ t('ops.alertsCenter.editor.recoveryCustomize') }}
+                  </el-button>
+                </template>
                 <div
-                  v-if="recoveryEnabled"
+                  v-if="recoveryEnabled && currentRecoveryKind === 'numeric' && !legacyNumericRecovery"
                   class="fullscreen-form-grid mt-3"
                 >
-                  <el-form-item :label="t('ops.alertsCenter.editor.fieldRecoveryCondition')">
-                    <el-select
-                      v-model="recoveryCondition"
-                      class="w-full"
-                    >
-                      <el-option
-                        value="below_threshold"
-                        :label="t('ops.alertsCenter.editor.conditionBelowThreshold')"
-                      />
-                    </el-select>
-                    <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldRecoveryConditionHint') }}
-                    </p>
-                  </el-form-item>
                   <el-form-item :label="t('ops.alertsCenter.editor.fieldOperator')">
                     <el-select
                       v-model="recoveryOperator"
@@ -1272,6 +1522,10 @@ onMounted(async () => {
                       class="w-full"
                     >
                       <el-option
+                        :value="0"
+                        :label="t('ops.alertsCenter.editor.recoveryImmediate')"
+                      />
+                      <el-option
                         v-for="opt in durationOptions"
                         :key="`recovery-${opt.value}`"
                         :value="opt.value"
@@ -1283,6 +1537,9 @@ onMounted(async () => {
                     </p>
                   </el-form-item>
                 </div>
+                <p class="fullscreen-form-field__hint">
+                  {{ t('ops.alertsCenter.editor.recoveryManualMeaning') }}
+                </p>
               </section>
 
               <section class="fullscreen-form-card fullscreen-form-section">
@@ -1407,7 +1664,7 @@ onMounted(async () => {
             <ElButton
               type="primary"
               :loading="saving"
-              :disabled="saving"
+              :disabled="saving || metricConfigurationBlocked || metadataConfigurationBlocked"
               @click="savePolicy"
             >
               {{ t('common.save') }}

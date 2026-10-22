@@ -25,6 +25,7 @@ import AlertPolicyTypeLabel from '../../components/AlertPolicyTypeLabel.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useAlertPolicyLabels } from '../../composables/useAlertPolicyLabels'
+import { resolutionRows } from './alertResolutionPresentation'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { booleanStatusTag, severityStatusTagAttrs } from '../../lib/statusTag'
@@ -161,6 +162,11 @@ function detailTriggerRule(policy: AlertPolicy | null) {
 function detailRecoveryRule(policy: AlertPolicy | null) {
   return policy?.recoveryRule || policy?.recovery_rule || {}
 }
+
+const detailResolutionRows = computed(() => detailPolicy.value
+  ? resolutionRows(detailPolicy.value.type, detailTriggerRule(detailPolicy.value),
+    detailRecoveryRule(detailPolicy.value), t)
+  : [])
 
 function alertPolicyNameMeta(policy: AlertPolicy) {
   return policy.description?.trim() || ''
@@ -1270,17 +1276,14 @@ watch(
                   >{{ t('common.empty') }}</span>
                 </span>
               </div>
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.recoveryRule') }}</span>
-                <span class="hfl-detail-row__value hfl-alert-policy-detail-drawer__json-value">
-                  <pre
-                    v-if="hasJsonValue(detailRecoveryRule(detailPolicy))"
-                    class="hfl-alert-policy-detail-drawer__json"
-                  >{{ formatJson(detailRecoveryRule(detailPolicy)) }}</pre>
-                  <span
-                    v-else
-                    class="hfl-empty-mark"
-                  >{{ t('common.empty') }}</span>
+              <div
+                v-for="row in detailResolutionRows"
+                :key="row.label"
+                class="hfl-detail-row hfl-detail-row--full"
+              >
+                <span class="hfl-detail-row__label">{{ row.label }}</span>
+                <span class="hfl-detail-row__value hfl-detail-row__text">
+                  {{ row.value }}
                 </span>
               </div>
             </div>
