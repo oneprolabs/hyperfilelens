@@ -24,7 +24,6 @@ import TaskStatusTag from '../../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../../components/TaskTypeLabel.vue'
 import SnapshotStatusTag from '../../components/SnapshotStatusTag.vue'
 import { apiErrorMessage } from '../../lib/api'
-import { backupConfigurationDirectoryPath, resolveBackupDetailReturnPath } from '../../lib/protectionAccess'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useDrawerScrollReset } from '../../composables/useDrawerScrollReset'
@@ -58,7 +57,7 @@ import { listTasks, type TaskRow } from '../../lib/taskApi'
 const { t, te, locale } = useI18n()
 const { tableMaxHeight: snapshotDrawerTableMaxHeight, containerRef: snapshotDrawerTableRef } = useDrawerTableMaxHeight()
 const route = useRoute()
-const backTarget = computed(() => resolveBackupDetailReturnPath(route.query.returnTo))
+const backTarget = '/protection/backups'
 const store = useProtectionDemoStore()
 
 const backupId = computed(() => String(route.params.backupId || ''))
@@ -1367,9 +1366,7 @@ function closeDeleteSnapshotDialog() {
       <el-empty :description="detailLoadError || t('protection.backupDetail.notFound')">
         <RouterLink :to="backTarget">
           <ElButton type="primary">
-            {{ backTarget === backupConfigurationDirectoryPath
-              ? t('protection.backupDetail.backToList')
-              : t('protection.backupDetail.backToDataProtection') }}
+            {{ t('protection.backupDetail.backToDataProtection') }}
           </ElButton>
         </RouterLink>
       </el-empty>

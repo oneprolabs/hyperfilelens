@@ -33,12 +33,12 @@ describe('Protection navigation', () => {
       .toEqual(['/protection/backup-sources?tab=nas'])
     permissions.value = ['protection.backup_configurations.view']
     expect(sidebar.value.flatMap(section => section.children?.map(item => item.label) || []))
-      .toEqual(['Backup Configurations'])
-    expect(sidebar.value[0].children?.[0].to).toBe('/protection/backup-configurations')
+      .toEqual([en.protection.side.dataProtection])
+    expect(sidebar.value[0].children?.[0].to).toBe('/protection/backups')
     permissions.value.push('protection.source_hosts.view')
     expect(sidebar.value[0].children?.[0].label).toBe(en.protection.side.dataProtection)
     expect(sidebar.value[0].children?.map(item => item.to))
-      .toEqual(['/protection/backups', '/protection/backup-configurations'])
+      .toEqual(['/protection/backups'])
     permissions.value = []
     expect(sidebar.value).toEqual([])
     expect(primary.items.value.some(item => item.to === '/protection')).toBe(false)

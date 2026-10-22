@@ -184,6 +184,7 @@ const props = withDefaults(
     modelValue: boolean
     source: FlowSourceRow | null
     sourceRows?: FlowSourceRow[]
+    configurationScope?: boolean
     drawerSize?: string
     initialTab?: FlowSourceDetailTabInput
     initialTaskSubTab?: FlowSourceDetailTaskSubTab
@@ -211,6 +212,7 @@ const props = withDefaults(
     initialRestoreRecordTaskUuid: '',
     scrollTo: null,
     sourceRows: () => [],
+    configurationScope: false,
     backupConfigs: () => [],
     backupConfigDetails: () => new Map<number, BackupConfigDetail>(),
     repositories: () => new Map<number, StorageRepository>(),
@@ -2133,6 +2135,7 @@ async function loadOverviewForSource(options: { silent?: boolean } = {}) {
     const result = await listBackupSelectableSources({
       ids: id,
       expand: 'backup_configs,policies,runtime',
+      ...(props.configurationScope ? { scope: 'backup_configurations' as const } : {}),
     }, { signal })
     sourceDetail.value = result.results.find((item) => item.id === id) ?? null
     if (!sourceDetail.value && !silent) sourceDetailError.value = t('protection.backupDetail.notFound')

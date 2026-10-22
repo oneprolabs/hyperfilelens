@@ -30,7 +30,6 @@ const OAuthCallbackPage = lazyRoute(() => import('../pages/auth/OAuthCallback.vu
 const OAuthErrorPage = lazyRoute(() => import('../pages/auth/OAuthError.vue'))
 const DashboardPage = lazyRoute(() => import('../pages/Dashboard.vue'))
 const ProtectionDataPage = lazyRoute(() => import('../pages/protection/ProtectionOverview.vue'))
-const ProtectionBackupConfigurationDirectoryPage = lazyRoute(() => import('../pages/protection/BackupConfigurationDirectory.vue'))
 const ProtectionSnapshotRestorePage = lazyRoute(() => import('../pages/protection/SnapshotRestorePage.vue'))
 const ProtectionBackupCreateWizardPage = lazyRoute(() => import('../pages/protection/BackupCreateWizard.vue'))
 const ProtectionBackupSourcesPage = lazyRoute(() => import('../pages/protection/BackupSources.vue'))
@@ -90,7 +89,11 @@ export const router = createRouter({
           },
         },
         { path: 'protection/backups', component: ProtectionDataPage },
-        { path: 'protection/backup-configurations', component: ProtectionBackupConfigurationDirectoryPage },
+        // Retired list URL: all configuration access now lives in Backup Wizard.
+        { path: 'protection/backup-configurations', redirect: to => ({
+          path: '/protection/backups',
+          query: { ...(typeof to.query.org === 'string' ? { org: to.query.org } : {}), step: 'start-backup' },
+        }) },
         { path: 'protection/backups/create', component: ProtectionBackupCreateWizardPage, meta: fullscreenRouteMeta },
         {
           path: 'protection/restore/snapshots/:snapshotId',

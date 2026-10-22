@@ -1,11 +1,11 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Route, CalendarDays, HardDrive, Cloud, Filter, Tags, FileCog } from 'lucide-vue-next'
+import { Route, CalendarDays, HardDrive, Cloud, Filter, Tags } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { sourceAgentSidebarIcon, targetNasSidebarIcon } from '../lib/resourceIcons'
 import { useTenantPermissions } from './useTenantPermissions'
 import { sourceHostIcon, sourceNasIcon } from '../lib/sourceTypeIcons'
-import { backupConfigurationDirectoryPath, canViewProtectionSources, protectionPages } from '../lib/protectionAccess'
+import { protectionPages } from '../lib/protectionAccess'
 
 export function useProtectionSideNav() {
   const { t } = useI18n()
@@ -18,11 +18,6 @@ export function useProtectionSideNav() {
           label: t('protection.side.dataProtection'),
           to: '/protection/backups',
           icon: Route,
-        },
-        {
-          label: t('settings.rolesPage.resourceLabels.protection_backup_configurations'),
-          to: backupConfigurationDirectoryPath,
-          icon: FileCog,
         },
       ],
     },
@@ -79,7 +74,6 @@ export function useProtectionSideNav() {
     ...section, children: section.children?.filter((item) => {
       const page = protectionPages.find(page => page.to === item.to)
       return page && has(page.permission)
-        && (item.to !== '/protection/backups' || canViewProtectionSources(has))
     }),
   })).filter((section) => section.children?.length))
 }

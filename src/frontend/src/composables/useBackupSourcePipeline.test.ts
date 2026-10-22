@@ -45,6 +45,44 @@ function pendingPage() {
 }
 
 describe('useBackupSourcePipeline', () => {
+  it('bootstraps configuration-only Wizard counts without requesting Source inventory', async () => {
+    vi.mocked(listBackupSelectableSources).mockResolvedValue({ count: 5, results: [] })
+    const pipeline = useBackupSourcePipeline({ canViewSources: () => false, configurationScope: true })
+    await pipeline.bootstrapPipeline({ migrateLegacy: false })
+    expect(listBackupSelectableSources).toHaveBeenCalledExactlyOnceWith({
+      step: 3, page: 1, page_size: 1, scope: 'backup_configurations',
+    }, { signal: undefined })
+    expect(pipeline.pipelineStep2Count.value).toBe(0)
+    expect(pipeline.pipelineStep3Count.value).toBe(5)
+    expect(setBackupSourcePipelineStep).not.toHaveBeenCalled()
+  })
+
+  it('uses inventory scope for Step 2 and configuration scope for Step 3 when both grants exist', async () => {
+    vi.mocked(listBackupSelectableSources).mockImplementation(async params => ({
+      count: params?.step === 2 ? 2 : 3, results: [],
+    }))
+    const pipeline = useBackupSourcePipeline({ canViewSources: () => true, configurationScope: true })
+    await pipeline.refreshPipelineCounts()
+    expect(listBackupSelectableSources).toHaveBeenCalledWith({ step: 2, page: 1, page_size: 1 }, { signal: undefined })
+    expect(listBackupSelectableSources).toHaveBeenCalledWith({
+      step: 3, page: 1, page_size: 1, scope: 'backup_configurations',
+    }, { signal: undefined })
+    expect(pipeline.pipelineStep2Count.value).toBe(2)
+    expect(pipeline.pipelineStep3Count.value).toBe(3)
+  })
+
+  it('does not restore inventory counts after Source permission is revoked while a request is pending', async () => {
+    const pending = pendingPage()
+    let allowed = true
+    vi.mocked(listBackupSelectableSources).mockReturnValueOnce(pending.promise)
+    const pipeline = useBackupSourcePipeline({ canViewSources: () => allowed, configurationScope: true })
+    const request = pipeline.refreshPipelineStep2Count()
+    allowed = false
+    pending.resolve({ count: 99, results: [] })
+    await request
+    expect(pipeline.pipelineStep2Count.value).toBe(0)
+  })
+
   it.each([2, 3] as const)('ignores an aborted Step %s result even when the transport completes', async step => {
     const pending = pendingPage()
     vi.mocked(listBackupSelectableSources).mockReturnValueOnce(pending.promise)

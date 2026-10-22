@@ -52,7 +52,7 @@ describe('authenticated Protection route access', () => {
   beforeEach(() => { clearAuth(); setupAuthGuard() })
   afterEach(() => { clearAuth(); vi.unstubAllGlobals() })
 
-  it.each(['/protection/backups', '/Protection/Backups/', '/protection/backup-configurations', '/protection/backup-sources', '/node/repositories', '/protection/backups/create'])(
+  it.each(['/protection/backups', '/Protection/Backups/', '/protection/backup-sources', '/node/repositories', '/protection/backups/create'])(
     'rejects a Configuration-only direct visit to %s before mounting it', async path => {
       const fetch = session(['configuration.roles.view'])
       expect(await navigate(path)).toHaveBeenCalledExactlyOnceWith('/')
@@ -78,7 +78,7 @@ describe('authenticated Protection route access', () => {
     const fetch = session(['protection.backup_configurations.view'])
     await navigate('/protection/backups')
     currentUser.value!.access_profile!.role = ''
-    expect(await navigate('/protection/backups/create')).toHaveBeenCalledExactlyOnceWith('/protection/backup-configurations')
+    expect(await navigate('/protection/backups/create')).toHaveBeenCalledExactlyOnceWith('/protection/backups')
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 })

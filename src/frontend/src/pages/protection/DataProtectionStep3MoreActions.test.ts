@@ -60,7 +60,8 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(gating).toContain('backupStartAwaitingRuntimeTasks.value.has(sourceId)')
     expect(gating).toContain('const step3SelectionHasActiveBackup = computed')
     expect(gating).toContain('if (step3SelectionHasActiveBackup.value) return false')
-    expect(gating).toContain('step3LifecycleActionsEnabled.value,')
+    expect(gating).toContain("sourceConfigsCanAct(row, 'manage')")
+    expect(gating).toContain('step3LifecycleActionsEnabled.value')
     expect(gating).toContain("|| runtimeStopping(sourceId, 'restore')")
     expect(startBackup).toContain('sources.some((source) => sourceHasActiveBackup(source.id))')
     expect(startBackup).toContain('sources.some((source) => sourceRuntimeHasActiveBackup(source.id))')
@@ -393,9 +394,8 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(unregister).toContain('sourcePendingOps.isRowSelectable(row.id)')
     expect(unregister).toContain('lifecycleOps.isNodeBusy(node)')
     expect(page).toContain(':disabled="!step3UnregisterEnabled"')
-    // Edit actions are gated by step3SelectionEditable (which delegates to
-    // step3LifecycleActionsEnabled using isRowSelectable), so they remain
-    // available after a delete_failed/delete_blocked pending op.
+    // Configuration edits use their own capability and pending-state checks;
+    // source-wide cleanup still requires the source lifecycle capability.
     expect(page).toContain(':disabled="!step3SelectionEditable"')
   })
 })

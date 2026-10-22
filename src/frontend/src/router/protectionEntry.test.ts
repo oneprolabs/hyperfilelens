@@ -14,7 +14,7 @@ describe('Protection module entry', () => {
 
   it.each([
     [[], '/'],
-    [['protection.backup_configurations.view'], '/protection/backup-configurations'],
+    [['protection.backup_configurations.view'], '/protection/backups'],
     [['protection.backup_configurations.view', 'protection.source_hosts.view'], '/protection/backups'],
     [['protection.source_nas.view'], '/protection/backup-sources?tab=nas'],
     [['protection.object_storage_repositories.view'], '/node/repositories?tab=s3'],

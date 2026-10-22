@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { insightPermissionHints } from './insightAccess'
-import { backupConfigurationDirectoryPath, canViewProtectionSources, protectionPages, protectionRouteRedirect, resolveBackupDetailReturnPath, resolveProtectionEntry } from './protectionAccess'
+import { canViewProtectionSources, protectionPages, protectionRouteRedirect, resolveProtectionEntry } from './protectionAccess'
 
 const grants = (...permissions: string[]) => (permission: string) => permissions.includes(permission)
 function parseQuery(search?: string) {
@@ -10,17 +10,6 @@ function parseQuery(search?: string) {
 }
 
 describe('Protection navigation hints (not resource authorization)', () => {
-  it('allows an explicit configuration directory return destination', () => {
-    expect(resolveBackupDetailReturnPath(backupConfigurationDirectoryPath)).toBe(backupConfigurationDirectoryPath)
-  })
-
-  it.each([
-    undefined, null, '/protection/backups', 'https://example.test', '//example.test',
-    'javascript:alert(1)', '/node/members', [backupConfigurationDirectoryPath],
-    `${backupConfigurationDirectoryPath}?org=other`, `${backupConfigurationDirectoryPath}#fragment`,
-  ])('uses the original Wizard return path for an unrecognized destination %j', returnTo => {
-    expect(resolveBackupDetailReturnPath(returnTo)).toBe('/protection/backups')
-  })
   it('does not expose Protection to a Configuration-only user', () => {
     const has = grants('configuration.roles.manage')
     expect(resolveProtectionEntry(has)).toBe('/')
@@ -39,24 +28,13 @@ describe('Protection navigation hints (not resource authorization)', () => {
     expect(protectionRouteRedirect({ path, query: parseQuery(query) }, has)).toBeUndefined()
   })
 
-  it('allows the config directory, but not the Source-dependent creation Wizard, to a config-only member', () => {
+  it('keeps configuration-only members in the existing Wizard', () => {
     const has = grants('protection.backup_configurations.view', 'protection.backup_configurations.manage')
     expect(canViewProtectionSources(has)).toBe(false)
-    expect(protectionRouteRedirect({ path: '/protection/backups' }, has)).toBe(backupConfigurationDirectoryPath)
-    expect(protectionRouteRedirect({ path: backupConfigurationDirectoryPath }, has)).toBeUndefined()
-    expect(protectionRouteRedirect({ path: '/protection/backups/12' }, has)).toBeUndefined()
-    expect(protectionRouteRedirect({ path: '/protection/backups/create' }, has)).toBe(backupConfigurationDirectoryPath)
-  })
-
-  it('keeps the configuration directory authorized after an unrelated Source Group grant is added', () => {
-    const has = insightPermissionHints({
-      group_permissions: ['protection.backup_configurations.view', 'protection.source_hosts.view'],
-    }, true)
-    expect(protectionRouteRedirect({ path: backupConfigurationDirectoryPath }, has)).toBeUndefined()
+    expect(resolveProtectionEntry(has)).toBe('/protection/backups')
     expect(protectionRouteRedirect({ path: '/protection/backups' }, has)).toBeUndefined()
-    expect(protectionRouteRedirect({
-      path: '/protection/backups', query: { org: 'tenant-a', step: 'start-backup' },
-    }, grants('protection.backup_configurations.view'))).toBe(`${backupConfigurationDirectoryPath}?org=tenant-a`)
+    expect(protectionRouteRedirect({ path: '/protection/backups/12' }, has)).toBeUndefined()
+    expect(protectionRouteRedirect({ path: '/protection/backups/create' }, has)).toBe('/protection/backups')
   })
 
   it.each([
