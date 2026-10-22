@@ -29,11 +29,13 @@
   "insight.aiSettings.topP",
   "insight.assistants.bindingsSelectedCount",
   "insight.assistants.colGateway",
+  "insight.assistants.fieldSlug",
   "insight.copilot.gatewayNameLabel",
   "insight.copilot.gatewaySummaryWithName",
   "insight.dataGateway.statusAiPrefix",
   "insight.kb.colGateway",
   "insight.kb.fieldLensnodeUuid",
+  "insight.kb.sourcePathExtra",
   "insight.kb.wizardStepGateway",
   "insight.mcpServers.colEndpoint",
   "insight.mcpServers.fieldEndpoint",
@@ -170,6 +172,7 @@
   "protection.sourceResources.colCpu",
   "protection.sourceResources.cpuCoresValue",
   "protection.sourceResources.detailSectionProxy",
+  "protection.sourceResources.fieldId",
   "protection.sourceResources.nasPhMountOptionsNfs",
   "protection.sourceResources.nasPhMountOptionsSmb",
   "protection.sourceResources.nasPhNfsExport",
@@ -193,6 +196,7 @@
   "repositoriesPage.associatedSourceColEndpoint",
   "repositoriesPage.associatedSourceColId",
   "repositoriesPage.associatedSourceTypeNas",
+  "repositoriesPage.cleanupResourceSeparator",
   "repositoriesPage.colEndpoint",
   "repositoriesPage.colRegion",
   "repositoriesPage.colS3Bucket",
@@ -216,6 +220,5 @@
   "repositoriesPage.protocolNfs",
   "repositoriesPage.protocolSmb",
   "repositoriesPage.storageTypeNas",
-  "searchPage.colId",
-  "repositoriesPage.cleanupResourceSeparator"
+  "searchPage.colId"
 ]
