@@ -155,6 +155,32 @@ describe('api validation errors', () => {
 
     expect(message).toBe('<urlopen error timed out>')
   })
+
+  it('surfaces DRF detail from a failed platform envelope instead of literal failed', async () => {
+    vi.mocked(getRouteRequestSignal).mockReturnValue(routeSignal)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: 503,
+      message: 'failed',
+      data: {
+        detail:
+          'External Access Address must be an absolute HTTP(S) origin for Data Gateway enrollment.',
+      },
+    }), {
+      status: 503,
+      statusText: 'Service Unavailable',
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    let message = ''
+    try {
+      await api('/api/v1/platform-ops/lens/gateways/enrollment', { method: 'POST' })
+    } catch (error) {
+      message = apiErrorMessage(error)
+    }
+
+    expect(message).toContain('External Access Address')
+    expect(message.toLowerCase()).not.toBe('failed')
+  })
 })
 
 describe('repository conflict errors', () => {

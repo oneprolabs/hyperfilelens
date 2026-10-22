@@ -185,7 +185,7 @@ onMounted(() => {
           <el-option
             v-for="row in gatewayOptions"
             :key="row.gateway_link_id"
-            :label="`${row.name}${row.is_platform_default ? ` (${t('insight.copilot.gatewayPublicTitle')})` : ''}`"
+            :label="row.name"
             :value="row.gateway_link_id"
           />
         </el-select>

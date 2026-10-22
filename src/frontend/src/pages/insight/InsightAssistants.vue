@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { lensAssistantsPath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
 import {
@@ -16,6 +16,7 @@ import {
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
+import { usePlatformEngineListSearch } from '../../composables/usePlatformEngineListSearch'
 import { apiErrorMessage } from '../../lib/api'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
@@ -29,12 +30,22 @@ import {
 } from '../../lib/lensApi'
 
 import InsightAssistantDetailDrawer from './InsightAssistantDetailDrawer.vue'
-import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import DangerConfirmDialog, {
+  type DangerConfirmItem,
+  type DangerLevel,
+} from '../../components/DangerConfirmDialog.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
+
+type AssistantLifecycleAction = 'enable' | 'disable' | 'delete'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const {
+  listSearchPlaceholder,
+  listSearchClass,
+  listSearchSize,
+} = usePlatformEngineListSearch('insight.assistants.searchPlaceholder', 'assistants')
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -55,9 +66,11 @@ const selectedRows = ref<LensAssistant[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
 const detailRow = ref<LensAssistant | null>(null)
-const deleteOpen = ref(false)
-const deleteLoading = ref(false)
-const deleteTarget = ref<LensAssistant | null>(null)
+const lifecycleAction = ref<AssistantLifecycleAction | null>(null)
+const lifecycleTarget = ref<LensAssistant | null>(null)
+const lifecycleLoading = ref(false)
+const filterOrgKey = ref('')
+const knownOrganizations = ref<Array<{ key: string; name: string }>>([])
 
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const tableBlockRef = ref<HTMLElement | null>(null)
@@ -67,16 +80,26 @@ const bridgeReady = computed(
   () => health.value?.lens?.configured && health.value?.lens?.authenticated,
 )
 
+const organizationFilterOptions = computed(() => {
+  const options = knownOrganizations.value
+  const selected = filterOrgKey.value.trim()
+  if (!selected || options.some((org) => org.key === selected)) return options
+  return [{ key: selected, name: selected }, ...options]
+})
+
 const filteredRows = computed(() => {
   const q = appliedSearch.value.trim().toLowerCase()
-  if (!q) return rows.value
+  const orgKey = filterOrgKey.value.trim()
   return rows.value.filter((row) => {
+    if (orgKey && String(row.organization_key || '').trim() !== orgKey) return false
+    if (!q) return true
     const hay = [
       row.name,
       row.slug,
       organizationLabel(row),
+      row.organization_key,
       knowledgeSourceName(row),
-      knowledgeSourceMeta(row),
+      row.gateway_name,
       scenarioLabel(row),
       row.selected_task,
       row.status,
@@ -91,6 +114,10 @@ const filteredRows = computed(() => {
 const visibleRows = computed(() => {
   const start = (pagination.page - 1) * pagination.pageSize
   return filteredRows.value.slice(start, start + pagination.pageSize)
+})
+
+watch(filterOrgKey, () => {
+  pagination.page = 1
 })
 
 watch(
@@ -114,6 +141,66 @@ function onPaginationSizeChange() {
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
+const lifecycleOpen = computed(() => Boolean(lifecycleAction.value && lifecycleTarget.value))
+const lifecycleItems = computed<DangerConfirmItem[]>(() => {
+  const row = lifecycleTarget.value
+  if (!row) return []
+  return [{
+    key: row.uuid,
+    name: row.name,
+    status: {
+      label: statusLabel(row.status),
+      tone: row.status === 'active' ? 'success' : 'info',
+    },
+  }]
+})
+const lifecycleLevel = computed<DangerLevel>(() => {
+  if (lifecycleAction.value === 'delete') return 'high'
+  if (lifecycleAction.value === 'disable') return 'medium'
+  return 'low'
+})
+const lifecycleTitle = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.assistants.enableTitle')
+    case 'disable':
+      return t('insight.assistants.disableTitle')
+    case 'delete':
+      return t('insight.assistants.deleteTitle')
+    default:
+      return ''
+  }
+})
+const lifecycleMessage = computed(() => (
+  lifecycleAction.value === 'enable' ? t('insight.assistants.enableConfirmMessage') : ''
+))
+const lifecycleWarning = computed(() => {
+  if (lifecycleAction.value === 'disable') return t('insight.assistants.disableConfirmWarning')
+  if (lifecycleAction.value === 'delete') return t('insight.assistants.deleteConfirmWarning')
+  return ''
+})
+const lifecycleConfirmText = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.assistants.enable')
+    case 'disable':
+      return t('insight.assistants.disable')
+    case 'delete':
+      return t('common.delete')
+    default:
+      return ''
+  }
+})
+const lifecycleSubtitle = computed(() => {
+  const row = lifecycleTarget.value
+  if (!row?.organization_key) return ''
+  const name = organizationLabel(row) || row.organization_key
+  return t('platformOps.governanceConfirm.organizationContext', { name })
+})
+const lifecycleContext = computed(() => JSON.stringify([
+  lifecycleAction.value,
+  lifecycleTarget.value?.uuid || '',
+]))
 
 function statusLabel(status: string) {
   if (status === 'active') return t('insight.assistants.statusActive')
@@ -121,31 +208,16 @@ function statusLabel(status: string) {
   return status
 }
 
-function knowledgeSourceStatusLabel(status: string) {
-  if (status === 'ready') return t('insight.kb.statusReady')
-  if (status === 'degraded') return t('insight.kb.statusDegraded')
-  if (status === 'syncing') return t('insight.kb.statusSyncing')
-  if (status === 'error') return t('insight.kb.statusError')
-  if (status === 'paused') return t('insight.kb.statusPaused')
-  return status
+function organizationLabel(row: LensAssistant) {
+  return row.organization_name?.trim() || ''
 }
 
-function organizationLabel(row: LensAssistant) {
-  return row.organization_name || row.organization_key || '—'
+function organizationId(row: LensAssistant) {
+  return Number(row.organization_id || 0) || null
 }
 
 function knowledgeSourceName(row: LensAssistant) {
-  return row.knowledge_source_name || '—'
-}
-
-function knowledgeSourceMeta(row: LensAssistant) {
-  const gateway = row.gateway_name || ''
-  const status = row.knowledge_source_status || ''
-  if (!gateway && !status) return ''
-  if (gateway && status) {
-    return `${gateway} · ${knowledgeSourceStatusLabel(status)}`
-  }
-  return gateway || (status ? knowledgeSourceStatusLabel(status) : '')
+  return row.knowledge_source_name?.trim() || ''
 }
 
 function scenarioLabel(row: LensAssistant) {
@@ -154,12 +226,29 @@ function scenarioLabel(row: LensAssistant) {
   return row.selected_task || '—'
 }
 
+function rememberOrganizations(list: LensAssistant[]) {
+  const byKey = new Map(knownOrganizations.value.map((org) => [org.key, org]))
+  for (const row of list) {
+    const key = String(row.organization_key || '').trim()
+    if (!key) continue
+    byKey.set(key, {
+      key,
+      name: organizationLabel(row) || key,
+    })
+  }
+  knownOrganizations.value = [...byKey.values()].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key),
+  )
+}
+
 async function load() {
   loading.value = true
   try {
     health.value = await fetchLensHealth()
     if (health.value.lens?.configured && health.value.lens?.authenticated) {
-      rows.value = await listLensAssistants()
+      const list = await listLensAssistants()
+      rows.value = list
+      rememberOrganizations(list)
     } else {
       rows.value = []
     }
@@ -189,44 +278,55 @@ function onSelectionChange(selection: LensAssistant[]) {
   selectedRows.value = selection
 }
 
-async function setStatus(row: LensAssistant, status: 'active' | 'disabled') {
-  if (row.status === status) return
-  try {
-    await updateLensAssistant(row.uuid, { status })
-    ElMessage.success(t('insight.assistants.saveSuccess'))
-    await load()
-  } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('errors.generic.requestFailed')))
-  }
+function requestLifecycleAction(action: AssistantLifecycleAction, row: LensAssistant) {
+  if (lifecycleLoading.value) return
+  lifecycleAction.value = action
+  lifecycleTarget.value = row
 }
 
-function deleteRow(row: LensAssistant) {
-  deleteTarget.value = row
-  deleteOpen.value = true
+function closeLifecycleAction() {
+  if (lifecycleLoading.value) return
+  lifecycleAction.value = null
+  lifecycleTarget.value = null
 }
 
-async function confirmDelete() {
-  const row = deleteTarget.value
-  if (!row) return
-  deleteLoading.value = true
+async function confirmLifecycleAction() {
+  const action = lifecycleAction.value
+  const row = lifecycleTarget.value
+  if (!action || !row || lifecycleLoading.value) return
+  lifecycleLoading.value = true
   try {
-    await deleteLensAssistant(row.uuid)
-    ElMessage.success(t('insight.assistants.deleteSuccess'))
-    selectedRows.value = []
-    await load()
-    deleteOpen.value = false
-    deleteTarget.value = null
+    if (action === 'enable' || action === 'disable') {
+      const status = action === 'enable' ? 'active' : 'disabled'
+      if (row.status !== status) {
+        await updateLensAssistant(row.uuid, { status })
+        ElMessage.success({
+          message: t(action === 'enable'
+            ? 'insight.assistants.enableSuccess'
+            : 'insight.assistants.disableSuccess'),
+          grouping: true,
+        })
+        await load()
+      }
+    } else {
+      await deleteLensAssistant(row.uuid)
+      ElMessage.success({ message: t('insight.assistants.deleteSuccess'), grouping: true })
+      selectedRows.value = []
+      await load()
+    }
+    lifecycleAction.value = null
+    lifecycleTarget.value = null
   } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('errors.generic.requestFailed')))
+    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
   } finally {
-    deleteLoading.value = false
+    lifecycleLoading.value = false
   }
 }
 
-async function deleteSelected() {
+function deleteSelected() {
   const row = singleSelected.value
   if (!row) return
-  await deleteRow(row)
+  requestLifecycleAction('delete', row)
 }
 
 function editSelected() {
@@ -235,16 +335,16 @@ function editSelected() {
   openEdit(row)
 }
 
-async function enableSelected() {
+function enableSelected() {
   const row = singleSelected.value
-  if (!row) return
-  await setStatus(row, 'active')
+  if (!row || row.status === 'active') return
+  requestLifecycleAction('enable', row)
 }
 
-async function disableSelected() {
+function disableSelected() {
   const row = singleSelected.value
-  if (!row) return
-  await setStatus(row, 'disabled')
+  if (!row || row.status === 'disabled') return
+  requestLifecycleAction('disable', row)
 }
 
 onMounted(() => {
@@ -269,20 +369,21 @@ watch(
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton
-          type="primary"
-          :disabled="!bridgeReady"
-          @click="openCreate"
-        >
-          <Plus :size="16" />
-          {{ t('platformOps.engineActions.addAssistant') }}
-        </ElButton>
+        <div class="hfl-list-toolbar__actions">
+          <ElButton
+            type="primary"
+            :disabled="!bridgeReady"
+            @click="openCreate"
+          >
+            <Plus :size="16" />
+            {{ t('platformOps.engineActions.addAssistant') }}
+          </ElButton>
 
-        <ElDropdown
-          trigger="click"
-          popper-class="hfl-actions-dropdown"
-          @visible-change="moreActionsOpen = $event"
-        >
+          <ElDropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="moreActionsOpen = $event"
+          >
           <ElButton :disabled="!bridgeReady">
             {{ t('platformOps.engineActions.assistantActions') }}
             <ChevronDown
@@ -307,7 +408,7 @@ watch(
               </ElDropdownItem>
               <ElDropdownItem
                 divided
-                :disabled="batchDisabled || !singleSelected"
+                :disabled="batchDisabled || !singleSelected || singleSelected.status === 'active'"
                 @click="enableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -319,7 +420,7 @@ watch(
                 </span>
               </ElDropdownItem>
               <ElDropdownItem
-                :disabled="batchDisabled || !singleSelected"
+                :disabled="batchDisabled || !singleSelected || singleSelected.status === 'disabled'"
                 @click="disableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -346,15 +447,32 @@ watch(
               </ElDropdownItem>
             </ElDropdownMenu>
           </template>
-        </ElDropdown>
+          </ElDropdown>
+        </div>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
+          <ElSelect
+            v-model="filterOrgKey"
+            clearable
+            filterable
+            size="small"
+            class="assistants-org-filter"
+            :placeholder="t('insight.assistants.orgFilterPlaceholder')"
+            :aria-label="t('insight.assistants.orgFilterPlaceholder')"
+          >
+            <ElOption
+              v-for="org in organizationFilterOptions"
+              :key="org.key"
+              :value="org.key"
+              :label="org.key && org.key !== org.name ? `${org.name} (${org.key})` : org.name"
+            />
+          </ElSelect>
           <ElInput
             v-model="search"
             clearable
-            size="small"
-            :placeholder="t('insight.assistants.searchPlaceholder')"
-            class="hfl-list-search"
+            :size="listSearchSize"
+            :placeholder="listSearchPlaceholder"
+            :class="listSearchClass"
             @clear="clearSearch"
           >
             <template #prefix>
@@ -404,7 +522,7 @@ watch(
           />
           <el-table-column
             :label="t('insight.assistants.colName')"
-            min-width="200"
+            min-width="180"
             fixed="left"
             class-name="hfl-table-name-col"
           >
@@ -416,9 +534,6 @@ watch(
               >
                 {{ row.name }}
               </button>
-              <div class="insight-assistants-slug">
-                {{ row.slug }}
-              </div>
             </template>
           </el-table-column>
           <el-table-column
@@ -426,31 +541,43 @@ watch(
             min-width="160"
           >
             <template #default="{ row }">
-              <span :class="{ 'hfl-empty-mark': organizationLabel(row) === '—' }">{{ organizationLabel(row) }}</span>
+              <RouterLink
+                v-if="organizationId(row) && organizationLabel(row)"
+                :to="`/platform-ops/orgs/${organizationId(row)}`"
+                class="hfl-table-name-link"
+              >
+                {{ organizationLabel(row) }}
+              </RouterLink>
+              <span
+                v-else
+                :class="{ 'hfl-empty-mark': !organizationLabel(row) }"
+              >{{ organizationLabel(row) || '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column
             :label="t('insight.assistants.colKnowledgeSource')"
-            min-width="220"
+            min-width="200"
           >
             <template #default="{ row }">
-              <div class="insight-assistants-identity">
-                <strong :class="{ 'hfl-empty-mark': knowledgeSourceName(row) === '—' }">{{ knowledgeSourceName(row) }}</strong>
-                <span v-if="knowledgeSourceMeta(row)">{{ knowledgeSourceMeta(row) }}</span>
-              </div>
+              <span :class="{ 'hfl-empty-mark': !knowledgeSourceName(row) }">
+                {{ knowledgeSourceName(row) || '—' }}
+              </span>
             </template>
           </el-table-column>
           <el-table-column
             :label="t('insight.assistants.colScenario')"
-            min-width="140"
+            min-width="160"
           >
             <template #default="{ row }">
-              {{ scenarioLabel(row) }}
+              <span :class="{ 'hfl-empty-mark': scenarioLabel(row) === '—' }">
+                {{ scenarioLabel(row) }}
+              </span>
             </template>
           </el-table-column>
           <el-table-column
             :label="t('insight.assistants.colStatus')"
             width="110"
+            fixed="right"
           >
             <template #default="{ row }">
               <el-tag
@@ -497,77 +624,32 @@ watch(
       @edit="openEdit"
     />
     <DangerConfirmDialog
-      v-model="deleteOpen"
-      :title="t('insight.assistants.deleteTitle')"
-      :message="deleteTarget
-        ? (deleteTarget.organization_key
-          ? t('insight.assistants.deleteConfirmPlatform', {
-            name: deleteTarget.name,
-            org: organizationLabel(deleteTarget),
-          })
-          : t('insight.assistants.deleteConfirm', { name: deleteTarget.name }))
-        : ''"
-      :items="deleteTarget ? [{ key: deleteTarget.uuid, name: deleteTarget.name }] : []"
+      v-if="lifecycleOpen"
+      :model-value="true"
+      :title="lifecycleTitle"
+      :subtitle="lifecycleSubtitle"
+      :level="lifecycleLevel"
+      :message="lifecycleMessage"
+      :warning="lifecycleWarning"
+      :items="lifecycleItems"
+      :item-status-label="t('common.dangerItemStatus')"
+      :confirm-mode="lifecycleAction === 'delete' ? 'keyword' : 'single'"
+      :confirm-keyword="t('common.deleteKeyword')"
+      :confirm-keyword-placeholder="t('common.deleteKeyword')"
+      :confirm-keyword-hint="t('common.dangerConfirmKeywordHint', { keyword: t('common.deleteKeyword') })"
+      :confirmation-context="lifecycleContext"
       :cancel-text="t('common.cancel')"
-      :confirm-text="t('common.delete')"
-      :loading="deleteLoading"
-      @confirm="confirmDelete"
-      @cancel="deleteTarget = null"
+      :confirm-text="lifecycleConfirmText"
+      :loading="lifecycleLoading"
+      :confirm-disabled="lifecycleLoading || !lifecycleTarget"
+      @confirm="confirmLifecycleAction"
+      @cancel="closeLifecycleAction"
     />
   </div>
 </template>
 
 <style scoped>
-.insight-assistants-slug {
-  margin-top: 2px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  text-align: left;
-}
-
-.insight-assistants-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  text-align: left;
-}
-
-.insight-assistants-identity strong {
-  color: rgb(15 23 42);
-  font-size: 13px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.insight-assistants-identity span {
-  color: rgb(100 116 139);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.insight-assistants-depth-tag {
-  font-weight: 600;
-}
-
-.insight-assistants-visibility {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.insight-assistants-visibility-tag {
-  max-width: 100%;
-}
-
-.insight-assistants-visibility-tag :deep(.el-tag__content) {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.assistants-org-filter {
+  width: 200px;
 }
 </style>

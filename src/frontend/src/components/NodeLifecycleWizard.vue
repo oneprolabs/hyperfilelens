@@ -37,6 +37,7 @@ import {
   type EnrollmentOs,
 } from '../lib/nodeApi'
 import { apiErrorMessage } from '../lib/api'
+import { ElMessage } from 'element-plus'
 import type { NodeInstallationMode, NodeRole } from '../types/node'
 
 const props = withDefaults(
@@ -402,8 +403,10 @@ async function refreshInstallCommand(gen: number) {
     })
   } catch (e) {
     if (gen === generation) {
-      installCommand.value = apiErrorMessage(e, t('nodesDeploy.scriptLoadFailed'))
+      const message = apiErrorMessage(e, t('nodesDeploy.scriptLoadFailed'))
+      installCommand.value = message
       installGenerated.value = false
+      ElMessage.error({ message, grouping: true })
     }
   } finally {
     if (gen === generation) loading.value = false
@@ -1317,6 +1320,27 @@ defineExpose({ clearInstallCommand })
 
 .agent-install-wizard--maintenance {
   container-type: inline-size;
+}
+
+/* Self-contained so drawer Maintenance matches Source Hosts without relying on
+ * a prior visit to a fullscreen deploy page. */
+.agent-install-wizard--maintenance .fullscreen-form-section__indicator {
+  width: 4px;
+  height: 16px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    var(--color-primary, #5c5cff) 0%,
+    color-mix(in srgb, var(--color-primary, #5c5cff) 82%, #000) 100%
+  );
+}
+
+.agent-install-wizard--maintenance .fullscreen-form-field__hint {
+  margin: 0;
+  color: var(--color-text-tertiary, #86909c);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .agent-install-wizard--maintenance .fullscreen-form-step-stack {

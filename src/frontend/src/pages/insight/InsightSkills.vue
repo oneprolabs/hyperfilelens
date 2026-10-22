@@ -16,6 +16,7 @@ import {
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
+import { usePlatformEngineListSearch } from '../../composables/usePlatformEngineListSearch'
 import { apiErrorMessage } from '../../lib/api'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import {
@@ -33,12 +34,22 @@ import {
 
 import InsightSkillDetailDrawer from './InsightSkillDetailDrawer.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
-import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import DangerConfirmDialog, {
+  type DangerConfirmItem,
+  type DangerLevel,
+} from '../../components/DangerConfirmDialog.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
+
+type SkillLifecycleAction = 'enable' | 'disable' | 'delete'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const {
+  listSearchPlaceholder,
+  listSearchClass,
+  listSearchSize,
+} = usePlatformEngineListSearch('insight.skills.searchPlaceholder', 'skills')
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -59,9 +70,9 @@ const selectedRows = ref<LensSkill[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
 const detailRow = ref<LensSkill | null>(null)
-const deleteOpen = ref(false)
-const deleteLoading = ref(false)
-const deleteTarget = ref<LensSkill | null>(null)
+const lifecycleAction = ref<SkillLifecycleAction | null>(null)
+const lifecycleTarget = ref<LensSkill | null>(null)
+const lifecycleLoading = ref(false)
 
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const tableBlockRef = ref<HTMLElement | null>(null)
@@ -115,6 +126,60 @@ function onPaginationSizeChange() {
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
+const lifecycleOpen = computed(() => Boolean(lifecycleAction.value && lifecycleTarget.value))
+const lifecycleItems = computed<DangerConfirmItem[]>(() => {
+  const row = lifecycleTarget.value
+  if (!row) return []
+  return [{
+    key: row.uuid,
+    name: row.name,
+    status: {
+      label: statusLabel(row.enabled),
+      tone: row.enabled ? 'success' : 'info',
+    },
+  }]
+})
+const lifecycleLevel = computed<DangerLevel>(() => {
+  if (lifecycleAction.value === 'delete') return 'high'
+  if (lifecycleAction.value === 'disable') return 'medium'
+  return 'low'
+})
+const lifecycleTitle = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.skills.enableTitle')
+    case 'disable':
+      return t('insight.skills.disableTitle')
+    case 'delete':
+      return t('insight.skills.deleteTitle')
+    default:
+      return ''
+  }
+})
+const lifecycleMessage = computed(() => (
+  lifecycleAction.value === 'enable' ? t('insight.skills.enableConfirmMessage') : ''
+))
+const lifecycleWarning = computed(() => {
+  if (lifecycleAction.value === 'disable') return t('insight.skills.disableConfirmWarning')
+  if (lifecycleAction.value === 'delete') return t('insight.skills.deleteConfirmWarning')
+  return ''
+})
+const lifecycleConfirmText = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.skills.enable')
+    case 'disable':
+      return t('insight.skills.disable')
+    case 'delete':
+      return t('common.delete')
+    default:
+      return ''
+  }
+})
+const lifecycleContext = computed(() => JSON.stringify([
+  lifecycleAction.value,
+  lifecycleTarget.value?.uuid || '',
+]))
 
 function statusLabel(enabled: boolean) {
   return enabled ? t('insight.skills.statusActive') : t('insight.skills.statusDisabled')
@@ -155,14 +220,52 @@ function onSelectionChange(selection: LensSkill[]) {
   selectedRows.value = selection
 }
 
-async function setEnabled(row: LensSkill, enabled: boolean) {
-  if (row.enabled === enabled) return
+function requestLifecycleAction(action: SkillLifecycleAction, row: LensSkill) {
+  if (lifecycleLoading.value) return
+  lifecycleAction.value = action
+  lifecycleTarget.value = row
+}
+
+function closeLifecycleAction() {
+  if (lifecycleLoading.value) return
+  lifecycleAction.value = null
+  lifecycleTarget.value = null
+}
+
+async function confirmLifecycleAction() {
+  const action = lifecycleAction.value
+  const row = lifecycleTarget.value
+  if (!action || !row || lifecycleLoading.value) return
+  lifecycleLoading.value = true
   try {
-    await updateLensSkill(row.uuid, { enabled })
-    ElMessage.success(t('insight.skills.saveSuccess'))
-    await load()
+    if (action === 'enable' || action === 'disable') {
+      const enabled = action === 'enable'
+      if (row.enabled !== enabled) {
+        await updateLensSkill(row.uuid, { enabled })
+        ElMessage.success({
+          message: t(enabled ? 'insight.skills.enableSuccess' : 'insight.skills.disableSuccess'),
+          grouping: true,
+        })
+        await load()
+      }
+    } else {
+      await deleteLensSkill(row.uuid)
+      ElMessage.success({ message: t('insight.skills.deleteSuccess'), grouping: true })
+      selectedRows.value = []
+      await load()
+    }
+    lifecycleAction.value = null
+    lifecycleTarget.value = null
   } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('insight.skills.saveFailed')))
+    ElMessage.error({
+      message: apiErrorMessage(
+        err,
+        action === 'delete' ? t('errors.generic.requestFailed') : t('insight.skills.saveFailed'),
+      ),
+      grouping: true,
+    })
+  } finally {
+    lifecycleLoading.value = false
   }
 }
 
@@ -172,39 +275,22 @@ function editSelected() {
   openEdit(row)
 }
 
-async function enableSelected() {
+function enableSelected() {
   const row = singleSelected.value
-  if (!row) return
-  await setEnabled(row, true)
+  if (!row || row.enabled) return
+  requestLifecycleAction('enable', row)
 }
 
-async function disableSelected() {
+function disableSelected() {
   const row = singleSelected.value
-  if (!row) return
-  await setEnabled(row, false)
+  if (!row || !row.enabled) return
+  requestLifecycleAction('disable', row)
 }
 
 function deleteSelected() {
   const row = singleSelected.value
   if (!row) return
-  deleteTarget.value = row
-  deleteOpen.value = true
-}
-
-async function confirmDelete() {
-  if (!deleteTarget.value) return
-  deleteLoading.value = true
-  try {
-    await deleteLensSkill(deleteTarget.value.uuid)
-    ElMessage.success(t('insight.skills.deleteSuccess'))
-    deleteOpen.value = false
-    deleteTarget.value = null
-    await load()
-  } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('errors.generic.requestFailed')))
-  } finally {
-    deleteLoading.value = false
-  }
+  requestLifecycleAction('delete', row)
 }
 
 onMounted(() => {
@@ -229,20 +315,21 @@ watch(
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton
-          type="primary"
-          :disabled="!bridgeReady"
-          @click="openCreate"
-        >
-          <Plus :size="16" />
-          {{ t('platformOps.engineActions.addSkill') }}
-        </ElButton>
+        <div class="hfl-list-toolbar__actions">
+          <ElButton
+            type="primary"
+            :disabled="!bridgeReady"
+            @click="openCreate"
+          >
+            <Plus :size="16" />
+            {{ t('platformOps.engineActions.addSkill') }}
+          </ElButton>
 
-        <ElDropdown
-          trigger="click"
-          popper-class="hfl-actions-dropdown"
-          @visible-change="moreActionsOpen = $event"
-        >
+          <ElDropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="moreActionsOpen = $event"
+          >
           <ElButton :disabled="!bridgeReady">
             {{ t('platformOps.engineActions.skillActions') }}
             <ChevronDown
@@ -267,7 +354,7 @@ watch(
               </ElDropdownItem>
               <ElDropdownItem
                 divided
-                :disabled="batchDisabled || !singleSelected"
+                :disabled="batchDisabled || !singleSelected || singleSelected.enabled"
                 @click="enableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -279,7 +366,7 @@ watch(
                 </span>
               </ElDropdownItem>
               <ElDropdownItem
-                :disabled="batchDisabled || !singleSelected"
+                :disabled="batchDisabled || !singleSelected || !singleSelected.enabled"
                 @click="disableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -306,15 +393,16 @@ watch(
               </ElDropdownItem>
             </ElDropdownMenu>
           </template>
-        </ElDropdown>
+          </ElDropdown>
+        </div>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElInput
             v-model="search"
             clearable
-            size="small"
-            :placeholder="t('insight.skills.searchPlaceholder')"
-            class="hfl-list-search"
+            :size="listSearchSize"
+            :placeholder="listSearchPlaceholder"
+            :class="listSearchClass"
             @clear="clearSearch"
           >
             <template #prefix>
@@ -364,7 +452,7 @@ watch(
           />
           <el-table-column
             :label="t('insight.skills.colName')"
-            min-width="280"
+            min-width="320"
             fixed="left"
             class-name="hfl-table-name-col"
           >
@@ -376,7 +464,7 @@ watch(
               >
                 <div class="insight-skills-identity">
                   <span class="insight-skills-identity__head">
-                    <strong>{{ row.name }}</strong>
+                    <span class="insight-skills-identity__name">{{ row.name }}</span>
                     <ElTag
                       v-if="isWorkspaceGuideSkill(row)"
                       size="small"
@@ -397,8 +485,9 @@ watch(
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('insight.skills.colEnabled')"
+            :label="t('insight.skills.colStatus')"
             width="110"
+            fixed="right"
           >
             <template #default="{ row }">
               <HflBooleanStatusTag
@@ -439,15 +528,25 @@ watch(
       @edit="openEdit"
     />
     <DangerConfirmDialog
-      v-model="deleteOpen"
-      :title="t('insight.skills.deleteTitle')"
-      :message="deleteTarget ? t('insight.skills.deleteConfirmPlatform', { name: deleteTarget.name }) : ''"
-      :items="deleteTarget ? [{ key: deleteTarget.uuid, name: deleteTarget.name }] : []"
+      v-if="lifecycleOpen"
+      :model-value="true"
+      :title="lifecycleTitle"
+      :level="lifecycleLevel"
+      :message="lifecycleMessage"
+      :warning="lifecycleWarning"
+      :items="lifecycleItems"
+      :item-status-label="t('common.dangerItemStatus')"
+      :confirm-mode="lifecycleAction === 'delete' ? 'keyword' : 'single'"
+      :confirm-keyword="t('common.deleteKeyword')"
+      :confirm-keyword-placeholder="t('common.deleteKeyword')"
+      :confirm-keyword-hint="t('common.dangerConfirmKeywordHint', { keyword: t('common.deleteKeyword') })"
+      :confirmation-context="lifecycleContext"
       :cancel-text="t('common.cancel')"
-      :confirm-text="t('common.delete')"
-      :loading="deleteLoading"
-      @confirm="confirmDelete"
-      @cancel="deleteTarget = null"
+      :confirm-text="lifecycleConfirmText"
+      :loading="lifecycleLoading"
+      :confirm-disabled="lifecycleLoading || !lifecycleTarget"
+      @confirm="confirmLifecycleAction"
+      @cancel="closeLifecycleAction"
     />
   </div>
 </template>
@@ -459,6 +558,7 @@ watch(
   gap: 2px;
   min-width: 0;
   text-align: left;
+  white-space: normal;
 }
 
 .insight-skills-identity__head {
@@ -468,13 +568,12 @@ watch(
   min-width: 0;
 }
 
-.insight-skills-identity__head strong {
-  color: rgb(15 23 42);
-  font-size: 14px;
-  font-weight: 600;
+.insight-skills-identity__name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 600;
 }
 
 .insight-skills-identity__meta {

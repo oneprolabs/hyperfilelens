@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '../../styles/fullscreen-form-styles'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -808,8 +809,8 @@ watch(
                         </ElButton>
                         <ElButton
                           class="fullscreen-form-icon-btn assistant-select-row__add"
-                          :title="t('insight.kb.addPageTitle')"
-                          :aria-label="t('insight.kb.addPageTitle')"
+                          :title="t('insight.kb.btnAdd')"
+                          :aria-label="t('insight.kb.btnAdd')"
                           @click="openAddKnowledgeSource"
                         >
                           <Plus :size="14" />
@@ -913,7 +914,7 @@ watch(
                 label-position="top"
                 class="fullscreen-form-el-form assistant-tools-form"
               >
-                <ElFormItem :label="t('insight.assistants.fieldWorkspaceContext')">
+                <ElFormItem :label="t('insight.assistants.fieldWorkspaceContextOptional')">
                   <ElInput
                     v-model="workspaceGuideOverview"
                     type="textarea"
@@ -1160,7 +1161,7 @@ watch(
           :disabled="saving || loading || !sourceBindingEnabled"
           @click="handleSubmit"
         >
-          {{ isEditing ? t('common.save') : t('insight.assistants.btnCreate') }}
+          {{ isEditing ? t('common.saveChanges') : t('insight.assistants.btnCreate') }}
         </ElButton>
       </footer>
     </div>

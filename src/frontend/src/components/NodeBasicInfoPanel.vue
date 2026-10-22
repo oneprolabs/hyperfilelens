@@ -45,6 +45,8 @@ const props = defineProps<{
   showRepositoryServerAddress?: boolean
   nodeScope?: NodeApiScope
   useBackupSourceTerminology?: boolean
+  /** Align General / Specs / Runtime labels with the Data Gateways list columns. */
+  useGatewayListLabels?: boolean
   readOnly?: boolean
 }>()
 
@@ -53,6 +55,56 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const useListAlignedRuntimeLabels = computed(
+  () => props.useBackupSourceTerminology || props.useGatewayListLabels,
+)
+
+const nameLabelKey = computed(() =>
+  props.useGatewayListLabels
+    ? 'protection.sourceResources.colName'
+    : 'protection.sourceResources.fieldSourceName',
+)
+const typeLabelKey = computed(() =>
+  props.useGatewayListLabels
+    ? 'protection.sourceResources.colType'
+    : 'protection.sourceResources.fieldSourceType',
+)
+const hostnameLabelKey = computed(() =>
+  props.useGatewayListLabels
+    ? 'protection.sourceResources.colHostname'
+    : 'protection.sourceResources.fieldHostname',
+)
+const idLabelKey = computed(() =>
+  props.useGatewayListLabels
+    ? 'protection.sourceResources.fieldId'
+    : 'protection.sourceResources.fieldSourceId',
+)
+const osLabelKey = computed(() =>
+  props.useGatewayListLabels
+    ? 'protection.sourceResources.colOs'
+    : 'protection.sourceResources.colOperatingSystem',
+)
+const statusLabelKey = computed(() =>
+  useListAlignedRuntimeLabels.value
+    ? 'protection.sourceResources.colLifecycleStatus'
+    : 'protection.sourceResources.colStatus',
+)
+const connectivityLabelKey = computed(() =>
+  useListAlignedRuntimeLabels.value
+    ? 'protection.sourceResources.colConnectivity'
+    : 'protection.sourceResources.colAvailability',
+)
+const connectivityUpdatedAtLabelKey = computed(() =>
+  useListAlignedRuntimeLabels.value
+    ? 'protection.sourceResources.fieldConnectivityUpdatedAt'
+    : 'protection.sourceResources.fieldAvailabilityUpdatedAt',
+)
+const registeredAtLabelKey = computed(() =>
+  useListAlignedRuntimeLabels.value
+    ? 'protection.sourceResources.colRegisteredAt'
+    : 'protection.sourceResources.colRegistered',
+)
 
 const editingName = ref(false)
 const nameDraft = ref('')
@@ -225,16 +277,18 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       </h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldSourceName') }}</span>
+          <span class="hfl-detail-row__label">{{ t(nameLabelKey) }}</span>
           <span class="hfl-detail-row__value hfl-detail-row__value--editable">
             <template v-if="editingName">
               <ElInput
                 v-model="nameDraft"
                 size="small"
+                autofocus
                 class="hfl-detail-inline-edit__input"
                 :disabled="savingName"
                 :placeholder="t('protection.sourceResources.renamePlaceholder')"
                 @keyup.enter="saveName"
+                @keyup.escape="discardNameEdit"
               />
               <span class="hfl-detail-inline-edit__actions">
                 <ElButton
@@ -272,15 +326,15 @@ function detailValueClass(text: string, monoWhenPresent = false) {
           </span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldSourceType') }}</span>
+          <span class="hfl-detail-row__label">{{ t(typeLabelKey) }}</span>
           <span class="hfl-detail-row__value">{{ sourceTypeLabel }}</span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldHostname') }}</span>
+          <span class="hfl-detail-row__label">{{ t(hostnameLabelKey) }}</span>
           <span class="hfl-detail-row__value">{{ hostname }}</span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.fieldSourceId') }}</span>
+          <span class="hfl-detail-row__label">{{ t(idLabelKey) }}</span>
           <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
             <span class="hfl-detail-row__text">{{ externalId }}</span>
             <ElButton
@@ -344,7 +398,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       </h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t('protection.sourceResources.colOperatingSystem') }}</span>
+          <span class="hfl-detail-row__label">{{ t(osLabelKey) }}</span>
           <span class="hfl-detail-row__value">{{ osName }}</span>
         </div>
         <div class="hfl-detail-row">
@@ -432,7 +486,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       </h4>
       <div class="hfl-detail-grid">
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colLifecycleStatus' : 'protection.sourceResources.colStatus') }}</span>
+          <span class="hfl-detail-row__label">{{ t(statusLabelKey) }}</span>
           <div class="hfl-detail-row__value node-basic-info-status">
             <NodeLifecycleStatusCell
               :node="node"
@@ -449,7 +503,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
           <span class="hfl-detail-row__value">{{ versionText }}</span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colConnectivity' : 'protection.sourceResources.colAvailability') }}</span>
+          <span class="hfl-detail-row__label">{{ t(connectivityLabelKey) }}</span>
           <span class="hfl-detail-row__value">
             <ElTag
               :type="availabilityTagType"
@@ -458,14 +512,14 @@ function detailValueClass(text: string, monoWhenPresent = false) {
           </span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.fieldConnectivityUpdatedAt' : 'protection.sourceResources.fieldAvailabilityUpdatedAt') }}</span>
+          <span class="hfl-detail-row__label">{{ t(connectivityUpdatedAtLabelKey) }}</span>
           <span
             class="hfl-detail-row__value"
             :class="{ 'hfl-detail-row__empty': !node.availability_updated_at }"
           >{{ formatNodeDate(node.availability_updated_at) }}</span>
         </div>
         <div class="hfl-detail-row">
-          <span class="hfl-detail-row__label">{{ t(useBackupSourceTerminology ? 'protection.sourceResources.colRegisteredAt' : 'protection.sourceResources.colRegistered') }}</span>
+          <span class="hfl-detail-row__label">{{ t(registeredAtLabelKey) }}</span>
           <span
             class="hfl-detail-row__value"
             :class="{ 'hfl-detail-row__empty': !node.created_at }"

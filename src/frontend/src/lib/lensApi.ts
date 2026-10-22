@@ -269,6 +269,8 @@ export type LensGatewayInsight = {
   created_by_id?: number | null
   created_by_username?: string
   owner_organization_id?: number | null
+  organization_key?: string
+  organization_name?: string
   is_platform_default?: boolean
   organization?: number
   metadata?: Record<string, unknown>

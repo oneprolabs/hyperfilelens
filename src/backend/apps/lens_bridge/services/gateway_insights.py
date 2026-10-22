@@ -207,6 +207,12 @@ def _serialize_row(
         if created_by
         else "",
         "owner_organization_id": link.organization_id if link else None,
+        "organization_key": (
+            str(getattr(link.organization, "key", "") or "") if link else ""
+        ),
+        "organization_name": (
+            str(getattr(link.organization, "name", "") or "") if link else ""
+        ),
         "is_platform_default": is_platform_default,
         "sl_name": str(sl_node.get("name") or ""),
         "sl_status": sl_status,

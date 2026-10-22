@@ -1,26 +1,18 @@
 <script setup lang="ts">
 import '../../../styles/fullscreen-form-styles'
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import NodeLifecycleWizard from '../../../components/NodeLifecycleWizard.vue'
-import DangerConfirmDialog from '../../../components/DangerConfirmDialog.vue'
 import { copyTextToClipboard } from '../../../lib/clipboard'
-import {
-  auditPlatformGatewayEnrollmentCopy,
-  revokePlatformGatewayEnrollment,
-} from '../../../lib/nodeApi'
-import { apiErrorMessage } from '../../../lib/api'
+import { auditPlatformGatewayEnrollmentCopy } from '../../../lib/nodeApi'
 import { routeLocationWithListRefresh } from '../../../lib/listRouteRefresh'
 
 const { t } = useI18n()
 const router = useRouter()
-const wizardRef = ref<{ clearInstallCommand: () => void } | null>(null)
 const tokenId = ref<number | null>(null)
-const revokeOpen = ref(false)
-const revoking = ref(false)
 
 const backTarget = '/platform-ops/engine/gateways'
 
@@ -43,27 +35,6 @@ async function copyCommand(command: string) {
 function handleBack() {
   router.push(routeLocationWithListRefresh(backTarget))
 }
-
-async function confirmRevoke() {
-  if (tokenId.value == null) return
-  revoking.value = true
-  try {
-    await revokePlatformGatewayEnrollment(tokenId.value)
-    tokenId.value = null
-    wizardRef.value?.clearInstallCommand()
-    revokeOpen.value = false
-    ElMessage.success({ message: t('platformOps.engineGateway.revokeSuccess'), grouping: true })
-  } catch (error) {
-    ElMessage.error({
-      message: apiErrorMessage(error, t('platformOps.engineGateway.revokeFailed')),
-      grouping: true,
-    })
-  } finally {
-    revoking.value = false
-  }
-}
-
-const canRevoke = computed(() => tokenId.value != null)
 
 onMounted(() => {
   if (typeof document !== 'undefined') {
@@ -112,7 +83,6 @@ onUnmounted(() => {
         <div class="fullscreen-form-layout">
           <div class="fullscreen-form-main">
             <NodeLifecycleWizard
-              ref="wizardRef"
               install-only
               org-key=""
               role="gateway"
@@ -127,32 +97,12 @@ onUnmounted(() => {
               <ElButton @click="handleBack">
                 {{ t('common.back') }}
               </ElButton>
-              <ElButton
-                v-if="canRevoke"
-                type="danger"
-                plain
-                @click="revokeOpen = true"
-              >
-                {{ t('platformOps.engineGateway.revoke') }}
-              </ElButton>
             </div>
           </div>
         </div>
       </div>
     </div>
   </Teleport>
-
-  <DangerConfirmDialog
-    v-model="revokeOpen"
-    :title="t('platformOps.engineGateway.revokeTitle')"
-    :message="t('platformOps.engineGateway.revokeMessage')"
-    confirm-mode="keyword"
-    :confirm-keyword="t('platformOps.engineGateway.revokeKeyword')"
-    :confirm-text="t('platformOps.engineGateway.revoke')"
-    :cancel-text="t('common.cancel')"
-    :loading="revoking"
-    @confirm="confirmRevoke"
-  />
 </template>
 
 <style src="../../../styles/source-deploy-ui.css"></style>

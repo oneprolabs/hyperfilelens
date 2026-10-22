@@ -1,29 +1,24 @@
 <script setup lang="ts">
-import { computed, ref, useId, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Pencil } from 'lucide-vue-next'
 import type { GatewayChatWorkload } from '../../lib/lensApi'
 
 const props = defineProps<{
   workload: GatewayChatWorkload
-  saving?: boolean
-}>()
-
-const emit = defineEmits<{
-  save: [settings: {
-    chat_prepare_concurrency: number
-    chat_queue_capacity: number
-  }]
 }>()
 
 const { t } = useI18n()
-const concurrencyHintId = `dg-chat-concurrency-hint-${useId()}`
-const queueCapacityHintId = `dg-chat-queue-capacity-hint-${useId()}`
 const concurrency = ref<number | undefined>(1)
 const queueCapacity = ref<number | undefined>(10)
+const editingConcurrency = ref(false)
+const editingQueueCapacity = ref(false)
 
 function resetDraft() {
   concurrency.value = Number(props.workload.chat_prepare_concurrency)
   queueCapacity.value = Number(props.workload.chat_queue_capacity)
+  editingConcurrency.value = false
+  editingQueueCapacity.value = false
 }
 
 watch(
@@ -35,10 +30,11 @@ watch(
   { immediate: true },
 )
 
-const changed = computed(() => (
-  concurrency.value !== Number(props.workload.chat_prepare_concurrency)
-  || queueCapacity.value !== Number(props.workload.chat_queue_capacity)
+const hasChanges = computed(() => (
+  Number(concurrency.value) !== Number(props.workload.chat_prepare_concurrency)
+  || Number(queueCapacity.value) !== Number(props.workload.chat_queue_capacity)
 ))
+
 const valid = computed(() => (
   Number.isInteger(Number(concurrency.value))
   && Number(concurrency.value) >= 1
@@ -48,36 +44,43 @@ const valid = computed(() => (
   && Number(queueCapacity.value) <= 1000
 ))
 
-function save() {
-  if (!changed.value || !valid.value || props.saving) return
-  emit('save', {
+function beginConcurrencyEdit() {
+  concurrency.value = Number(props.workload.chat_prepare_concurrency)
+  editingConcurrency.value = true
+}
+
+function beginQueueCapacityEdit() {
+  queueCapacity.value = Number(props.workload.chat_queue_capacity)
+  editingQueueCapacity.value = true
+}
+
+function discardChanges() {
+  resetDraft()
+}
+
+function getDraftSettings() {
+  if (!hasChanges.value || !valid.value) return null
+  return {
     chat_prepare_concurrency: Number(concurrency.value),
     chat_queue_capacity: Number(queueCapacity.value),
-  })
+  }
 }
+
+defineExpose({
+  hasChanges,
+  valid,
+  discardChanges,
+  getDraftSettings,
+})
 </script>
 
 <template>
   <section class="hfl-detail-section dg-chat-workload">
-    <div class="dg-chat-workload__heading">
-      <div>
-        <h4 class="hfl-detail-section__title">
-          {{ t('insight.dataGateway.chatWorkloadTitle') }}
-        </h4>
-        <p>{{ t('insight.dataGateway.chatWorkloadDescription') }}</p>
-      </div>
-      <ElButton
-        type="primary"
-        size="small"
-        :loading="saving"
-        :disabled="!changed || !valid"
-        @click="save"
-      >
-        {{ t('common.save') }}
-      </ElButton>
-    </div>
+    <h4 class="hfl-detail-section__title">
+      {{ t('insight.dataGateway.chatWorkloadTitle') }}
+    </h4>
 
-    <div class="hfl-detail-grid dg-chat-workload__stats">
+    <div class="hfl-detail-grid">
       <div class="hfl-detail-row">
         <span class="hfl-detail-row__label">{{ t('insight.dataGateway.chatRunning') }}</span>
         <span class="hfl-detail-row__value">{{ workload.active_chat_preparations }}</span>
@@ -86,47 +89,73 @@ function save() {
         <span class="hfl-detail-row__label">{{ t('insight.dataGateway.chatQueued') }}</span>
         <span class="hfl-detail-row__value">{{ workload.queued_chat_preparations }}</span>
       </div>
+      <div class="hfl-detail-row">
+        <span class="hfl-detail-row__label">{{ t('insight.dataGateway.chatConcurrency') }}</span>
+        <span class="hfl-detail-row__value hfl-detail-row__value--editable">
+          <template v-if="editingConcurrency">
+            <ElInputNumber
+              v-model="concurrency"
+              size="small"
+              autofocus
+              class="hfl-detail-inline-edit__input hfl-detail-inline-edit__input--number"
+              :min="1"
+              :max="32"
+              :precision="0"
+              :step="1"
+              :controls="false"
+              :aria-label="t('insight.dataGateway.chatConcurrency')"
+              @keyup.escape="editingConcurrency = false; concurrency = Number(workload.chat_prepare_concurrency)"
+            />
+          </template>
+          <template v-else>
+            <span class="hfl-detail-row__text">{{ concurrency }}</span>
+            <ElButton
+              text
+              circle
+              size="small"
+              class="hfl-detail-row__edit"
+              :title="t('protection.sourceResources.editBtn')"
+              @click="beginConcurrencyEdit"
+            >
+              <Pencil :size="13" />
+            </ElButton>
+          </template>
+        </span>
+      </div>
+      <div class="hfl-detail-row">
+        <span class="hfl-detail-row__label">{{ t('insight.dataGateway.chatQueueCapacity') }}</span>
+        <span class="hfl-detail-row__value hfl-detail-row__value--editable">
+          <template v-if="editingQueueCapacity">
+            <ElInputNumber
+              v-model="queueCapacity"
+              size="small"
+              autofocus
+              class="hfl-detail-inline-edit__input hfl-detail-inline-edit__input--number"
+              :min="0"
+              :max="1000"
+              :precision="0"
+              :step="1"
+              :controls="false"
+              :aria-label="t('insight.dataGateway.chatQueueCapacity')"
+              @keyup.escape="editingQueueCapacity = false; queueCapacity = Number(workload.chat_queue_capacity)"
+            />
+          </template>
+          <template v-else>
+            <span class="hfl-detail-row__text">{{ queueCapacity }}</span>
+            <ElButton
+              text
+              circle
+              size="small"
+              class="hfl-detail-row__edit"
+              :title="t('protection.sourceResources.editBtn')"
+              @click="beginQueueCapacityEdit"
+            >
+              <Pencil :size="13" />
+            </ElButton>
+          </template>
+        </span>
+      </div>
     </div>
-
-    <ElForm
-      label-position="top"
-      class="dg-chat-workload__form"
-    >
-      <ElFormItem :label="t('insight.dataGateway.chatConcurrency')">
-        <ElInputNumber
-          v-model="concurrency"
-          :aria-label="t('insight.dataGateway.chatConcurrency')"
-          :aria-describedby="concurrencyHintId"
-          :min="1"
-          :max="32"
-          :step="1"
-          controls-position="right"
-        />
-        <p
-          :id="concurrencyHintId"
-          class="dg-chat-workload__hint"
-        >
-          {{ t('insight.dataGateway.chatConcurrencyHint') }}
-        </p>
-      </ElFormItem>
-      <ElFormItem :label="t('insight.dataGateway.chatQueueCapacity')">
-        <ElInputNumber
-          v-model="queueCapacity"
-          :aria-label="t('insight.dataGateway.chatQueueCapacity')"
-          :aria-describedby="queueCapacityHintId"
-          :min="0"
-          :max="1000"
-          :step="1"
-          controls-position="right"
-        />
-        <p
-          :id="queueCapacityHintId"
-          class="dg-chat-workload__hint"
-        >
-          {{ t('insight.dataGateway.chatQueueCapacityHint') }}
-        </p>
-      </ElFormItem>
-    </ElForm>
   </section>
 </template>
 
@@ -135,55 +164,11 @@ function save() {
   margin-top: 20px;
 }
 
-.dg-chat-workload__heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+.dg-chat-workload :deep(.hfl-detail-inline-edit__input--number) {
+  width: 120px;
 }
 
-.dg-chat-workload__heading p,
-.dg-chat-workload__hint {
-  margin: 4px 0 0;
-  color: var(--color-text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.dg-chat-workload__stats {
-  margin-top: 12px;
-}
-
-.dg-chat-workload__form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 20px;
-  margin-top: 16px;
-}
-
-.dg-chat-workload__form :deep(.el-input-number) {
+.dg-chat-workload :deep(.hfl-detail-inline-edit__input--number .el-input__wrapper) {
   width: 100%;
-}
-
-.dg-chat-workload__form :deep(.el-form-item) {
-  margin-bottom: 0;
-}
-
-@media (max-width: 680px) {
-  .dg-chat-workload__form {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 480px) {
-  .dg-chat-workload__heading {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .dg-chat-workload__heading :deep(.el-button) {
-    align-self: flex-start;
-    min-height: 44px;
-  }
 }
 </style>

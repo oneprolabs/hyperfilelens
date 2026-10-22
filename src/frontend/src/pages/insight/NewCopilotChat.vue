@@ -115,8 +115,9 @@ const privateGatewayStatusMessage = computed(() => {
   return ''
 })
 const platformGateway = computed(() => {
+  // Preview only — session create resolves the healthy/low-load pool pick on the server.
   const rows = readyGateways.value.filter((row) => row.scope === 'platform')
-  return rows.find((row) => row.is_platform_default) ?? rows[0] ?? null
+  return rows[0] ?? null
 })
 const autoGateway = computed(() => platformGateway.value)
 const publicGatewayCapabilitiesSyncing = computed(() => gatewayOptions.value.some(

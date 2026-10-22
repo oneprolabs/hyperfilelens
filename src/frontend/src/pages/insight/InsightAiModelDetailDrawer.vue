@@ -32,7 +32,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [boolean]
-  edit: [uuid: string]
 }>()
 
 const { t } = useI18n()
@@ -133,13 +132,6 @@ function onDrawerClosed() {
   detail.value = null
   modelCapabilities.value = []
   capabilityLabels.value = {}
-}
-
-function onEdit() {
-  const uuid = detail.value?.uuid || props.modelUuid
-  if (!uuid) return
-  open.value = false
-  emit('edit', uuid)
 }
 
 async function testConnection() {
@@ -383,19 +375,6 @@ onUnmounted(() => {
           @click="testConnection"
         >
           {{ t('insight.aiSettings.testConnection') }}
-        </ElButton>
-        <ElButton
-          :disabled="testing"
-          @click="open = false"
-        >
-          {{ t('common.cancel') }}
-        </ElButton>
-        <ElButton
-          type="primary"
-          :disabled="testing"
-          @click="onEdit"
-        >
-          {{ t('common.edit') }}
         </ElButton>
       </div>
     </template>

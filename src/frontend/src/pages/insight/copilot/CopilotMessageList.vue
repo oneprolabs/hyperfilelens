@@ -25,7 +25,7 @@ import {
   type LensRunFeedback,
 } from '../../../lib/lensApi'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sessionId: number
   messages: CopilotDisplayMessage[]
   streamingContent?: string
@@ -40,7 +40,11 @@ const props = defineProps<{
   starterDisabled?: boolean
   clarificationResetToken?: number
   sharedRunIds?: string[]
-}>()
+  /** Admin / audit viewers: hide write actions (retry, feedback, share, clarification). */
+  readOnly?: boolean
+}>(), {
+  readOnly: false,
+})
 
 const emit = defineEmits<{
   retryQuestion: [draft: CopilotRetryDraft]
@@ -146,6 +150,10 @@ function hasThinkingContent(message: CopilotDisplayMessage) {
 
 function showAssistantActions(message: CopilotDisplayMessage) {
   return message.role === 'assistant' && Boolean(message.text) && !message.isWelcome && !message.isError
+}
+
+function showWriteActions() {
+  return !props.readOnly
 }
 
 function thinkingOutcomeFor(message: CopilotDisplayMessage) {
@@ -461,21 +469,23 @@ const displayMessages = computed(() =>
               >
                 <strong>{{ t('insight.copilot.clarificationTitle') }}</strong>
                 <p>{{ msg.clarificationRequest.question }}</p>
-                <textarea
-                  v-model="clarificationAnswers[msg.runId]"
-                  class="clarification-input"
-                  :disabled="clarificationSubmitting.has(msg.runId)"
-                  :placeholder="t('insight.copilot.clarificationPlaceholder')"
-                  rows="3"
-                />
-                <button
-                  type="button"
-                  class="clarification-submit"
-                  :disabled="clarificationSubmitting.has(msg.runId) || !(clarificationAnswers[msg.runId] || '').trim()"
-                  @click="submitClarification(msg)"
-                >
-                  {{ clarificationSubmitting.has(msg.runId) ? t('insight.copilot.clarificationSubmitting') : t('insight.copilot.clarificationSubmit') }}
-                </button>
+                <template v-if="showWriteActions()">
+                  <textarea
+                    v-model="clarificationAnswers[msg.runId]"
+                    class="clarification-input"
+                    :disabled="clarificationSubmitting.has(msg.runId)"
+                    :placeholder="t('insight.copilot.clarificationPlaceholder')"
+                    rows="3"
+                  />
+                  <button
+                    type="button"
+                    class="clarification-submit"
+                    :disabled="clarificationSubmitting.has(msg.runId) || !(clarificationAnswers[msg.runId] || '').trim()"
+                    @click="submitClarification(msg)"
+                  >
+                    {{ clarificationSubmitting.has(msg.runId) ? t('insight.copilot.clarificationSubmitting') : t('insight.copilot.clarificationSubmit') }}
+                  </button>
+                </template>
               </div>
             </div>
 
@@ -502,7 +512,7 @@ const displayMessages = computed(() =>
                   <Copy :size="16" />
                 </button>
                 <button
-                  v-if="msg.runId && msg.completedAt"
+                  v-if="showWriteActions() && msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
                   :title="t('insight.copilot.downloadPdf')"
@@ -513,7 +523,7 @@ const displayMessages = computed(() =>
                   <Download :size="16" />
                 </button>
                 <button
-                  v-if="msg.runId && msg.completedAt"
+                  v-if="showWriteActions() && msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
                   :class="{ 'is-positive': feedbackForMessage(msg) === 'positive' }"
@@ -526,7 +536,7 @@ const displayMessages = computed(() =>
                   <ThumbsUp :size="16" />
                 </button>
                 <button
-                  v-if="msg.runId && msg.completedAt"
+                  v-if="showWriteActions() && msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
                   :class="{ 'is-negative': feedbackForMessage(msg) === 'negative' }"
@@ -539,7 +549,7 @@ const displayMessages = computed(() =>
                   <ThumbsDown :size="16" />
                 </button>
                 <button
-                  v-if="msg.runId && msg.completedAt && msg.text?.trim()"
+                  v-if="showWriteActions() && msg.runId && msg.completedAt && msg.text?.trim()"
                   type="button"
                   class="message-action-btn"
                   :class="{ 'is-shared': Boolean(msg.runId && sharedRunIds?.includes(msg.runId)) }"
@@ -550,7 +560,7 @@ const displayMessages = computed(() =>
                   <Share2 :size="16" />
                 </button>
                 <button
-                  v-if="msg.runId && msg.completedAt"
+                  v-if="showWriteActions() && msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
                   :title="t('insight.copilot.regenerateAnswer')"

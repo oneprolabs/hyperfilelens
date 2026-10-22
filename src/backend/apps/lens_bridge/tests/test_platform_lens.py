@@ -60,43 +60,53 @@ class PlatformGatewaySelectionTests(TestCase):
             ),
         )
 
-    def test_explicit_platform_default_is_selected_before_older_gateway(self):
+    def test_auto_selection_prefers_lower_chat_load_over_default_marker(self):
         org = None
-        older_gateway = Node.objects.create(
+        busy_gateway = Node.objects.create(
             organization=None, scope=Node.Scope.PLATFORM,
-            name="older-gateway",
+            name="busy-gateway",
             role=NodeRole.GATEWAY,
         )
-        selected_gateway = Node.objects.create(
+        idle_gateway = Node.objects.create(
             organization=None, scope=Node.Scope.PLATFORM,
-            name="selected-gateway",
+            name="idle-gateway",
             role=NodeRole.GATEWAY,
         )
-        LensGatewayLink.objects.create(
+        busy = LensGatewayLink.objects.create(
             organization=org,
-            gateway=older_gateway,
+            gateway=busy_gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
             sl_lensnode_uuid="9f16dace-78ae-4979-9e88-a63d6c641f8e",
             sidecar_status=LensGatewayLink.SidecarStatus.ONLINE,
+            is_platform_default=True,
         )
-        selected = LensGatewayLink.objects.create(
+        idle = LensGatewayLink.objects.create(
             organization=org,
-            gateway=selected_gateway,
+            gateway=idle_gateway,
             scope=LensGatewayLink.GatewayScope.PLATFORM,
             origin=LensGatewayLink.Origin.PLATFORM,
             sl_lensnode_uuid="e440d5a4-2dc0-4ff9-b268-5afee3211d30",
             sidecar_status=LensGatewayLink.SidecarStatus.ONLINE,
-            is_platform_default=True,
         )
 
         with mock.patch(
             "apps.lens_bridge.services.platform_lens.gateway_runtime_state",
-            return_value={"copilot_eligible": True},
+            return_value={"copilot_eligible": True, "hfl_usable": True},
+        ), mock.patch(
+            "apps.lens_bridge.services.platform_lens._bulk_chat_load",
+            return_value={int(busy.id): 3, int(idle.id): 0},
+        ), mock.patch(
+            "apps.lens_bridge.services.public_gateway_capacity.bulk_public_gateway_used_bytes",
+            return_value={
+                int(busy.id): (0, False),
+                int(idle.id): (0, False),
+            },
         ):
             resolved = platform_lens.resolve_platform_default_gateway_link()
 
-        self.assertEqual(resolved, selected)
+        self.assertEqual(resolved, idle)
+        self.assertNotEqual(resolved, busy)
 
     def test_auto_selection_falls_back_when_default_is_not_copilot_ready(self):
         org = None

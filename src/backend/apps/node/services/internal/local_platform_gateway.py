@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 from urllib.parse import urlsplit
 
 from django.conf import settings
@@ -30,21 +29,33 @@ def platform_gateway_api_base(*, require_remote: bool = False) -> str:
     """Return the configured tenant origin used by platform Data Gateways.
 
     Args:
-        require_remote: Reject loopback hosts reserved for the installer-managed
-            local platform Gateway.
+        require_remote: Use the Admin Console External Access origin so remote
+            install commands follow the operator-configured URL. When false,
+            keep the deployment-local ``FRONTEND_URL`` so the installer-managed
+            Gateway does not follow a Community runtime override intended for
+            remote Agents and Gateways.
+
+            Loopback External Access values are allowed for same-host local
+            deployments; the install wizard warns when the command is only
+            usable on the console host.
 
     Raises:
-        ValueError: If ``FRONTEND_URL`` is not an absolute HTTP(S) origin.
+        ValueError: If the selected origin is not an absolute HTTP(S) URL.
     """
-    # The installer-managed Gateway is deployment-local and must not follow a
-    # Community runtime override intended for remote Agents and Gateways.
-    api_base = str(getattr(settings, "FRONTEND_URL", "")).strip().rstrip("/")
+    if require_remote:
+        from common.deploy.site import tenant_public_url
+
+        api_base = str(tenant_public_url() or "").strip().rstrip("/")
+        origin_label = "External Access Address"
+    else:
+        api_base = str(getattr(settings, "FRONTEND_URL", "")).strip().rstrip("/")
+        origin_label = "FRONTEND_URL"
     parsed = urlsplit(api_base)
     try:
         parsed.port
     except ValueError as exc:
         raise ValueError(
-            "FRONTEND_URL must be an absolute HTTP(S) origin "
+            f"{origin_label} must be an absolute HTTP(S) origin "
             "for Data Gateway enrollment."
         ) from exc
     if (
@@ -58,19 +69,8 @@ def platform_gateway_api_base(*, require_remote: bool = False) -> str:
         or (enrollment_tls_verify() and parsed.scheme != "https")
     ):
         raise ValueError(
-            "FRONTEND_URL must be an absolute HTTP(S) origin for Data Gateway "
+            f"{origin_label} must be an absolute HTTP(S) origin for Data Gateway "
             "enrollment and must use HTTPS when TLS verification is enabled."
-        )
-    hostname = parsed.hostname.lower()
-    try:
-        address = ipaddress.ip_address(hostname)
-        non_routable = address.is_loopback or address.is_unspecified
-    except ValueError:
-        non_routable = hostname == "localhost" or hostname.endswith(".localhost")
-    if require_remote and non_routable:
-        raise ValueError(
-            "FRONTEND_URL must use a network-reachable host for remote Public "
-            "Data Gateway enrollment. Configure the deployment public URL first."
         )
     return api_base.rstrip("/")
 

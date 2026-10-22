@@ -203,3 +203,55 @@ export function buildUpgradeConfirmSkipGroups(
   )
   return groups
 }
+
+export type UpgradeConfirmDialogItem = {
+  key: number | string
+  name: string
+  description?: string
+  status: { label: string; tone: 'success' | 'warning' | 'danger' | 'info' }
+  warning?: string
+}
+
+/**
+ * Flatten eligible + skipped hosts into one DangerConfirm-style item list so
+ * single- and multi-select confirmations share the same table layout.
+ */
+export function buildUpgradeConfirmDialogItems(
+  t: ComposerTranslation,
+  preview: NodeOperationBatchPreview,
+): UpgradeConfirmDialogItem[] {
+  const items: UpgradeConfirmDialogItem[] = preview.eligible.map((item) => ({
+    key: item.node_id,
+    name: item.name,
+    description: item.target_version
+      ? t('nodeLifecycle.confirmUpgradeTargetVersion', { version: item.target_version })
+      : undefined,
+    status: {
+      label: t('nodeLifecycle.confirmStatUpgrade'),
+      tone: 'success',
+    },
+  }))
+
+  for (const group of buildUpgradeConfirmSkipGroups(t, preview)) {
+    const detailByName = new Map<string, string>()
+    for (const detail of group.details || []) {
+      // Disk details are already per-host sentences; keep the first match by name prefix.
+      const matched = group.names.find((name) => detail.startsWith(`${name.name}:`))
+      if (matched && !detailByName.has(matched.name)) detailByName.set(matched.name, detail)
+    }
+    for (const name of group.names) {
+      items.push({
+        key: `skip-${group.key}-${name.id}`,
+        name: name.name,
+        description: detailByName.get(name.name) || group.title,
+        status: {
+          label: t('nodeLifecycle.confirmStatSkipped'),
+          tone: 'warning',
+        },
+        warning: group.guidance,
+      })
+    }
+  }
+
+  return items
+}

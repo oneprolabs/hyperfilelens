@@ -302,7 +302,7 @@ watch(
           :disabled="saving || loading"
           @click="handleSubmit"
         >
-          {{ isEditing ? t('common.save') : t('insight.skills.btnCreate') }}
+          {{ isEditing ? t('common.saveChanges') : t('insight.skills.btnCreate') }}
         </ElButton>
       </footer>
     </div>

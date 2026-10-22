@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from django.db import transaction
+from django.db.models import Count, Q
 
 from apps.iam.models import Organization
-from apps.lens_bridge.models import LensGatewayLink
+from apps.lens_bridge.models import LensGatewayChatSlot, LensGatewayLink, LensSessionLink
 from apps.lens_bridge.services.gateway_readiness import (
     gateway_runtime_state,
     require_hfl_usable_gateway,
@@ -51,27 +52,100 @@ def _platform_gateway_links(*, require_lensnode: bool = False):
     return links
 
 
-def _runtime_gateway_score(
-    link: LensGatewayLink, state: dict
-) -> tuple[int, int, int, int, int, float, int]:
-    """Prefer actual readiness over a stale default marker."""
+def _bulk_chat_load(link_ids: list[int]) -> dict[int, int]:
+    """Return active prepare slots + queued preparations per gateway link."""
+    id_list = [int(x) for x in link_ids]
+    if not id_list:
+        return {}
+    active = {
+        int(row["gateway_link_id"]): int(row["count"])
+        for row in (
+            LensGatewayChatSlot.objects.filter(gateway_link_id__in=id_list)
+            .exclude(
+                Q(session_link__lifecycle_status=LensSessionLink.LifecycleStatus.READY)
+                | Q(
+                    session_link__lifecycle_status=LensSessionLink.LifecycleStatus.DELETED
+                )
+                | Q(
+                    session_link__lifecycle_status=LensSessionLink.LifecycleStatus.FAILED,
+                    session_link__cleanup_status=LensSessionLink.CleanupStatus.COMPLETE,
+                )
+            )
+            .values("gateway_link_id")
+            .annotate(count=Count("id"))
+        )
+    }
+    queued = {
+        int(row["gateway_link_id"]): int(row["count"])
+        for row in (
+            LensSessionLink.objects.filter(
+                gateway_link_id__in=id_list,
+                lifecycle_status=LensSessionLink.LifecycleStatus.PROVISIONING,
+                gateway_chat_slot__isnull=True,
+            )
+            .values("gateway_link_id")
+            .annotate(count=Count("id"))
+        )
+    }
+    return {
+        link_id: int(active.get(link_id, 0)) + int(queued.get(link_id, 0))
+        for link_id in id_list
+    }
+
+
+def _capacity_load_key(link: LensGatewayLink, used_bytes: int) -> tuple[float, int]:
+    """Lower is better: ratio for capped gateways, absolute use for unlimited."""
+    from apps.lens_bridge.services.public_gateway_capacity import (
+        get_public_gateway_capacity_bytes,
+    )
+
+    capacity = get_public_gateway_capacity_bytes(gateway_link=link)
+    used = max(0, int(used_bytes))
+    if capacity < 0:
+        return (0.0, used)
+    if capacity == 0:
+        return (1.0, used)
+    return (min(1.0, used / float(capacity)), used)
+
+
+def _health_gateway_score(link: LensGatewayLink, state: dict) -> tuple:
+    """Prefer healthier platform Gateways. Public Default is ignored."""
     return (
         int(bool(state.get("copilot_eligible"))),
         int(bool(state.get("hfl_usable"))),
         int(bool(state.get("hfl_agent_online") and state.get("hfl_sidecar_online"))),
         int(bool(state.get("hfl_agent_online"))),
-        int(bool(link.is_platform_default)),
+        link.gateway.last_seen_at.timestamp() if link.gateway.last_seen_at else 0.0,
+        -link.id,
+    )
+
+
+def _pool_gateway_score(
+    link: LensGatewayLink,
+    state: dict,
+    *,
+    chat_load: int,
+    used_bytes: int,
+) -> tuple:
+    """Among healthy Gateways prefer lower chat load then lower capacity use."""
+    capacity_ratio, capacity_used = _capacity_load_key(link, used_bytes)
+    return (
+        int(bool(state.get("copilot_eligible"))),
+        int(bool(state.get("hfl_usable"))),
+        int(bool(state.get("hfl_agent_online") and state.get("hfl_sidecar_online"))),
+        -int(chat_load),
+        -float(capacity_ratio),
+        -int(capacity_used),
         link.gateway.last_seen_at.timestamp() if link.gateway.last_seen_at else 0.0,
         -link.id,
     )
 
 
 def resolve_platform_runtime_gateway_link() -> LensGatewayLink | None:
-    """Resolve the one platform Gateway that should represent runtime state.
+    """Resolve the platform Gateway that should represent runtime state.
 
-    The default flag is a preference, not proof that the Gateway is usable.
-    This keeps Runtime Environment and Copilot selection aligned when an old
-    local Gateway remains marked as default after a host re-enrollment.
+    Prefer readiness over a stale default marker so Runtime Environment stays
+    aligned with Copilot when an old local Gateway remains mis-marked.
     """
     candidates = list(_platform_gateway_links())
     if not candidates:
@@ -82,12 +156,16 @@ def resolve_platform_runtime_gateway_link() -> LensGatewayLink | None:
     ]
     return max(
         scored,
-        key=lambda item: _runtime_gateway_score(item[0], item[1]),
+        key=lambda item: _health_gateway_score(item[0], item[1]),
     )[0]
 
 
 def resolve_platform_default_gateway_link() -> LensGatewayLink | None:
-    """Resolve Auto to the first HFL-ready platform Gateway."""
+    """Resolve Auto Chat to a healthy, lower-load platform Gateway from the pool."""
+    from apps.lens_bridge.services.public_gateway_capacity import (
+        bulk_public_gateway_used_bytes,
+    )
+
     candidates = list(_platform_gateway_links(require_lensnode=True))
     if not candidates:
         return None
@@ -102,9 +180,17 @@ def resolve_platform_default_gateway_link() -> LensGatewayLink | None:
     ]
     if not eligible:
         return None
+    link_ids = [int(link.id) for link, _state in eligible]
+    chat_loads = _bulk_chat_load(link_ids)
+    used_map = bulk_public_gateway_used_bytes(link_ids)
     return max(
         eligible,
-        key=lambda item: _runtime_gateway_score(item[0], item[1]),
+        key=lambda item: _pool_gateway_score(
+            item[0],
+            item[1],
+            chat_load=chat_loads.get(int(item[0].id), 0),
+            used_bytes=used_map.get(int(item[0].id), (0, False))[0],
+        ),
     )[0]
 
 
@@ -130,7 +216,7 @@ def resolve_gateway_link_for_copilot(
     user,
     gateway_link_id: int | None = None,
 ) -> LensGatewayLink:
-    """Resolve DG for Copilot. Prefer platform pool; Auto → platform default.
+    """Resolve DG for Copilot. Prefer platform pool; Auto → healthy/low-load pick.
 
     Never creates or deletes a DG — only selects an existing SL-admin gateway link.
     """
@@ -158,9 +244,9 @@ def resolve_gateway_link_for_copilot(
         )
         return link
 
-    platform_default = resolve_auto_gateway_link_for_copilot(user=user)
-    if platform_default is not None:
-        return platform_default
+    platform_pick = resolve_auto_gateway_link_for_copilot(user=user)
+    if platform_pick is not None:
+        return platform_pick
 
     raise ValidationError(
         {"gateway_link_id": NO_PUBLIC_DATA_GATEWAY_AVAILABLE}
@@ -169,6 +255,7 @@ def resolve_gateway_link_for_copilot(
 
 @transaction.atomic
 def set_platform_default_gateway(*, gateway_link_id: int) -> LensGatewayLink:
+    """Legacy marker writer kept for installer/migrations; Auto selection ignores it."""
     from apps.node.services.internal.ownership import lock_platform_infrastructure
 
     lock_platform_infrastructure()

@@ -16,6 +16,7 @@ import {
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
+import { usePlatformEngineListSearch } from '../../composables/usePlatformEngineListSearch'
 import { apiErrorMessage } from '../../lib/api'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import {
@@ -29,12 +30,22 @@ import {
 import InsightMcpServerDetailDrawer from './InsightMcpServerDetailDrawer.vue'
 import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
-import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import DangerConfirmDialog, {
+  type DangerConfirmItem,
+  type DangerLevel,
+} from '../../components/DangerConfirmDialog.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
+
+type McpLifecycleAction = 'enable' | 'disable' | 'delete'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const {
+  listSearchPlaceholder,
+  listSearchClass,
+  listSearchSize,
+} = usePlatformEngineListSearch('insight.mcpServers.searchPlaceholder', 'mcpServers')
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -55,9 +66,9 @@ const selectedRows = ref<LensMcpServer[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
 const detailRow = ref<LensMcpServer | null>(null)
-const deleteOpen = ref(false)
-const deleteLoading = ref(false)
-const deleteTarget = ref<LensMcpServer | null>(null)
+const lifecycleAction = ref<McpLifecycleAction | null>(null)
+const lifecycleTarget = ref<LensMcpServer | null>(null)
+const lifecycleLoading = ref(false)
 
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const tableBlockRef = ref<HTMLElement | null>(null)
@@ -75,7 +86,6 @@ const filteredRows = computed(() => {
       row.name,
       transportLabel(row.transport),
       row.endpoint,
-      runtimeSettingsLabel(row),
       row.enabled ? t('insight.mcpServers.statusActive') : t('insight.mcpServers.statusDisabled'),
     ]
       .filter(Boolean)
@@ -111,23 +121,65 @@ function onPaginationSizeChange() {
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
 const singleSelected = computed(() => (selectedRows.value.length === 1 ? selectedRows.value[0]! : null))
+const lifecycleOpen = computed(() => Boolean(lifecycleAction.value && lifecycleTarget.value))
+const lifecycleItems = computed<DangerConfirmItem[]>(() => {
+  const row = lifecycleTarget.value
+  if (!row) return []
+  return [{
+    key: row.uuid,
+    name: row.name,
+    status: {
+      label: statusLabel(row.enabled),
+      tone: row.enabled ? 'success' : 'info',
+    },
+  }]
+})
+const lifecycleLevel = computed<DangerLevel>(() => {
+  if (lifecycleAction.value === 'delete') return 'high'
+  if (lifecycleAction.value === 'disable') return 'medium'
+  return 'low'
+})
+const lifecycleTitle = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.mcpServers.enableTitle')
+    case 'disable':
+      return t('insight.mcpServers.disableTitle')
+    case 'delete':
+      return t('insight.mcpServers.deleteTitle')
+    default:
+      return ''
+  }
+})
+const lifecycleMessage = computed(() => (
+  lifecycleAction.value === 'enable' ? t('insight.mcpServers.enableConfirmMessage') : ''
+))
+const lifecycleWarning = computed(() => {
+  if (lifecycleAction.value === 'disable') return t('insight.mcpServers.disableConfirmWarning')
+  if (lifecycleAction.value === 'delete') return t('insight.mcpServers.deleteConfirmWarning')
+  return ''
+})
+const lifecycleConfirmText = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.mcpServers.enable')
+    case 'disable':
+      return t('insight.mcpServers.disable')
+    case 'delete':
+      return t('common.delete')
+    default:
+      return ''
+  }
+})
+const lifecycleContext = computed(() => JSON.stringify([
+  lifecycleAction.value,
+  lifecycleTarget.value?.uuid || '',
+]))
 
 function transportLabel(transport: string) {
   if (transport === 'stdio') return 'STDIO'
   if (transport === 'url') return 'URL'
   return transport.toUpperCase()
-}
-
-function runtimeSettingsCount(row: LensMcpServer) {
-  const config = row.config
-  if (!config || typeof config !== 'object') return 0
-  return Object.keys(config).filter((key) => key.trim()).length
-}
-
-function runtimeSettingsLabel(row: LensMcpServer) {
-  const count = runtimeSettingsCount(row)
-  if (count === 0) return t('insight.mcpServers.runtimeSettingsNone')
-  return t('insight.mcpServers.runtimeSettingsCount', { n: count })
 }
 
 function statusLabel(enabled: boolean) {
@@ -169,14 +221,52 @@ function onSelectionChange(selection: LensMcpServer[]) {
   selectedRows.value = selection
 }
 
-async function setEnabled(row: LensMcpServer, enabled: boolean) {
-  if (row.enabled === enabled) return
+function requestLifecycleAction(action: McpLifecycleAction, row: LensMcpServer) {
+  if (lifecycleLoading.value) return
+  lifecycleAction.value = action
+  lifecycleTarget.value = row
+}
+
+function closeLifecycleAction() {
+  if (lifecycleLoading.value) return
+  lifecycleAction.value = null
+  lifecycleTarget.value = null
+}
+
+async function confirmLifecycleAction() {
+  const action = lifecycleAction.value
+  const row = lifecycleTarget.value
+  if (!action || !row || lifecycleLoading.value) return
+  lifecycleLoading.value = true
   try {
-    await updateLensMcpServer(row.uuid, { enabled })
-    ElMessage.success(t('insight.mcpServers.saveSuccess'))
-    await load()
+    if (action === 'enable' || action === 'disable') {
+      const enabled = action === 'enable'
+      if (row.enabled !== enabled) {
+        await updateLensMcpServer(row.uuid, { enabled })
+        ElMessage.success({
+          message: t(enabled ? 'insight.mcpServers.enableSuccess' : 'insight.mcpServers.disableSuccess'),
+          grouping: true,
+        })
+        await load()
+      }
+    } else {
+      await deleteLensMcpServer(row.uuid)
+      ElMessage.success({ message: t('insight.mcpServers.deleteSuccess'), grouping: true })
+      selectedRows.value = []
+      await load()
+    }
+    lifecycleAction.value = null
+    lifecycleTarget.value = null
   } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('insight.mcpServers.saveFailed')))
+    ElMessage.error({
+      message: apiErrorMessage(
+        err,
+        action === 'delete' ? t('errors.generic.requestFailed') : t('insight.mcpServers.saveFailed'),
+      ),
+      grouping: true,
+    })
+  } finally {
+    lifecycleLoading.value = false
   }
 }
 
@@ -186,39 +276,22 @@ function editSelected() {
   openEdit(row)
 }
 
-async function enableSelected() {
+function enableSelected() {
   const row = singleSelected.value
-  if (!row) return
-  await setEnabled(row, true)
+  if (!row || row.enabled) return
+  requestLifecycleAction('enable', row)
 }
 
-async function disableSelected() {
+function disableSelected() {
   const row = singleSelected.value
-  if (!row) return
-  await setEnabled(row, false)
+  if (!row || !row.enabled) return
+  requestLifecycleAction('disable', row)
 }
 
 function deleteSelected() {
   const row = singleSelected.value
   if (!row) return
-  deleteTarget.value = row
-  deleteOpen.value = true
-}
-
-async function confirmDelete() {
-  if (!deleteTarget.value) return
-  deleteLoading.value = true
-  try {
-    await deleteLensMcpServer(deleteTarget.value.uuid)
-    ElMessage.success(t('insight.mcpServers.deleteSuccess'))
-    deleteOpen.value = false
-    deleteTarget.value = null
-    await load()
-  } catch (err) {
-    ElMessage.error(apiErrorMessage(err, t('errors.generic.requestFailed')))
-  } finally {
-    deleteLoading.value = false
-  }
+  requestLifecycleAction('delete', row)
 }
 
 onMounted(() => {
@@ -243,20 +316,21 @@ watch(
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton
-          type="primary"
-          :disabled="!bridgeReady"
-          @click="openCreate"
-        >
-          <Plus :size="16" />
-          {{ t('platformOps.engineActions.addMcpServer') }}
-        </ElButton>
+        <div class="hfl-list-toolbar__actions">
+          <ElButton
+            type="primary"
+            :disabled="!bridgeReady"
+            @click="openCreate"
+          >
+            <Plus :size="16" />
+            {{ t('platformOps.engineActions.addMcpServer') }}
+          </ElButton>
 
-        <ElDropdown
-          trigger="click"
-          popper-class="hfl-actions-dropdown"
-          @visible-change="moreActionsOpen = $event"
-        >
+          <ElDropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="moreActionsOpen = $event"
+          >
           <ElButton :disabled="!bridgeReady">
             {{ t('platformOps.engineActions.mcpServerActions') }}
             <ChevronDown
@@ -281,7 +355,7 @@ watch(
               </ElDropdownItem>
               <ElDropdownItem
                 divided
-                :disabled="batchDisabled || !singleSelected"
+                :disabled="batchDisabled || !singleSelected || singleSelected.enabled"
                 @click="enableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -293,7 +367,7 @@ watch(
                 </span>
               </ElDropdownItem>
               <ElDropdownItem
-                :disabled="batchDisabled || !singleSelected"
+                :disabled="batchDisabled || !singleSelected || !singleSelected.enabled"
                 @click="disableSelected"
               >
                 <span class="el-dropdown-menu__item-content">
@@ -320,15 +394,16 @@ watch(
               </ElDropdownItem>
             </ElDropdownMenu>
           </template>
-        </ElDropdown>
+          </ElDropdown>
+        </div>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElInput
             v-model="search"
             clearable
-            size="small"
-            :placeholder="t('insight.mcpServers.searchPlaceholder')"
-            class="hfl-list-search"
+            :size="listSearchSize"
+            :placeholder="listSearchPlaceholder"
+            :class="listSearchClass"
             @clear="clearSearch"
           >
             <template #prefix>
@@ -378,7 +453,7 @@ watch(
           />
           <el-table-column
             :label="t('insight.mcpServers.colName')"
-            min-width="200"
+            min-width="180"
             fixed="left"
             class-name="hfl-table-name-col"
           >
@@ -412,18 +487,9 @@ watch(
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('insight.mcpServers.colRuntimeSettings')"
-            width="150"
-          >
-            <template #default="{ row }">
-              <span :class="runtimeSettingsCount(row) ? 'insight-mcp-runtime' : 'insight-mcp-muted'">
-                {{ runtimeSettingsLabel(row) }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('insight.mcpServers.colEnabled')"
+            :label="t('insight.mcpServers.colStatus')"
             width="110"
+            fixed="right"
           >
             <template #default="{ row }">
               <HflBooleanStatusTag
@@ -464,15 +530,25 @@ watch(
       @edit="openEdit"
     />
     <DangerConfirmDialog
-      v-model="deleteOpen"
-      :title="t('insight.mcpServers.deleteTitle')"
-      :message="deleteTarget ? t('insight.mcpServers.deleteConfirmPlatform', { name: deleteTarget.name }) : ''"
-      :items="deleteTarget ? [{ key: deleteTarget.uuid, name: deleteTarget.name }] : []"
+      v-if="lifecycleOpen"
+      :model-value="true"
+      :title="lifecycleTitle"
+      :level="lifecycleLevel"
+      :message="lifecycleMessage"
+      :warning="lifecycleWarning"
+      :items="lifecycleItems"
+      :item-status-label="t('common.dangerItemStatus')"
+      :confirm-mode="lifecycleAction === 'delete' ? 'keyword' : 'single'"
+      :confirm-keyword="t('common.deleteKeyword')"
+      :confirm-keyword-placeholder="t('common.deleteKeyword')"
+      :confirm-keyword-hint="t('common.dangerConfirmKeywordHint', { keyword: t('common.deleteKeyword') })"
+      :confirmation-context="lifecycleContext"
       :cancel-text="t('common.cancel')"
-      :confirm-text="t('common.delete')"
-      :loading="deleteLoading"
-      @confirm="confirmDelete"
-      @cancel="deleteTarget = null"
+      :confirm-text="lifecycleConfirmText"
+      :loading="lifecycleLoading"
+      :confirm-disabled="lifecycleLoading || !lifecycleTarget"
+      @confirm="confirmLifecycleAction"
+      @cancel="closeLifecycleAction"
     />
   </div>
 </template>
@@ -481,15 +557,5 @@ watch(
 .insight-mcp-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-}
-
-.insight-mcp-runtime {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-}
-
-.insight-mcp-muted {
-  color: rgb(148 163 184);
-  font-size: 13px;
 }
 </style>

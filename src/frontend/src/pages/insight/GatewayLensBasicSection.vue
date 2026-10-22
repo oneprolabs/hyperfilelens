@@ -3,42 +3,47 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Copy } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
+import HflCapacityCell from '../../components/HflCapacityCell.vue'
 import { copyTextToClipboard } from '../../lib/clipboard'
-import { DETAIL_EMPTY, formatNodeDate, isDetailEmpty } from '../../lib/nodeInventoryDisplay'
+import { DETAIL_EMPTY, formatNodeBytes, formatNodeDate, isDetailEmpty } from '../../lib/nodeInventoryDisplay'
 import type { GatewayAiStatus } from '../../lib/lensApi'
+import type { PlatformGatewayCapacity } from '../../platform-ops/lib/platformOpsApi'
 
 const props = defineProps<{
   gatewayAi: GatewayAiStatus | null
+  workspaceCapacity?: PlatformGatewayCapacity | null
 }>()
 
 const { t } = useI18n()
 
 const aiPhase = computed(() => {
-  if (!props.gatewayAi?.ai_enabled) return 'not_provisioned' as const
-  const status = props.gatewayAi.sidecar_status
+  if (!props.gatewayAi) return 'not_provisioned' as const
+  if (!props.gatewayAi.ai_enabled && !props.gatewayAi.sl_lensnode_uuid) {
+    return 'not_provisioned' as const
+  }
+  const status = (props.gatewayAi.sl_status || props.gatewayAi.sidecar_status || '').toLowerCase()
   if (status === 'online') return 'online' as const
   if (status === 'offline') return 'offline' as const
-  if (status === 'error') return 'error' as const
+  if (status === 'error' || status === 'not_deployed') return 'error' as const
+  if (!props.gatewayAi.ai_enabled) return 'not_provisioned' as const
   return 'pending_install' as const
 })
 
 const slStatusTagType = computed((): 'success' | 'info' | 'warning' | 'danger' => {
-  const raw = (props.gatewayAi?.sl_status || props.gatewayAi?.sidecar_status || '').toLowerCase()
-  if (raw === 'online') return 'success'
-  if (!props.gatewayAi?.ai_enabled) return 'info'
-  if (raw === 'offline' || raw === 'error') return 'danger'
-  return 'info'
+  switch (aiPhase.value) {
+    case 'online':
+      return 'success'
+    case 'offline':
+    case 'error':
+      return 'danger'
+    case 'pending_install':
+      return 'warning'
+    default:
+      return 'info'
+  }
 })
 
-const slStatusLabel = computed(() => {
-  const raw = (props.gatewayAi?.sl_status || '').trim().toLowerCase()
-  if (raw === 'online') return t('insight.dataGateway.aiPhase.online')
-  if (raw === 'offline') return t('insight.dataGateway.aiPhase.offline')
-  if (raw === 'error') return t('insight.dataGateway.aiPhase.error')
-  if (aiPhase.value === 'not_provisioned') return t('insight.dataGateway.aiPhase.not_provisioned')
-  if (aiPhase.value === 'pending_install') return t('insight.dataGateway.aiPhase.pending_install')
-  return raw ? raw : DETAIL_EMPTY
-})
+const slStatusLabel = computed(() => t(`insight.dataGateway.aiPhase.${aiPhase.value}`))
 
 function textOrEmpty(value: string | null | undefined) {
   const trimmed = value?.trim()
@@ -54,6 +59,32 @@ const tasksLabel = computed(() => {
   const tasks = props.gatewayAi?.sl_tasks ?? []
   if (tasks.length === 0) return DETAIL_EMPTY
   return tasks.map((task) => task.title?.trim() || task.name?.trim()).filter(Boolean).join(', ')
+})
+
+const workspaceText = computed(() =>
+  textOrEmpty(props.gatewayAi?.sl_workspace_path || props.gatewayAi?.workspace_root),
+)
+
+const showWorkspaceQuota = computed(() => props.workspaceCapacity != null)
+
+const workspaceQuotaTotalBytes = computed(() => {
+  const cap = props.workspaceCapacity
+  if (!cap || cap.unlimited || cap.capacity_bytes < 0) return 0
+  return Number(cap.capacity_bytes)
+})
+
+const workspaceQuotaKnownTotal = computed(() => {
+  const cap = props.workspaceCapacity
+  return Boolean(cap && !cap.unlimited && cap.capacity_bytes >= 0)
+})
+
+const workspaceQuotaUnlimitedLabel = computed(() => {
+  const cap = props.workspaceCapacity
+  if (!cap) return undefined
+  if (cap.unlimited || cap.capacity_bytes < 0) {
+    return t('platformOps.engineGateway.capacityUnlimited')
+  }
+  return undefined
 })
 
 async function copyText(value: string) {
@@ -94,7 +125,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       <div class="hfl-detail-row">
         <span class="hfl-detail-row__label">{{ t('insight.dataGateway.fieldSlName') }}</span>
         <span
-          class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono"
+          class="hfl-detail-row__value hfl-detail-row__value--editable"
           :class="detailValueClass(textOrEmpty(gatewayAi?.sl_name), true)"
         >
           <span class="hfl-detail-row__text">{{ textOrEmpty(gatewayAi?.sl_name) }}</span>
@@ -114,7 +145,7 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       <div class="hfl-detail-row">
         <span class="hfl-detail-row__label">{{ t('insight.dataGateway.fieldSlNodeId') }}</span>
         <span
-          class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono"
+          class="hfl-detail-row__value hfl-detail-row__value--editable"
           :class="detailValueClass(textOrEmpty(gatewayAi?.sl_lensnode_uuid), true)"
         >
           <span class="hfl-detail-row__text">{{ textOrEmpty(gatewayAi?.sl_lensnode_uuid) }}</span>
@@ -134,10 +165,10 @@ function detailValueClass(text: string, monoWhenPresent = false) {
       <div class="hfl-detail-row">
         <span class="hfl-detail-row__label">{{ t('insight.dataGateway.fieldSlWorkspace') }}</span>
         <span
-          class="hfl-detail-row__value hfl-detail-row__value--mono"
-          :class="detailValueClass(textOrEmpty(gatewayAi?.sl_workspace_path || gatewayAi?.workspace_root), true)"
+          class="hfl-detail-row__value"
+          :class="detailValueClass(workspaceText, true)"
         >
-          {{ textOrEmpty(gatewayAi?.sl_workspace_path || gatewayAi?.workspace_root) }}
+          {{ workspaceText }}
         </span>
       </div>
       <div class="hfl-detail-row">
@@ -176,21 +207,41 @@ function detailValueClass(text: string, monoWhenPresent = false) {
           {{ tasksLabel }}
         </span>
       </div>
+      <div
+        v-if="showWorkspaceQuota"
+        class="hfl-detail-row hfl-detail-row--full"
+      >
+        <span class="hfl-detail-row__label">{{ t('platformOps.engineGateway.colCapacity') }}</span>
+        <span
+          class="hfl-detail-row__value"
+          :class="{ 'hfl-detail-row__value--stacked': workspaceQuotaKnownTotal }"
+        >
+          <HflCapacityCell
+            :used-bytes="workspaceCapacity!.used_bytes"
+            :total-bytes="workspaceQuotaTotalBytes"
+            :known-total="workspaceQuotaKnownTotal"
+            variant="compact"
+            :format-bytes="formatNodeBytes"
+            :unlimited-total-label="workspaceQuotaUnlimitedLabel"
+          />
+          <span
+            v-if="workspaceCapacity?.used_incomplete"
+            class="dg-lens-basic__quota-incomplete"
+          >
+            {{ t('platformOps.engineGateway.capacityUsedIncomplete') }}
+          </span>
+        </span>
+      </div>
     </div>
-    <p
-      v-if="aiPhase === 'not_provisioned'"
-      class="dg-lens-basic__hint"
-    >
-      {{ t('insight.dataGateway.aiNotProvisionedHint') }}
-    </p>
   </section>
 </template>
 
 <style scoped>
-.dg-lens-basic__hint {
-  margin: 12px 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--color-text-secondary);
+.dg-lens-basic__quota-incomplete {
+  display: block;
+  margin-top: 2px;
+  color: var(--el-color-warning);
+  font-size: 11px;
+  line-height: 1.3;
 }
 </style>

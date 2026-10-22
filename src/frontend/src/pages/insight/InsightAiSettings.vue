@@ -7,6 +7,7 @@ import { Bot, ChevronDown, CirclePlay, CircleStop, Images, LoaderCircle, Pencil,
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
+import { usePlatformEngineListSearch } from '../../composables/usePlatformEngineListSearch'
 import { apiErrorMessage, apiErrorMessageI18n } from '../../lib/api'
 import { resolveErrorCode } from '../../lib/errors/resolver'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
@@ -25,13 +26,28 @@ import { aiProviderLabel } from '../../lib/aiProviderDisplay'
 import AiProviderIcon from '../../components/ai-model/AiProviderIcon.vue'
 import InsightAiModelDetailDrawer from './InsightAiModelDetailDrawer.vue'
 import HflStatusTag from '../../components/HflStatusTag.vue'
-import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import DangerConfirmDialog, {
+  type DangerConfirmItem,
+  type DangerLevel,
+} from '../../components/DangerConfirmDialog.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
+
+type ModelLifecycleAction =
+  | 'enable'
+  | 'disable'
+  | 'default-agent'
+  | 'default-multimodal'
+  | 'delete'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
+const {
+  listSearchPlaceholder,
+  listSearchClass,
+  listSearchSize,
+} = usePlatformEngineListSearch('insight.aiSettings.searchPlaceholder', 'models')
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -53,11 +69,87 @@ const testingModelUuids = ref(new Set<string>())
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
 const detailUuid = ref<string | null>(null)
-const deleteOpen = ref(false)
-const deleteLoading = ref(false)
-const deleteTarget = ref<LensLlmConfig | null>(null)
+const lifecycleAction = ref<ModelLifecycleAction | null>(null)
+const lifecycleTarget = ref<LensLlmConfig | null>(null)
+const lifecycleLoading = ref(false)
 const detailRefreshToken = ref(0)
 let statusRefresh = Promise.resolve()
+
+const lifecycleOpen = computed(() => Boolean(lifecycleAction.value && lifecycleTarget.value))
+const lifecycleItems = computed<DangerConfirmItem[]>(() => {
+  const row = lifecycleTarget.value
+  if (!row) return []
+  return [{
+    key: row.uuid,
+    name: modelName(row),
+    status: {
+      label: t(row.is_active === false ? 'insight.aiSettings.statusInactive' : 'insight.aiSettings.statusActive'),
+      tone: row.is_active === false ? 'info' : 'success',
+    },
+  }]
+})
+const lifecycleLevel = computed<DangerLevel>(() => {
+  if (lifecycleAction.value === 'delete') return 'high'
+  if (lifecycleAction.value === 'disable') return 'medium'
+  return 'low'
+})
+const lifecycleTitle = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.aiSettings.enableTitle')
+    case 'disable':
+      return t('insight.aiSettings.disableTitle')
+    case 'default-agent':
+      return t('insight.aiSettings.setDefaultAgentTitle')
+    case 'default-multimodal':
+      return t('insight.aiSettings.setDefaultMultimodalTitle')
+    case 'delete':
+      return t('insight.aiSettings.deleteTitle')
+    default:
+      return ''
+  }
+})
+const lifecycleMessage = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.aiSettings.enableConfirmMessage')
+    case 'default-agent':
+      return t('insight.aiSettings.setDefaultAgentConfirmMessage')
+    case 'default-multimodal':
+      return t('insight.aiSettings.setDefaultMultimodalConfirmMessage')
+    default:
+      return ''
+  }
+})
+const lifecycleWarning = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'disable':
+      return t('insight.aiSettings.disableConfirmWarning')
+    case 'delete':
+      return t('insight.aiSettings.deleteConfirmWarning')
+    default:
+      return ''
+  }
+})
+const lifecycleConfirmText = computed(() => {
+  switch (lifecycleAction.value) {
+    case 'enable':
+      return t('insight.aiSettings.enable')
+    case 'disable':
+      return t('insight.aiSettings.disable')
+    case 'default-agent':
+    case 'default-multimodal':
+      return t('insight.aiSettings.confirmSetAsDefault')
+    case 'delete':
+      return t('common.delete')
+    default:
+      return ''
+  }
+})
+const lifecycleContext = computed(() => JSON.stringify([
+  lifecycleAction.value,
+  lifecycleTarget.value?.uuid || '',
+]))
 
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const tableBlockRef = ref<HTMLElement | null>(null)
@@ -181,8 +273,8 @@ function onSelectionChange(rows: LensLlmConfig[]) {
   selectedRows.value = rows
 }
 
-async function setActive(row: LensLlmConfig, isActive: boolean) {
-  if (row.is_active === isActive || testingModelUuids.value.has(row.uuid)) return
+async function setActive(row: LensLlmConfig, isActive: boolean): Promise<boolean> {
+  if (row.is_active === isActive || testingModelUuids.value.has(row.uuid)) return false
   if (isActive) testingModelUuids.value.add(row.uuid)
   try {
     await patchLensModel(row.uuid, { is_active: isActive })
@@ -199,6 +291,7 @@ async function setActive(row: LensLlmConfig, isActive: boolean) {
       message: t(isActive ? 'insight.aiSettings.modelEnabled' : 'insight.aiSettings.saveSuccess'),
       grouping: true,
     })
+    return true
   } catch (err) {
     const detail = apiErrorMessageI18n(err, t, t('errors.generic.requestFailed'))
     ElMessage.error({
@@ -207,73 +300,100 @@ async function setActive(row: LensLlmConfig, isActive: boolean) {
         : detail,
       grouping: true,
     })
+    return false
   } finally {
     if (isActive) testingModelUuids.value.delete(row.uuid)
   }
 }
 
-async function setAgentDefault(row: LensLlmConfig) {
-  if (row.is_default_agent || row.is_active === false) return
+async function setAgentDefault(row: LensLlmConfig): Promise<boolean> {
+  if (row.is_default_agent || row.is_active === false) return false
   try {
     await setLensDefaultAgentModel(row.uuid)
     ElMessage.success({ message: t('insight.aiSettings.defaultAgentModelSaved'), grouping: true })
     await load()
+    return true
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+    return false
   }
 }
 
-async function setMultimodalDefault(row: LensLlmConfig) {
-  if (row.is_default_multimodal || row.is_active === false) return
+async function setMultimodalDefault(row: LensLlmConfig): Promise<boolean> {
+  if (row.is_default_multimodal || row.is_active === false) return false
   try {
     await setLensDefaultMultimodalModel(row.uuid)
     ElMessage.success({ message: t('insight.aiSettings.defaultMultimodalModelSaved'), grouping: true })
     await load()
+    return true
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+    return false
   }
 }
 
-function deleteRow(row: LensLlmConfig) {
-  if (testingModelUuids.value.has(row.uuid)) return
-  deleteTarget.value = row
-  deleteOpen.value = true
+function requestLifecycleAction(action: ModelLifecycleAction, row: LensLlmConfig) {
+  if (lifecycleLoading.value || testingModelUuids.value.has(row.uuid)) return
+  lifecycleAction.value = action
+  lifecycleTarget.value = { ...row }
 }
 
-async function confirmDelete() {
-  const row = deleteTarget.value
-  if (!row || testingModelUuids.value.has(row.uuid)) return
-  deleteLoading.value = true
+function closeLifecycleAction() {
+  if (lifecycleLoading.value) return
+  lifecycleAction.value = null
+  lifecycleTarget.value = null
+}
+
+async function confirmLifecycleAction() {
+  const action = lifecycleAction.value
+  const row = lifecycleTarget.value
+  if (!action || !row || lifecycleLoading.value) return
+  if (testingModelUuids.value.has(row.uuid)) return
+  lifecycleLoading.value = true
+  let ok = false
   try {
-    await deleteLensModel(row.uuid)
-    ElMessage.success({ message: t('insight.aiSettings.deleteSuccess'), grouping: true })
-    selectedRows.value = []
-    await load()
-    deleteOpen.value = false
-    deleteTarget.value = null
+    if (action === 'enable') {
+      ok = await setActive(row, true)
+    } else if (action === 'disable') {
+      ok = await setActive(row, false)
+    } else if (action === 'default-agent') {
+      ok = await setAgentDefault(row)
+    } else if (action === 'default-multimodal') {
+      ok = await setMultimodalDefault(row)
+    } else {
+      await deleteLensModel(row.uuid)
+      ElMessage.success({ message: t('insight.aiSettings.deleteSuccess'), grouping: true })
+      selectedRows.value = []
+      await load()
+      ok = true
+    }
+    if (ok) {
+      lifecycleAction.value = null
+      lifecycleTarget.value = null
+    }
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
   } finally {
-    deleteLoading.value = false
+    lifecycleLoading.value = false
   }
 }
 
-async function deleteSelected() {
-  const row = singleSelected.value
-  if (!row) return
-  await deleteRow(row)
-}
-
-async function enableSelected() {
-  const row = singleSelected.value
-  if (!row || row.is_active !== false || selectedTesting.value) return
-  await setActive(row, true)
-}
-
-async function disableSelected() {
+function deleteSelected() {
   const row = singleSelected.value
   if (!row || selectedTesting.value) return
-  await setActive(row, false)
+  requestLifecycleAction('delete', row)
+}
+
+function enableSelected() {
+  const row = singleSelected.value
+  if (!row || row.is_active !== false || selectedTesting.value) return
+  requestLifecycleAction('enable', row)
+}
+
+function disableSelected() {
+  const row = singleSelected.value
+  if (!row || row.is_active === false || selectedTesting.value) return
+  requestLifecycleAction('disable', row)
 }
 
 function editSelected() {
@@ -282,16 +402,16 @@ function editSelected() {
   openEdit(row)
 }
 
-async function setSelectedAgentDefault() {
+function setSelectedAgentDefault() {
   const row = singleSelected.value
-  if (!row || selectedTesting.value) return
-  await setAgentDefault(row)
+  if (!row || !selectedCanSetAgentDefault.value) return
+  requestLifecycleAction('default-agent', row)
 }
 
-async function setSelectedMultimodalDefault() {
+function setSelectedMultimodalDefault() {
   const row = singleSelected.value
-  if (!row || selectedTesting.value) return
-  await setMultimodalDefault(row)
+  if (!row || !selectedCanSetMultimodalDefault.value) return
+  requestLifecycleAction('default-multimodal', row)
 }
 
 onMounted(() => {
@@ -303,20 +423,21 @@ onMounted(() => {
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton
-          type="primary"
-          :disabled="!bridgeReady"
-          @click="openCreate"
-        >
-          <Plus :size="16" />
-          {{ isPlatformEngine ? t('platformOps.engineActions.addModel') : t('insight.aiSettings.btnAdd') }}
-        </ElButton>
+        <div class="hfl-list-toolbar__actions">
+          <ElButton
+            type="primary"
+            :disabled="!bridgeReady"
+            @click="openCreate"
+          >
+            <Plus :size="16" />
+            {{ isPlatformEngine ? t('platformOps.engineActions.addModel') : t('insight.aiSettings.btnAdd') }}
+          </ElButton>
 
-        <ElDropdown
-          trigger="click"
-          popper-class="hfl-actions-dropdown"
-          @visible-change="moreActionsOpen = $event"
-        >
+          <ElDropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="moreActionsOpen = $event"
+          >
           <ElButton :disabled="!bridgeReady || selectedTesting">
             {{ isPlatformEngine ? t('platformOps.engineActions.modelActions') : t('insight.aiSettings.btnMoreActions') }}
             <ChevronDown
@@ -405,15 +526,16 @@ onMounted(() => {
               </ElDropdownItem>
             </ElDropdownMenu>
           </template>
-        </ElDropdown>
+          </ElDropdown>
+        </div>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
           <ElInput
             v-model="search"
             clearable
-            size="small"
-            :placeholder="t('insight.aiSettings.searchPlaceholder')"
-            class="hfl-list-search"
+            :size="listSearchSize"
+            :placeholder="listSearchPlaceholder"
+            :class="listSearchClass"
             @clear="clearSearch"
           >
             <template #prefix>
@@ -450,7 +572,7 @@ onMounted(() => {
           row-key="uuid"
           :data="visibleModels"
           stripe
-          class="hfl-list-table"
+          class="hfl-list-table insight-ai-models-table"
           :max-height="tableMaxHeight"
           :header-cell-style="TABLE_HEADER_STYLE"
           @scroll="handleTableScroll"
@@ -468,31 +590,24 @@ onMounted(() => {
             class-name="hfl-table-name-col"
           >
             <template #default="{ row }">
-              <div class="insight-ai-models-name">
-                <button
-                  type="button"
-                  class="hfl-table-name-link hfl-table-name-link--full"
-                  :disabled="testingModelUuids.has(row.uuid)"
-                  @click="openDetail(row)"
-                >
-                  {{ modelName(row) }}
-                </button>
-                <div
-                  v-if="row.is_default_agent || row.is_default_multimodal"
-                  class="insight-ai-models-badges"
-                >
-                  <HflStatusTag
-                    v-if="row.is_default_agent"
-                    tone="primary"
-                    :label="t('insight.aiSettings.defaultAgentBadge')"
-                  />
-                  <HflStatusTag
-                    v-if="row.is_default_multimodal"
-                    tone="primary"
-                    :label="t('insight.aiSettings.defaultMultimodalBadge')"
-                  />
-                </div>
-              </div>
+              <button
+                type="button"
+                class="hfl-table-name-link hfl-table-name-link--single"
+                :disabled="testingModelUuids.has(row.uuid)"
+                @click="openDetail(row)"
+              >
+                {{ modelName(row) }}
+              </button>
+              <HflStatusTag
+                v-if="row.is_default_agent"
+                tone="primary"
+                :label="t('insight.aiSettings.defaultAgentBadge')"
+              />
+              <HflStatusTag
+                v-if="row.is_default_multimodal"
+                tone="primary"
+                :label="t('insight.aiSettings.defaultMultimodalBadge')"
+              />
             </template>
           </el-table-column>
           <el-table-column
@@ -604,18 +719,27 @@ onMounted(() => {
       v-model="detailOpen"
       :model-uuid="detailUuid"
       :refresh-token="detailRefreshToken"
-      @edit="openEdit"
     />
     <DangerConfirmDialog
-      v-model="deleteOpen"
-      :title="t('insight.aiSettings.deleteTitle')"
-      :message="deleteTarget ? t('insight.aiSettings.deleteConfirm', { name: modelName(deleteTarget) }) : ''"
-      :items="deleteTarget ? [{ key: deleteTarget.uuid, name: modelName(deleteTarget) }] : []"
+      v-if="lifecycleOpen"
+      :model-value="true"
+      :title="lifecycleTitle"
+      :level="lifecycleLevel"
+      :message="lifecycleMessage"
+      :warning="lifecycleWarning"
+      :items="lifecycleItems"
+      :item-status-label="t('insight.aiSettings.labelStatus')"
+      :confirm-mode="lifecycleAction === 'delete' ? 'keyword' : 'single'"
+      :confirm-keyword="t('common.deleteKeyword')"
+      :confirm-keyword-placeholder="t('common.deleteKeyword')"
+      :confirm-keyword-hint="t('common.dangerConfirmKeywordHint', { keyword: t('common.deleteKeyword') })"
+      :confirmation-context="lifecycleContext"
       :cancel-text="t('common.cancel')"
-      :confirm-text="t('common.delete')"
-      :loading="deleteLoading"
-      @confirm="confirmDelete"
-      @cancel="deleteTarget = null"
+      :confirm-text="lifecycleConfirmText"
+      :loading="lifecycleLoading"
+      :confirm-disabled="lifecycleLoading || !lifecycleTarget"
+      @confirm="confirmLifecycleAction"
+      @cancel="closeLifecycleAction"
     />
   </div>
 </template>
@@ -626,18 +750,20 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.insight-ai-models-name {
+.insight-ai-models-table :deep(td.hfl-table-name-col .cell) {
   display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  align-items: center;
+  gap: 8px;
 }
 
-.insight-ai-models-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.insight-ai-models-table :deep(td.hfl-table-name-col .hfl-table-name-link) {
+  min-width: 0;
+}
+
+.insight-ai-models-table :deep(td.hfl-table-name-col .hfl-status-tag) {
+  flex: 0 0 auto;
+  align-items: center;
+  line-height: 1;
 }
 
 .insight-ai-models-status {
