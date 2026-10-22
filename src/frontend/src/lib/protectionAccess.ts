@@ -2,16 +2,8 @@
 export type ProtectionPermissionCheck = (permission: string, organizationOnly?: boolean) => boolean
 type ProtectionLocation = { path: string; query?: Record<string, unknown> }
 
-export const backupConfigurationDirectoryPath = '/protection/backup-configurations'
-
-/** Accept only a known list destination, never an arbitrary return URL. */
-export function resolveBackupDetailReturnPath(returnTo: unknown): string {
-  return returnTo === backupConfigurationDirectoryPath ? backupConfigurationDirectoryPath : '/protection/backups'
-}
-
 export const protectionPages = [
   { to: '/protection/backups', permission: 'protection.backup_configurations.view' },
-  { to: backupConfigurationDirectoryPath, permission: 'protection.backup_configurations.view' },
   { to: '/protection/backup-sources?tab=host', permission: 'protection.source_hosts.view' },
   { to: '/protection/backup-sources?tab=nas', permission: 'protection.source_nas.view' },
   { to: '/node/agents', permission: 'protection.proxy_hosts.view' },
@@ -28,8 +20,7 @@ export function canViewProtectionSources(has: ProtectionPermissionCheck): boolea
 }
 
 export function resolveProtectionEntry(has: ProtectionPermissionCheck): string {
-  return protectionPages.find(page => has(page.permission)
-    && (page.to !== '/protection/backups' || canViewProtectionSources(has)))?.to || '/'
+  return protectionPages.find(page => has(page.permission))?.to || '/'
 }
 
 function withOrganization(target: string, location: ProtectionLocation): string {
@@ -71,10 +62,7 @@ export function protectionRouteRedirect(
     permission = 'protection.restore_plans.run'
   } else if (path === '/protection/backups') {
     permission = 'protection.backup_configurations.view'
-    if (has(permission) && !canViewProtectionSources(has)) {
-      return withOrganization(backupConfigurationDirectoryPath, location)
-    }
-  } else if (path === backupConfigurationDirectoryPath || /^\/protection\/backups\/[^/]+(?:\/snapshots\/[^/]+)?$/.test(path)) {
+  } else if (/^\/protection\/backups\/[^/]+(?:\/snapshots\/[^/]+)?$/.test(path)) {
     permission = 'protection.backup_configurations.view'
   } else if (/^\/protection\/policies\/(?:create|[^/]+\/edit)$/.test(path)) {
     permission = query.kind === 'filter' ? 'protection.file_filters.manage' : 'protection.backup_policies.manage'

@@ -19,7 +19,10 @@ function isPipelineMoveBackwardsError(err: unknown) {
 }
 
 /** Real backup-selectable sources by backend-persisted pipeline step. */
-export function useBackupSourcePipeline() {
+export function useBackupSourcePipeline(options: {
+  canViewSources?: () => boolean
+  configurationScope?: boolean
+} = {}) {
   const pipelineStep2Count = ref(0)
   const pipelineStep3Count = ref(0)
   let step2CountRequest = 0
@@ -28,15 +31,26 @@ export function useBackupSourcePipeline() {
   async function refreshPipelineStep2Count(signal?: AbortSignal) {
     if (signal?.aborted) return
     const request = ++step2CountRequest
+    if (options.canViewSources?.() === false) {
+      pipelineStep2Count.value = 0
+      return
+    }
     const list = await listBackupSelectableSources({ step: 2, page: 1, page_size: 1 }, { signal })
     if (signal?.aborted || request !== step2CountRequest) return
+    if (options.canViewSources?.() === false) {
+      pipelineStep2Count.value = 0
+      return
+    }
     pipelineStep2Count.value = list.count
   }
 
   async function refreshPipelineStep3Count(signal?: AbortSignal) {
     if (signal?.aborted) return
     const request = ++step3CountRequest
-    const list = await listBackupSelectableSources({ step: 3, page: 1, page_size: 1 }, { signal })
+    const list = await listBackupSelectableSources({
+      step: 3, page: 1, page_size: 1,
+      ...(options.configurationScope ? { scope: 'backup_configurations' as const } : {}),
+    }, { signal })
     if (signal?.aborted || request !== step3CountRequest) return
     pipelineStep3Count.value = list.count
   }

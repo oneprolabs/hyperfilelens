@@ -84,6 +84,7 @@ import { useDrawerTableMaxHeight } from '../../composables/useDrawerTableMaxHeig
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { useProtectionLoadState } from '../../composables/useProtectionLoadState'
 import { useTenantPermissions } from '../../composables/useTenantPermissions'
+import { canViewProtectionSources } from '../../lib/protectionAccess'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
 import {
   isExplicitRestoreCancelRejection,
@@ -298,6 +299,8 @@ const BackupCreateWizard = defineAsyncComponent({
 
 const router = useRouter()
 const route = useRoute()
+const { has: hasTenantPermission } = useTenantPermissions()
+const wizardCanViewSources = computed(() => canViewProtectionSources(hasTenantPermission))
 const props = withDefaults(defineProps<{
   standaloneRestore?: boolean
   fixedRestoreSnapshotId?: number
@@ -467,7 +470,10 @@ const {
   refreshPipelineCounts,
   setPipelineStep,
   bootstrapPipeline,
-} = useBackupSourcePipeline()
+} = useBackupSourcePipeline({
+  canViewSources: () => wizardCanViewSources.value,
+  configurationScope: true,
+})
 
 // Only track sources changed optimistically in this browser session. Step
 // membership for list rendering remains authoritative in the backend `step`
@@ -893,6 +899,7 @@ async function refreshStep3RuntimeRows(signal?: AbortSignal) {
   const list = await listBackupSelectableSources({
     ids: ids.join(','),
     expand: 'runtime',
+    ...(!isFixedSnapshotRestore.value ? { scope: 'backup_configurations' as const } : {}),
   }, signal ? { signal } : undefined)
   const runtimeById = new Map(list.results.map((item) => [item.id, item.runtime]))
   step3SelectableRows.value = step3SelectableRows.value.map((row) => {
@@ -931,7 +938,8 @@ function sameIdList(a: string[], b: string[]) {
   return a.length === b.length && a.every((id, index) => id === b[index])
 }
 
-const initialFlowMainStep = flowStepFromRouteQuery(route.query.step) ?? consumeStoredFlowReturnStep() ?? 0
+const initialFlowMainStep = !wizardCanViewSources.value && !isFixedSnapshotRestore.value
+  ? 2 : flowStepFromRouteQuery(route.query.step) ?? consumeStoredFlowReturnStep() ?? 0
 const flowMainStep = ref<0 | 1 | 2>(initialFlowMainStep)
 const taskSearchQuery = ref('')
 const debouncedTaskSearchQuery = ref('')
@@ -1112,6 +1120,7 @@ function clearStoredFlowReturnStep() {
 
 function applyFlowStep(step: 0 | 1 | 2 | null) {
   if (step === null) return
+  if (!wizardCanViewSources.value && !isFixedSnapshotRestore.value) step = 2
   if (step === flowMainStep.value) return
   if (step === 2) {
     enterStartBackupStep({ syncRoute: false })
@@ -1136,6 +1145,9 @@ function syncFlowStepRoute(step: 0 | 1 | 2, mode: 'push' | 'replace' = 'push') {
 function applyRequestedFlowStep(value: unknown) {
   const requestedStep = flowStepFromRouteQuery(value)
   applyFlowStep(requestedStep)
+  if (requestedStep !== null && !wizardCanViewSources.value && !isFixedSnapshotRestore.value) {
+    syncFlowStepRoute(2, 'replace')
+  }
   if (requestedStep !== null) {
     clearStoredFlowReturnStep()
   }
@@ -1222,7 +1234,6 @@ const flowBootstrapping = ref(false)
 const flowLoad = useProtectionLoadState()
 const flowLoadError = flowLoad.error
 const flowAccessDenied = flowLoad.denied
-const { has: hasTenantPermission } = useTenantPermissions()
 let flowDisposed = false
 const flowStepDataLoading = reactive({
   1: initialFlowMainStep === 1,
@@ -1796,6 +1807,7 @@ async function loadStep2Selectable(options: { signal?: AbortSignal } = {}) {
     untagged: step3Untagged.value || undefined,
     step: 2,
   }, signal ? { signal } : undefined)
+  if (signal?.aborted || !wizardCanViewSources.value) return
   const rows = list.results.map(mapBackupSelectableToFlowRow)
   step2SelectableRows.value = rows
   step2SelectableCount.value = list.count
@@ -1826,6 +1838,7 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
     tag_ids: step3TagIds.value.length ? step3TagIds.value : undefined,
     untagged: step3Untagged.value || undefined,
     step: 3,
+    scope: 'backup_configurations',
     expand: STEP3_EXPAND,
   }, signal ? { signal } : undefined)
   if (signal?.aborted) return
@@ -1860,11 +1873,17 @@ async function refreshStep3State(signal?: AbortSignal) {
 }
 
 async function refreshBackupSourcePoolCount(signal?: AbortSignal) {
+  if (!wizardCanViewSources.value) {
+    backupSelectableCount.value = 0
+    step1GlobalCount.value = 0
+    return
+  }
   const list = await listBackupSelectableSources({
     page: 1,
     page_size: 1,
     step: 1,
   }, { signal })
+  if (signal?.aborted || !wizardCanViewSources.value) return
   backupSelectableCount.value = list.count
   step1GlobalCount.value = list.count
 }
@@ -1882,7 +1901,10 @@ async function refreshSelectableCatalog(ids: string[], signal?: AbortSignal) {
   const realIds = normalizeSourceIdList(ids.filter(isBackupSelectableId))
   if (!realIds.length) return
   try {
-    const list = await listBackupSelectableSources({ ids: realIds.join(',') }, { signal })
+    const list = await listBackupSelectableSources({
+      ids: realIds.join(','),
+      ...(!wizardCanViewSources.value ? { scope: 'backup_configurations' as const } : {}),
+    }, { signal })
     rememberSelectableRows(list.results.map(mapBackupSelectableToFlowRow))
   } catch (e) {
     if (pageRequests.isAbortError(e)) throw e
@@ -1895,6 +1917,7 @@ async function refreshFlowStepData(
   options: { showLoading?: boolean; showError?: boolean } = {},
 ) {
   if (flowDisposed || flowLoadError.value) return
+  if (step !== 2 && !wizardCanViewSources.value && !isFixedSnapshotRestore.value) return
   const showLoading = options.showLoading ?? true
   if (step === 0) {
     try {
@@ -2128,6 +2151,13 @@ const wizardTagAffected = computed(() => countBulkTagChanges(
   wizardTagAction.value, wizardTagSourceRows.value.map((source) => source.id),
   wizardTagIds.value, wizardTagAssignments.value,
 ))
+const wizardTagBindDisabled = computed(() =>
+  wizardTagSaving.value || !wizardSelectedTagSources.value.length
+  || wizardSelectedTagSources.value.some((source) => {
+    const row = backupSelectableById.value.get(source.id)
+    return !row || !sourceCanManage(row)
+  }),
+)
 const wizardTagUnbindDisabled = computed(() => {
   const selected = wizardSelectedTagSources.value
   const assignments = Object.fromEntries(selected.flatMap((source) => {
@@ -2144,7 +2174,7 @@ const wizardTagUnbindDisabled = computed(() => {
 
 async function openWizardTagAction(action: 'add' | 'remove') {
   const selected = wizardSelectedTagSources.value
-  if (!selected.length || wizardTagSaving.value) return
+  if (wizardTagBindDisabled.value || (action === 'remove' && wizardTagUnbindDisabled.value)) return
   if (selected.some((source) => !/^(agent|nas):\d+$/.test(source.id))) {
     ElMessage.warning({ message: t('protection.tags.invalidSelection'), grouping: true })
     return
@@ -2490,6 +2520,7 @@ async function syncStep2SourcesFromSelection(picked: string[]) {
 }
 
 async function enterBackupConfigStep(requireSelection = false) {
+  if (!wizardCanViewSources.value) return
   if (flowAdvancingToBackupConfig.value) return
   const picked = selectedSourceIds.value.filter(isBackupSelectableId)
   if (requireSelection && flowMainStep.value === 0 && picked.length === 0) {
@@ -2537,6 +2568,7 @@ async function onGoToCreateBackup() {
 }
 
 function enterSourceStep() {
+  if (!wizardCanViewSources.value) return
   closeFlowMoreActions()
   flowMainStep.value = 0
   syncFlowStepRoute(0)
@@ -3201,6 +3233,10 @@ async function initializeFlow() {
         const storedStep = consumeStoredFlowReturnStep()
         applyFlowStep(storedStep)
         if (storedStep !== null) syncFlowStepRoute(storedStep, 'replace')
+      }
+      if (!wizardCanViewSources.value) {
+        applyFlowStep(2)
+        syncFlowStepRoute(2, 'replace')
       }
       // The active Step 1 page already returns its unfiltered global count.
       // Only issue the lightweight Step 1 count request when another step is
@@ -5251,7 +5287,10 @@ const step3LifecycleActionsEnabled = computed(() => {
   return true
 })
 const step3SelectionEditable = computed(() =>
-  step3LifecycleActionsEnabled.value,
+  step3SourceSelection.value.length > 0
+  && step3SourceSelection.value.every((row) => sourceConfigsCanAct(row, 'manage'))
+  && !step3SourceSelection.value.some((row) =>
+    sourceResetRunning(row.id) || !sourcePendingOps.isRowSelectable(row.id)),
 )
 function sourceHasRunningBackupOrRestore(sourceId: string) {
   return sourceHasActiveBackup(sourceId)
@@ -5264,7 +5303,7 @@ function selectionHasRunningBackupOrRestore(sourceIds: string[]) {
 }
 
 const step3ResetEnabled = computed(() =>
-  step3SelectionEditable.value
+  step3LifecycleActionsEnabled.value
   && step3SourceSelection.value.every((row) => sourceCanCleanup(row, 'manage'))
   && !step3SourceSelection.value.some((row) => sourceHasRunningBackupOrRestore(row.id)),
 )
@@ -5292,7 +5331,7 @@ const step3UnregisterEnabled = computed(() => {
   if (!step3SourceSelection.value.every((row) => sourceCanAct(row, 'delete') && sourceCanCleanup(row, 'delete'))) return false
   if (step3SourceSelection.value.some((row) => sourceResetRunning(row.id))) return false
   // Failed / blocked deregistration stays selectable so Force Deregister can retry.
-  // Edit and reset remain locked by step3SelectionEditable.
+   // Configuration edits and source-wide reset retain their separate gates.
   if (step3SourceSelection.value.some((row) => !sourcePendingOps.isRowSelectable(row.id))) return false
   if (step3SourceSelection.value.some((row) => {
     const node = flowRowToApiNode(row)
@@ -10231,6 +10270,7 @@ async function refreshRecoverySourceRuntime(sourceIds: string[]) {
   if (!sourceIds.length) return
   const list = await listBackupSelectableSources({
     ids: sourceIds.join(','),
+    ...(!isFixedSnapshotRestore.value ? { scope: 'backup_configurations' as const } : {}),
     page: 1,
     page_size: sourceIds.length,
     expand: STEP3_EXPAND,
@@ -10461,6 +10501,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             class="dp-flow-card text-left flex-1"
             :class="{ 'dp-flow-card--active': flowMainStep === 0 }"
             :aria-pressed="flowMainStep === 0"
+            :disabled="!wizardCanViewSources"
             @click="enterSourceStep"
           >
             <div
@@ -10526,6 +10567,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
             class="dp-flow-card text-left flex-1"
             :class="{ 'dp-flow-card--active': flowMainStep === 1 }"
             :aria-pressed="flowMainStep === 1"
+            :disabled="!wizardCanViewSources"
             @click="enterBackupConfigStep()"
           >
             <div
@@ -10697,7 +10739,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
-                          :disabled="!wizardSelectedTagSources.length || wizardTagSaving"
+                          :disabled="wizardTagBindDisabled"
                           @click="openWizardTagAction('add')"
                         >
                           <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
@@ -10770,7 +10812,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
-                          :disabled="!wizardSelectedTagSources.length || wizardTagSaving"
+                          :disabled="wizardTagBindDisabled"
                           @click="openWizardTagAction('add')"
                         >
                           <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
@@ -10958,7 +11000,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                         </ElDropdownItem>
                         <ElDropdownItem
                           divided
-                          :disabled="!wizardSelectedTagSources.length || wizardTagSaving"
+                          :disabled="wizardTagBindDisabled"
                           @click="openWizardTagAction('add')"
                         >
                           <span class="el-dropdown-menu__item-content"><Link2 :size="14" /><span>{{ t('protection.tags.bind') }}</span></span>
@@ -11087,6 +11129,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </ElSelect>
                 <div class="hfl-list-toolbar__utility">
                   <HflPopover
+                    v-if="wizardCanViewSources"
                     v-model:visible="tagFilterOpen"
                     trigger="click"
                     placement="bottom-end"
@@ -12878,6 +12921,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           :drawer-size="drawerSize"
           :source="activeFlowSource"
           :source-rows="flowSourceDetailRows"
+          :configuration-scope="flowMainStep === 2"
           :initial-tab="flowSourceDetailTab"
           :initial-task-sub-tab="flowSourceDetailTaskSubTab"
           :initial-task-uuid="flowSourceDetailTaskUuid"
@@ -19542,6 +19586,11 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
     transform 0.18s ease;
 }
 
+.dp-flow-card:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
 .dp-flow-card::before,
 .dp-flow-card::after {
   content: '';
@@ -19728,7 +19777,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
   line-height: 1.2;
 }
 
-.dp-flow-card:not(.dp-flow-card--active):hover {
+.dp-flow-card:not(:disabled):not(.dp-flow-card--active):hover {
   border-color: color-mix(in srgb, var(--dp-hbr-accent) 36%, rgba(203, 213, 225, 0.86));
   background: rgba(255, 255, 255, 0.96);
   box-shadow:
@@ -19737,20 +19786,20 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
   transform: translateY(-1px);
 }
 
-.dp-flow-card:not(.dp-flow-card--active):hover::before,
-.dp-flow-card:not(.dp-flow-card--active):hover::after {
+.dp-flow-card:not(:disabled):not(.dp-flow-card--active):hover::before,
+.dp-flow-card:not(:disabled):not(.dp-flow-card--active):hover::after {
   opacity: 1;
 }
 
-.dp-flow-card:not(.dp-flow-card--active):hover .dp-flow-card__mark {
+.dp-flow-card:not(:disabled):not(.dp-flow-card--active):hover .dp-flow-card__mark {
   border-color: color-mix(in srgb, var(--dp-hbr-accent) 24%, #fff);
 }
 
-.dp-flow-card:not(.dp-flow-card--active):hover .dp-flow-card__index {
+.dp-flow-card:not(:disabled):not(.dp-flow-card--active):hover .dp-flow-card__index {
   color: var(--dp-hbr-primary-deep);
 }
 
-.dp-flow-card:not(.dp-flow-card--active):hover .dp-flow-card__icon {
+.dp-flow-card:not(:disabled):not(.dp-flow-card--active):hover .dp-flow-card__icon {
   color: var(--dp-hbr-primary-deep);
   border-color: color-mix(in srgb, var(--dp-hbr-accent) 44%, transparent);
   background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--dp-hbr-accent) 8%, #fff));
@@ -19760,7 +19809,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
   transform: translateY(-1px);
 }
 
-.dp-flow-card:not(.dp-flow-card--active):hover .dp-flow-card__pill--idle {
+.dp-flow-card:not(:disabled):not(.dp-flow-card--active):hover .dp-flow-card__pill--idle {
   color: var(--dp-hbr-primary-deep);
   background: color-mix(in srgb, var(--dp-hbr-accent) 7%, #fff);
   border-color: color-mix(in srgb, var(--dp-hbr-accent) 26%, transparent);

@@ -175,6 +175,7 @@ export type BackupSelectableSearchField = 'source_name' | 'source_hostname' | 's
 export type BackupSelectableTaskStatus = 'success' | 'failed' | 'running' | 'none'
 export type BackupSelectableAvailability = 'online' | 'offline'
 export type BackupSelectableQueryParams = {
+  scope?: 'backup_configurations'
   page?: number
   page_size?: number
   search?: string

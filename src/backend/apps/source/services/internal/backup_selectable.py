@@ -12,7 +12,8 @@ from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Exists, OuterRef, Q, QuerySet
+from django.db.models import Case, CharField, Count, Exists, OuterRef, Q, QuerySet, Subquery, Value, When
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.node.models import Node
@@ -494,7 +495,9 @@ def _repository_payload(
     }
 
 
-def _policy_payload(policy: BackupPolicy) -> dict[str, Any]:
+def _policy_payload(
+    policy: BackupPolicy, *, related_backup_count: int | None = None,
+) -> dict[str, Any]:
     return {
         "id": policy.id,
         "name": policy.name,
@@ -505,13 +508,18 @@ def _policy_payload(policy: BackupPolicy) -> dict[str, Any]:
         "error_handling": policy.error_handling or {},
         "schedule_summary": backup_policy_schedule_summary(policy),
         "retention_summary": backup_policy_retention_summary(policy),
-        "related_backup_count": backup_policy_related_count(policy=policy),
+        "related_backup_count": (
+            backup_policy_related_count(policy=policy)
+            if related_backup_count is None else related_backup_count
+        ),
         "created_at": _iso(policy.created_at),
         "updated_at": _iso(policy.updated_at),
     }
 
 
-def _filter_payload(rule: FileFilterRule) -> dict[str, Any]:
+def _filter_payload(
+    rule: FileFilterRule, *, related_backup_count: int | None = None,
+) -> dict[str, Any]:
     return {
         "id": rule.id,
         "name": rule.name,
@@ -522,7 +530,10 @@ def _filter_payload(rule: FileFilterRule) -> dict[str, Any]:
         "ignore_cache_directories": rule.ignore_cache_directories,
         "current_filesystem_only": rule.current_filesystem_only,
         "summary": file_filter_summary(rule),
-        "related_backup_count": file_filter_related_count(rule=rule),
+        "related_backup_count": (
+            file_filter_related_count(rule=rule)
+            if related_backup_count is None else related_backup_count
+        ),
         "created_at": _iso(rule.created_at),
         "updated_at": _iso(rule.updated_at),
     }
@@ -713,12 +724,14 @@ def _attach_backup_config_expansion(
     organization_id: int,
     items: list[dict[str, Any]],
     include_policies: bool,
+    config_scope: QuerySet | None = None,
 ) -> tuple[list[BackupConfig], dict[int, list[BackupConfigDirectory]]]:
     if not items:
         return [], {}
 
     configs = list(
-        BackupConfig.objects.filter(organization_id=organization_id)
+        (config_scope if config_scope is not None else BackupConfig.objects.all())
+        .filter(organization_id=organization_id)
         .filter(_source_filters_for_items(items))
         .order_by("source_type", "source_ref_id", "-created_at", "-id")
     )
@@ -764,6 +777,24 @@ def _attach_backup_config_expansion(
         for config in configs
         if config.file_filter_rule_id
     }
+    scoped_policy_counts: dict[int, int] = {}
+    scoped_filter_counts: dict[int, int] = {}
+    if config_scope is not None and include_policies:
+        scoped = config_scope.filter(organization_id=organization_id)
+        # Count the complete authorized config set, not just the current page
+        # or its Source search filters. Only requested binding IDs are grouped.
+        if policy_ids:
+            scoped_policy_counts = {
+                int(row["backup_policy_id"]): int(row["count"])
+                for row in scoped.filter(backup_policy_id__in=policy_ids).order_by()
+                .values("backup_policy_id").annotate(count=Count("pk", distinct=True))
+            }
+        if filter_ids:
+            scoped_filter_counts = {
+                int(row["file_filter_rule_id"]): int(row["count"])
+                for row in scoped.filter(file_filter_rule_id__in=filter_ids).order_by()
+                .values("file_filter_rule_id").annotate(count=Count("pk", distinct=True))
+            }
     policies = (
         {
             policy.id: policy
@@ -820,9 +851,21 @@ def _attach_backup_config_expansion(
                     }
                 )
             if config.backup_policy_id and config.backup_policy_id in policies:
-                policy_rows.append(_policy_payload(policies[config.backup_policy_id]))
+                policy_rows.append(_policy_payload(
+                    policies[config.backup_policy_id],
+                    related_backup_count=(
+                        scoped_policy_counts.get(config.backup_policy_id, 0)
+                        if config_scope is not None else None
+                    ),
+                ))
             if config.file_filter_rule_id and config.file_filter_rule_id in filters:
-                filter_rows.append(_filter_payload(filters[config.file_filter_rule_id]))
+                filter_rows.append(_filter_payload(
+                    filters[config.file_filter_rule_id],
+                    related_backup_count=(
+                        scoped_filter_counts.get(config.file_filter_rule_id, 0)
+                        if config_scope is not None else None
+                    ),
+                ))
 
         item["backup_configs"] = {
             "count": len(source_configs),
@@ -885,8 +928,67 @@ def _restore_record_status(record: RestoreRecord, task: Task | None) -> str:
     return "running"
 
 
+def _backup_tasks_in_config_scope(
+    tasks: QuerySet, *, organization_id: int, config_scope: QuerySet,
+) -> QuerySet:
+    """Authorize real source-only tasks through their persisted snapshot link.
+
+    Backup tasks deliberately have no BACKUP_CONFIG TaskResource. Retained
+    snapshot rows remain identity evidence after snapshot deletion, but task
+    JSON alone is never an authorization grant.
+    """
+    snapshots = BackupSourceSnapshot.objects.filter(
+        organization_id=organization_id,
+        backup_config_id__in=config_scope.values("pk"),
+        task_id=OuterRef("pk"),
+        task_uuid=OuterRef("task_uuid"),
+    ).filter(Exists(config_scope.filter(
+        organization_id=organization_id,
+        pk=OuterRef("backup_config_id"),
+        source_type=OuterRef("source_type"),
+        source_ref_id=OuterRef("source_ref_id"),
+    ))).filter(Exists(TaskResource.objects.filter(
+        task_id=OuterRef("task_id"),
+        resource_type=TaskResource.Type.BACKUP_SOURCE,
+        resource_id=OuterRef("source_ref_id"),
+    ).annotate(_source_kind=Case(
+        When(resource_subtype="", then=Value("agent")),
+        default="resource_subtype", output_field=CharField(),
+    )).filter(_source_kind=OuterRef("source_type"))))
+    return tasks.filter(Exists(snapshots))
+
+
+def _restores_in_config_scope(
+    records: QuerySet, *, organization_id: int, config_scope: QuerySet,
+) -> QuerySet:
+    """Use the same direct/configured-snapshot boundary for rows and filters."""
+    direct_config = config_scope.filter(
+        organization_id=organization_id,
+        pk=OuterRef("backup_config_id"),
+        source_type=OuterRef("source_type"),
+        source_ref_id=OuterRef("source_ref_id"),
+    )
+    snapshots = BackupSourceSnapshot.objects.filter(
+        organization_id=organization_id,
+        pk=OuterRef("source_snapshot_id"),
+        source_type=OuterRef("source_type"),
+        source_ref_id=OuterRef("source_ref_id"),
+        backup_config_id__in=config_scope.values("pk"),
+        deleted_at__isnull=True,
+    ).exclude(status=BackupSourceSnapshot.Status.DELETED).filter(Exists(config_scope.filter(
+        organization_id=organization_id,
+        pk=OuterRef("backup_config_id"),
+        source_type=OuterRef("source_type"),
+        source_ref_id=OuterRef("source_ref_id"),
+    )))
+    return records.filter(
+        Q(Exists(direct_config))
+        | (Q(backup_config_id__isnull=True) & Q(Exists(snapshots)))
+    )
+
+
 def _attach_runtime_expansion(
-    *, organization_id: int, items: list[dict[str, Any]]
+    *, organization_id: int, items: list[dict[str, Any]], config_scope: QuerySet | None = None,
 ) -> None:
     if not items:
         return
@@ -905,6 +1007,8 @@ def _attach_runtime_expansion(
         .filter(source_query)
         .order_by("-created_at", "-id")
     )
+    if config_scope is not None:
+        snapshots = snapshots.filter(backup_config_id__in=config_scope.values("pk"))
     for snapshot in snapshots:
         key = _source_key(snapshot.source_type, snapshot.source_ref_id)
         if key not in snapshots_by_source:
@@ -936,41 +1040,49 @@ def _attach_runtime_expansion(
         .order_by("-created_at", "-id")
         .distinct()
     )
+    if config_scope is not None:
+        backup_tasks = _backup_tasks_in_config_scope(
+            backup_tasks, organization_id=organization_id, config_scope=config_scope,
+        )
     for task in backup_tasks:
         for key in _task_source_keys(task):
             if key in keys:
                 backup_tasks_by_source[key].append(task)
 
     records_by_source: dict[str, list[RestoreRecord]] = defaultdict(list)
-    current_config_ids = BackupConfig.objects.filter(
-        organization_id=organization_id,
-    ).filter(source_query).values_list("id", flat=True)
-    current_snapshot_ids = (
-        BackupSourceSnapshot.objects.filter(
-            organization_id=organization_id,
-            deleted_at__isnull=True,
-            backup_config_id__in=current_config_ids,
-        )
-        .exclude(status=BackupSourceSnapshot.Status.DELETED)
-        .filter(source_query)
-        .values_list("id", flat=True)
-    )
     restore_records = (
         RestoreRecord.objects.filter(
             organization_id=organization_id,
             purpose=RestoreRecord.Purpose.USER_DATA,
         )
         .filter(source_query)
-        .filter(
+    )
+    if config_scope is not None:
+        restore_records = _restores_in_config_scope(
+            restore_records, organization_id=organization_id, config_scope=config_scope,
+        )
+    else:
+        current_config_ids = BackupConfig.objects.filter(
+            organization_id=organization_id,
+        ).filter(source_query).values_list("id", flat=True)
+        current_snapshot_ids = (
+            BackupSourceSnapshot.objects.filter(
+                organization_id=organization_id,
+                deleted_at__isnull=True,
+                backup_config_id__in=current_config_ids,
+            )
+            .exclude(status=BackupSourceSnapshot.Status.DELETED)
+            .filter(source_query)
+            .values_list("id", flat=True)
+        )
+        restore_records = restore_records.filter(
             Q(backup_config_id__in=current_config_ids)
             | Q(
                 backup_config_id__isnull=True,
                 source_snapshot_id__in=current_snapshot_ids,
             )
         )
-        .prefetch_related("items")
-        .order_by("-created_at", "-id")
-    )
+    restore_records = restore_records.prefetch_related("items").order_by("-created_at", "-id")
     task_uuids = [record.task_uuid for record in restore_records if record.task_uuid]
     restore_tasks_by_uuid = (
         {
@@ -1192,7 +1304,8 @@ def _restore_task_is_stopping(task: Task) -> bool:
 
 
 def _attach_expansions(
-    *, organization_id: int, items: list[dict[str, Any]], expand: str | None
+    *, organization_id: int, items: list[dict[str, Any]], expand: str | None,
+    config_scope: QuerySet | None = None,
 ) -> None:
     expands = _parse_expand(expand)
     if not expands:
@@ -1202,13 +1315,15 @@ def _attach_expansions(
             organization_id=organization_id,
             items=items,
             include_policies=_EXPAND_POLICIES in expands,
+            config_scope=config_scope,
         )
     if _EXPAND_RUNTIME in expands:
-        _attach_runtime_expansion(organization_id=organization_id, items=items)
+        _attach_runtime_expansion(organization_id=organization_id, items=items, config_scope=config_scope)
 
 
 def fetch_backup_selectable_by_ids(
-    *, organization_id: int, ids: list[str], expand: str | None = None
+    *, organization_id: int, ids: list[str], expand: str | None = None,
+    config_scope: QuerySet | None = None,
 ) -> list[dict[str, Any]]:
     wanted: dict[str, int] = {}
     for value in ids:
@@ -1253,7 +1368,7 @@ def fetch_backup_selectable_by_ids(
     items.sort(key=lambda row: order.get(str(row["id"]), 10_000))
     pipeline_map = load_pipeline_step_map(organization_id=organization_id)
     items = attach_pipeline_steps(items, pipeline_map=pipeline_map)
-    _attach_expansions(organization_id=organization_id, items=items, expand=expand)
+    _attach_expansions(organization_id=organization_id, items=items, expand=expand, config_scope=config_scope)
     return items
 
 
@@ -1296,6 +1411,7 @@ def _pipeline_queryset(
     tag_ids: list[int] | None = None,
     untagged: bool = False,
     allowed_source_ids: dict[str, list[int]] | None = None,
+    config_scope: QuerySet | None = None,
 ) -> QuerySet[SourceBackupPipelineEntry]:
     queryset = SourceBackupPipelineEntry.objects.filter(
         organization_id=organization_id,
@@ -1365,7 +1481,43 @@ def _pipeline_queryset(
     if availability:
         queryset = queryset.filter(source_availability=availability)
 
+    if config_scope is not None:
+        # Source-wide cached task statuses must not reveal an ungranted config.
+        tasks = Task.objects.filter(
+            organization_id=organization_id, task_type=Task.Type.BACKUP,
+            resources__resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resources__resource_id=OuterRef("ref_id"),
+        ).annotate(_source_kind=Case(
+            When(resources__resource_subtype="", then=Value("agent")),
+            default="resources__resource_subtype", output_field=CharField(),
+        )).filter(_source_kind=OuterRef("source_kind")).order_by("-created_at", "-id")
+        tasks = _backup_tasks_in_config_scope(
+            tasks, organization_id=organization_id, config_scope=config_scope,
+        )
+        restores = RestoreRecord.objects.filter(
+            organization_id=organization_id, purpose=RestoreRecord.Purpose.USER_DATA,
+            source_type=OuterRef("source_kind"), source_ref_id=OuterRef("ref_id"),
+        ).order_by("-created_at", "-id")
+        restores = _restores_in_config_scope(
+            restores, organization_id=organization_id, config_scope=config_scope,
+        )
+        restores = restores.annotate(_status=Subquery(Task.objects.filter(
+            organization_id=organization_id, task_uuid=OuterRef("task_uuid"),
+        ).values("status")[:1]))
+        queryset = queryset.annotate(
+            _backup_status=Coalesce(Subquery(tasks.values("status")[:1]), Value("none")),
+            _restore_status=Coalesce(Subquery(restores.values("_status")[:1]), Value("none")),
+        )
+        for name in ("backup", "restore"):
+            field = f"_{name}_status"
+            queryset = queryset.annotate(**{f"_scoped_{name}_status": Case(
+                When(**{f"{field}__in": ("pending", "waiting", "blocked")}, then=Value("queued")),
+                default=field, output_field=CharField(),
+            )})
+
     def filter_task_status(queryset: QuerySet, *, field: str, value: str) -> QuerySet:
+        if config_scope is not None:
+            field = field.replace("last_", "_scoped_")
         if value == "running":
             return queryset.filter(**{f"{field}__in": _ACTIVE_PIPELINE_TASK_STATUSES})
         if value == "failed":
@@ -1374,6 +1526,8 @@ def _pipeline_queryset(
             )
         return queryset.filter(**{field: value})
 
+    backup_status_field = "_scoped_backup_status" if config_scope is not None else "last_backup_status"
+    restore_status_field = "_scoped_restore_status" if config_scope is not None else "last_restore_status"
     if backup_task_status:
         queryset = filter_task_status(
             queryset, field="last_backup_status", value=backup_task_status
@@ -1382,11 +1536,11 @@ def _pipeline_queryset(
         backup_is_running = backup_running is True or running_task == "backup"
         if backup_is_running:
             queryset = queryset.filter(
-                last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+                **{f"{backup_status_field}__in": _ACTIVE_PIPELINE_TASK_STATUSES}
             )
         elif backup_running is False:
             queryset = queryset.exclude(
-                last_backup_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+                **{f"{backup_status_field}__in": _ACTIVE_PIPELINE_TASK_STATUSES}
             )
     if restore_task_status:
         queryset = filter_task_status(
@@ -1396,18 +1550,18 @@ def _pipeline_queryset(
         restore_is_running = restore_running is True or running_task == "restore"
         if restore_is_running:
             queryset = queryset.filter(
-                last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+                **{f"{restore_status_field}__in": _ACTIVE_PIPELINE_TASK_STATUSES}
             )
         elif restore_running is False:
             queryset = queryset.exclude(
-                last_restore_status__in=_ACTIVE_PIPELINE_TASK_STATUSES
+                **{f"{restore_status_field}__in": _ACTIVE_PIPELINE_TASK_STATUSES}
             )
 
     if any(
         value is not None
         for value in (backup_policy_id, file_filter_rule_id, repository_id)
     ):
-        configs = BackupConfig.objects.filter(
+        configs = (config_scope if config_scope is not None else BackupConfig.objects.all()).filter(
             organization_id=organization_id,
             source_type=OuterRef("source_kind"),
             source_ref_id=OuterRef("ref_id"),
@@ -1429,6 +1583,7 @@ def _materialize_pipeline_page(
     organization_id: int,
     entries: list[SourceBackupPipelineEntry],
     expand: str | None,
+    config_scope: QuerySet | None = None,
 ) -> list[dict[str, Any]]:
     agent_ids = [
         entry.ref_id
@@ -1468,7 +1623,7 @@ def _materialize_pipeline_page(
         item["pipeline_step"] = int(entry.step)
         items.append(item)
     _attach_agent_lifecycle_status(organization_id=organization_id, items=items)
-    _attach_expansions(organization_id=organization_id, items=items, expand=expand)
+    _attach_expansions(organization_id=organization_id, items=items, expand=expand, config_scope=config_scope)
     return items
 
 
@@ -1493,6 +1648,7 @@ def _list_pipeline_backup_selectable_sources(
         organization_id=organization_id,
         entries=entries,
         expand=expand,
+        config_scope=filters.get("config_scope"),
     ), total
 
 
@@ -1631,7 +1787,10 @@ def _list_legacy_backup_selectable_sources(
     page_size = max(1, min(page_size, 100))
     start = (page - 1) * page_size
     page_items = items[start : start + page_size]
-    _attach_expansions(organization_id=organization_id, items=page_items, expand=expand)
+    _attach_expansions(
+        organization_id=organization_id, items=page_items, expand=expand,
+        config_scope=filters.get("config_scope"),
+    )
     return page_items, total
 
 
@@ -1676,6 +1835,7 @@ def list_backup_selectable_sources(
     untagged: bool = False,
     allowed_source_ids: dict[str, list[int]] | None = None,
     expand: str | None = None,
+    config_scope: QuerySet | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
@@ -1703,6 +1863,7 @@ def list_backup_selectable_sources(
         "tag_ids": tag_ids,
         "untagged": untagged,
         "allowed_source_ids": allowed_source_ids,
+        "config_scope": config_scope,
     }
     mode = _query_mode()
     BACKUP_SELECTABLE_QUERY_REQUESTS.labels(mode=mode).inc()

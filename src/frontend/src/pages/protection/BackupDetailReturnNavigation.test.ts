@@ -7,7 +7,6 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import BackupDetail from './BackupDetail.vue'
 import { getBackupConfig, type BackupConfigDetail } from '../../lib/protectionBackupConfigApi'
-import { backupConfigurationDirectoryPath } from '../../lib/protectionAccess'
 import { en } from '../../locales/en'
 
 vi.mock('../../composables/useProtectionSideNav', () => ({ useProtectionSideNav: () => ref([]) }))
@@ -60,8 +59,8 @@ describe('Backup detail return navigation', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it.each([
-    ['loaded', backupConfigurationDirectoryPath, backupConfigurationDirectoryPath],
-    ['failed', backupConfigurationDirectoryPath, backupConfigurationDirectoryPath],
+    ['loaded', '/protection/backup-configurations', '/protection/backups'],
+    ['failed', '/protection/backup-configurations', '/protection/backups'],
     ['loaded', undefined, '/protection/backups'],
     ['failed', undefined, '/protection/backups'],
     ['loaded', 'https://example.test', '/protection/backups'],
@@ -75,7 +74,6 @@ describe('Backup detail return navigation', () => {
       routes: [
         { path: '/protection/backups/:backupId', component: { template: '<div />' } },
         { path: '/protection/backups', component: { template: '<div />' } },
-        { path: backupConfigurationDirectoryPath, component: { template: '<div />' } },
       ],
     })
     await router.push({ path: '/protection/backups/7', query: { returnTo } })
@@ -92,9 +90,6 @@ describe('Backup detail return navigation', () => {
     })
     await flushPromises()
     const back = wrapper.get(`a[href="${expected}"]`)
-    if (expected === backupConfigurationDirectoryPath) {
-      expect(back.text()).toBe(en.protection.backupDetail.backToList)
-    }
     await back.trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe(expected)

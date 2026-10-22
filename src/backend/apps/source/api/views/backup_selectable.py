@@ -1,3 +1,4 @@
+from django.db.models import QuerySet
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -5,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.iam.org_context import require_org
-from apps.iam.resource_access import visible_resource_refs
+from apps.iam.resource_access import filter_resource_queryset, visible_resource_refs
 from apps.iam.permissions_org import IsOrgAuthorizedMember, IsOrgOperator, IsOrgStaffReader
 from common.extension_spi import get_authz_provider
 from apps.node.models import Node
@@ -154,6 +155,20 @@ def _selectable_refs(ids: list[str]) -> list[tuple[str, int]]:
     return refs
 
 
+def _configuration_source_ids(organization_id: int, config_scope: QuerySet) -> dict[str, QuerySet]:
+    """Live source references only; configuration access does not revive inventory."""
+    return {
+        "agent": Node.objects.filter(
+            organization_id=organization_id, role=Node.Role.AGENT, is_deleted=False,
+            pk__in=config_scope.filter(source_type="agent").values("source_ref_id"),
+        ).values_list("pk", flat=True),
+        "nas": SourceResource.objects.filter(
+            organization_id=organization_id, resource_type=ResourceType.NAS, is_deleted=False,
+            pk__in=config_scope.filter(source_type="nas").values("source_ref_id"),
+        ).exclude(status="removed").values_list("pk", flat=True),
+    }
+
+
 def _assert_selectable_access(request, ids: list[str], *, action: str) -> None:
     refs = _selectable_refs(ids)
     allowed = visible_resource_refs(request, refs, action=action)
@@ -167,7 +182,39 @@ def _assert_selectable_access(request, ids: list[str], *, action: str) -> None:
         )
 
 
-def _filter_selectable_results(request, results: list[dict]) -> list[dict]:
+def _filter_selectable_results(request, results: list[dict], *, configuration_scope: bool = False) -> list[dict]:
+    if configuration_scope:
+        # A configuration grants its source's display context, not inventory,
+        # mount settings, tags, or global counts of other configurations.
+        refs = _selectable_refs([str(row["id"]) for row in results])
+        inventory_refs = visible_resource_refs(request, refs, action="resource.view")
+        inventory_ids = None if inventory_refs is None else {
+            f"{'agent' if kind == 'node' else 'nas'}:{pk}" for kind, pk in inventory_refs
+        }
+        inventory_rows = [row for row in results if inventory_ids is None or row["id"] in inventory_ids]
+        _filter_selectable_results(request, inventory_rows)
+        inventory_ids = {row["id"] for row in inventory_rows}
+        repository_refs = list({
+            ("repository", int(repo["repository_id"]))
+            for row in results for repo in row.get("backup_configs", {}).get("repos_preview", [])
+        })
+        visible_repositories = visible_resource_refs(request, repository_refs, action="resource.view")
+        fields = {
+            "id", "kind", "ref_id", "type", "name", "hostname", "node_name",
+            "node_ip", "status", "availability", "protocol", "registered_at",
+            "pipeline_step", "backup_configs", "runtime", "policies", "filters",
+        }
+        for row in results:
+            if row["id"] not in inventory_ids:
+                for key in list(row):
+                    if key not in fields:
+                        del row[key]
+                row["tags"] = []
+            for repo in row.get("backup_configs", {}).get("repos_preview", []):
+                if visible_repositories is not None and ("repository", repo["repository_id"]) not in visible_repositories:
+                    for key in ("used_bytes", "capacity_bytes", "last_checked_at", "health"):
+                        repo.pop(key, None)
+        return results
     ids = [str(row.get("id") or "") for row in results]
     refs = _selectable_refs(ids)
     allowed = visible_resource_refs(request, refs, action="resource.view")
@@ -219,7 +266,12 @@ class ScopedSelectableView(APIView):
 
 
 class BackupSelectableListView(ScopedSelectableView):
-    """Unified paginated Agent/NAS catalog for Backup Wizard source steps."""
+    """Source inventory, or a Step 3 projection of authorized configurations.
+
+    Configuration scope never grants access to Source inventory or writes.
+    Its distinct sources are authorized in SQL before count and pagination;
+    expansions are restricted to the same configuration queryset.
+    """
 
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
@@ -228,8 +280,26 @@ class BackupSelectableListView(ScopedSelectableView):
         from apps.iam.query_authorization import request_authorization
 
         context = request_authorization(request)
+        configuration_scope = _optional_choice(
+            request.query_params, "scope", {"backup_configurations"},
+        ) == "backup_configurations"
+        config_scope = None
+        if configuration_scope:
+            from apps.protection.models import BackupConfig
+
+            if context is not None and not getattr(request, "hfl_support_readonly", False):
+                if not context.has_action("backup_config", "protection.backup_configurations.view"):
+                    from rest_framework.exceptions import PermissionDenied
+
+                    raise PermissionDenied("Backup configuration viewing permission is required.")
+            config_scope = filter_resource_queryset(
+                request, BackupConfig.objects.filter(organization_id=org.id),
+                "backup_config", action="protection.backup_configurations.view",
+            )
+            if request.query_params.get("step", "3") != "3":
+                raise ValidationError({"step": "Configuration scope supports only step 3."})
         if context is not None and not getattr(request, "hfl_support_readonly", False):
-            if not (
+            if not configuration_scope and not (
                 context.has_action("node", "protection.source_hosts.view")
                 or context.has_action("source_resource", "protection.source_nas.view")
             ):
@@ -240,10 +310,17 @@ class BackupSelectableListView(ScopedSelectableView):
         expand = (request.query_params.get("expand") or "").strip() or None
         if ids_param:
             ids = [value.strip() for value in ids_param.split(",") if value.strip()]
+            if config_scope is not None:
+                refs = [ref for value in ids if (ref := parse_selectable_id(value))]
+                allowed = set()
+                for kind, query in _configuration_source_ids(org.id, config_scope).items():
+                    requested = [pk for source_kind, pk in refs if source_kind == kind]
+                    allowed.update((kind, pk) for pk in query.filter(pk__in=requested))
+                ids = [value for value in ids if parse_selectable_id(value) in allowed]
             results = fetch_backup_selectable_by_ids(
-                organization_id=org.id, ids=ids, expand=expand
+                organization_id=org.id, ids=ids, expand=expand, config_scope=config_scope,
             )
-            results = _filter_selectable_results(request, results)
+            results = _filter_selectable_results(request, results, configuration_scope=configuration_scope)
             return Response({"count": len(results), "results": results})
 
         page_raw = (request.query_params.get("page") or "1").strip()
@@ -304,6 +381,14 @@ class BackupSelectableListView(ScopedSelectableView):
         if tag_id is not None:
             tag_ids = [tag_id]
         untagged = _optional_query_bool(request.query_params, "untagged") is True
+        if configuration_scope and (tag_ids or untagged) and context is not None:
+            if not getattr(request, "hfl_support_readonly", False) and not (
+                context.has_action("node", "protection.source_hosts.view")
+                or context.has_action("source_resource", "protection.source_nas.view")
+            ):
+                from rest_framework.exceptions import PermissionDenied
+
+                raise PermissionDenied("Source viewing permission is required for tag filters.")
         if tag_ids and SourceTag.objects.filter(organization_id=org.id, id__in=tag_ids).count() != len(tag_ids):
             raise ValidationError({"tag_ids": "Unknown tag."})
         visible_tag_sources = None
@@ -362,6 +447,8 @@ class BackupSelectableListView(ScopedSelectableView):
             if parsed_step not in PipelineStep.VALID:
                 raise ValidationError({"step": "Must be 1, 2, or 3."})
             pipeline_step = parsed_step
+        if configuration_scope:
+            pipeline_step = PipelineStep.READY
 
         try:
             page = max(1, int(page_raw))
@@ -374,7 +461,22 @@ class BackupSelectableListView(ScopedSelectableView):
 
         # SQL subqueries apply authorization before count and pagination in
         # both pipeline and legacy backends, including tag-filtered requests.
-        if context is not None and not getattr(request, "hfl_support_readonly", False):
+        if configuration_scope:
+            visible_tag_sources = _configuration_source_ids(org.id, config_scope)
+            if tag_ids or untagged:
+                # A tag predicate may only inspect Source metadata the actor
+                # can read. Intersect both scopes in SQL before pagination.
+                visible_tag_sources = {
+                    "agent": filter_resource_queryset(
+                        request, Node.objects.filter(pk__in=visible_tag_sources["agent"]),
+                        "node", action="resource.view",
+                    ).values_list("pk", flat=True),
+                    "nas": filter_resource_queryset(
+                        request, SourceResource.objects.filter(pk__in=visible_tag_sources["nas"]),
+                        "source_resource", action="resource.view",
+                    ).values_list("pk", flat=True),
+                }
+        elif context is not None and not getattr(request, "hfl_support_readonly", False):
             visible_tag_sources = {
                 "agent": context.filter_queryset(
                     Node.objects.filter(role=Node.Role.AGENT), "node", action="resource.view",
@@ -412,8 +514,9 @@ class BackupSelectableListView(ScopedSelectableView):
             untagged=untagged,
             allowed_source_ids=visible_tag_sources,
             expand=expand,
+            config_scope=config_scope,
         )
-        results = _filter_selectable_results(request, results)
+        results = _filter_selectable_results(request, results, configuration_scope=configuration_scope)
         return Response(
             {"page": page, "page_size": page_size, "count": total, "results": results}
         )

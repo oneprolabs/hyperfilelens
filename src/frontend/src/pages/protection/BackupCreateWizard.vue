@@ -45,6 +45,9 @@ import BackupConfigCreateWizard from './BackupConfigCreateWizard.vue'
 import ProtectionPolicyEditorForm from './components/ProtectionPolicyEditorForm.vue'
 import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
+import { canViewProtectionSources } from '../../lib/protectionAccess'
+import { restorePlanTargetReferenceIsValid, savedRestoreTargetReference } from './lib/restorePlanEditReference'
 import { useListSearch } from '../../composables/useListSearch'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
@@ -91,6 +94,7 @@ import {
   listBackupSourceDirectories,
   getBackupSourcePathInfo,
   getSourceResource,
+  listBackupSelectableSources,
   type BackupSelectableSource,
   type BackupSourceDirectoryEntry,
   type SourceResource,
@@ -223,6 +227,7 @@ function goToStorageRepositoryPage() {
 }
 
 const { t, locale } = useI18n()
+const { has: hasTenantPermission } = useTenantPermissions()
 const bindProxyLeadItems = computed(() => [
   t('addNasRepo.bindProxyLeadItemRecommend'),
   t('addNasRepo.bindProxyLeadItemAfterBinding'),
@@ -1798,20 +1803,41 @@ function isCreateRecoverySourceTargetSelected(group: WizardSourceGroup, dirPlan:
 }
 
 function createRecoveryTargetOptionsForGroup(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig): CreateRecoveryTargetOption[] {
-  return restoreTargetCatalog.options([group.sourceId, dirPlan.targetHostId])
+  const options = restoreTargetCatalog.options([group.sourceId, dirPlan.targetHostId])
     .map(({ source }) => createRecoveryTargetOptionFromSource(mapSelectableSource(source), group))
+  const retained = savedRestoreTargetReference(editConfigs.value, group.backupConfigId, dirPlan.id)
+  if (retained && retained === dirPlan.targetHostId && !options.some((option) => option.value === retained)) {
+    // Display the existing reference without advertising it as a new target.
+    const source = realSourceById.value.get(retained)
+    const summary = createRecoveryTargetSummary(source, {
+      sourceId: retained, sourceName: retained,
+      sourceType: retained.startsWith('nas:') ? 'nas' : 'host',
+    })
+    options.push({
+      value: retained, label: summary.displayName, ipLabel: summary.ipLine,
+      typeLabel: summary.typeLabel, summary, isSource: retained === group.sourceId,
+      selectable: false, unavailableReason: null,
+    })
+  }
+  return options
 }
 
 function onCreateRecoveryTargetVisible(visible: boolean) {
+  if (!canViewProtectionSources(hasTenantPermission)) return
   if (visible && !restoreTargetCatalog.rows.value.length && !recoveryTargetLoading.value) {
     void restoreTargetCatalog.reset()
   }
 }
 
 function onCreateRecoveryTargetPopupScroll(event: Event | { scrollTop?: number; clientHeight?: number; scrollHeight?: number }) {
+  if (!canViewProtectionSources(hasTenantPermission)) return
   const target = (event instanceof Event ? event.target : event) as HTMLElement | null
   if (!target) return
   if (target.scrollHeight - target.scrollTop - target.clientHeight <= 48) void restoreTargetCatalog.loadMore()
+}
+
+function searchCreateRecoveryTargets(query: string) {
+  if (canViewProtectionSources(hasTenantPermission)) restoreTargetCatalog.setSearch(query)
 }
 
 function selectCreateRecoverySourceTarget(group: WizardSourceGroup, dirPlan: CreateRecoveryDirPlanConfig) {
@@ -1885,7 +1911,9 @@ function recoveryDirPlanMissingFields(group: WizardSourceGroup, dirPlan: CreateR
   if (!dirPlan.sourcePath || dirPlan.sourcePathValidation === 'pending' || dirPlan.sourcePathValidation === 'invalid') {
     missing.push('sourcePath')
   }
-  if (!dirPlan.targetHostId || !restoreTargetCatalog.isSelectable(dirPlan.targetHostId)) missing.push('targetHostId')
+  if (!restorePlanTargetReferenceIsValid(
+    editConfigs.value, group.backupConfigId, dirPlan, restoreTargetCatalog,
+  )) missing.push('targetHostId')
   if (!dirPlan.restoreDir || dirPlan.restoreDirValidation === 'pending' || dirPlan.restoreDirValidation === 'invalid') {
     missing.push('restoreDir')
   }
@@ -3022,7 +3050,18 @@ function fmtBytes(n: number) {
 async function loadWizardSources(ids: string[]) {
   const realIds = normalizeSourceIdList(ids.filter(isBackupSelectableSourceId))
   if (!realIds.length) return
-  const rows = await restoreTargetCatalog.ensureByIds(realIds)
+  const configSources = new Set(editConfigs.value.map(sourceIdFromConfig))
+  const contextIds = realIds.filter((id) => configSources.has(id))
+  // Hydrate pinned targets even when they are also configuration sources and
+  // fall outside the paged inventory. Never require inventory for config reads.
+  const inventoryIds = canViewProtectionSources(hasTenantPermission) ? realIds : []
+  const [contexts, inventory] = await Promise.all([
+    contextIds.length ? listBackupSelectableSources({
+      ids: contextIds.join(','), scope: 'backup_configurations',
+    }).then((page) => page.results) : Promise.resolve([]),
+    inventoryIds.length ? restoreTargetCatalog.ensureByIds(inventoryIds) : Promise.resolve([]),
+  ])
+  const rows = [...contexts, ...inventory]
   const next = new Map(realSourceById.value)
   for (const row of rows.map(mapSelectableSource)) next.set(row.id, row)
   realSourceById.value = next
@@ -3035,6 +3074,11 @@ watch(restoreTargetCatalog.allRecords, (records) => {
 }, { flush: 'sync' })
 
 async function refreshWizardTargets() {
+  if (![
+    'protection.object_storage_repositories.view',
+    'protection.target_nas_repositories.view',
+    'protection.local_disk_repositories.view',
+  ].some((key) => hasTenantPermission(key))) return
   targetsRefreshing.value = true
   try {
     const repos = await listAllStorageRepositories({ page_size: 10 })
@@ -3047,6 +3091,7 @@ async function refreshWizardTargets() {
 }
 
 async function refreshWizardPolicies() {
+  if (!hasTenantPermission('protection.backup_policies.view')) return
   policiesRefreshing.value = true
   try {
     const policies = await listBackupPolicies({ page: 1, page_size: 500 })
@@ -3059,6 +3104,7 @@ async function refreshWizardPolicies() {
 }
 
 async function refreshWizardFilters() {
+  if (!hasTenantPermission('protection.file_filters.view')) return
   filtersRefreshing.value = true
   try {
     const filters = await listFileFilterRules({ page: 1, page_size: 500 })
@@ -3297,7 +3343,7 @@ onMounted(async () => {
   try {
     await Promise.all([
       loadWizardSources(sourceIds),
-      restoreTargetCatalog.reset(),
+      canViewProtectionSources(hasTenantPermission) ? restoreTargetCatalog.reset() : Promise.resolve(),
       loadWizardReferences(),
     ])
   } catch (err) {
@@ -8427,7 +8473,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                               remote
                               reserve-keyword
                               class="w-full"
-                              :remote-method="restoreTargetCatalog.setSearch"
+                              :remote-method="searchCreateRecoveryTargets"
                               :loading="recoveryTargetLoading || recoveryTargetLoadingMore"
                               popper-class="create-recovery-target-node-select-popper"
                               :placeholder="t('protection.backupsPage.createRecoveryTargetHostPlaceholder')"

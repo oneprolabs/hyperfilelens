@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
 import { useTenantPermissions } from '../../composables/useTenantPermissions'
-import { canViewProtectionSources } from '../../lib/protectionAccess'
-import BackupConfigurationDirectory from './BackupConfigurationDirectory.vue'
 
 const { has } = useTenantPermissions()
+// Discard cached inventory and cancel in-flight reads when Source grants change.
+const inventoryContext = computed(() => [
+  has('protection.source_hosts.view'), has('protection.source_nas.view'),
+].join(':'))
 const Wizard = defineAsyncComponent(() => import('./DataProtection.vue').then(module => module.default))
 </script>
 
 <template>
   <Wizard
-    v-if="has('protection.backup_configurations.view') && canViewProtectionSources(has)"
+    v-if="has('protection.backup_configurations.view')"
+    :key="inventoryContext"
   />
-  <BackupConfigurationDirectory v-else />
 </template>

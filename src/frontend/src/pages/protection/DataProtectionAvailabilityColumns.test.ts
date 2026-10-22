@@ -102,7 +102,7 @@ describe('Backup Wizard connectivity columns', () => {
     expect(createWizard).toContain("const availability = sourceRecord(sourceId)?.availability")
     expect(createWizard).toContain('const restoreTargetCatalog = useRestoreTargetCatalog()')
     expect(createWizard).toContain('restoreTargetCatalog.reset()')
-    expect(createWizard).toContain(':remote-method="restoreTargetCatalog.setSearch"')
+    expect(createWizard).toContain(':remote-method="searchCreateRecoveryTargets"')
     expect(createWizard).toContain('@popup-scroll="onCreateRecoveryTargetPopupScroll"')
     expect(createWizard).not.toContain('loadOnlineRecoveryTargets')
     expect(createWizard).not.toContain("item.status === 'online' || item.status === 'reconnecting' ? item.status : 'offline'")

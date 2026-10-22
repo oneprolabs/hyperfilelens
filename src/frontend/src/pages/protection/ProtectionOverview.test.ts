@@ -10,55 +10,45 @@ const permissions = ref<string[]>([])
 vi.mock('../../composables/useTenantPermissions', () => ({
   useTenantPermissions: () => ({ has: (key: string) => permissions.value.includes(key) }),
 }))
-vi.mock('./BackupConfigurationDirectory.vue', () => ({
-  __esModule: true, default: { template: '<div data-test="directory" />' },
-}))
 vi.mock('./DataProtection.vue', () => ({
   __esModule: true, default: { template: '<div data-test="wizard" />' },
 }))
 
-describe('Protection overview without expanding backend access', () => {
-  it('mounts the directory, not the Source-dependent Wizard, for a config-only reader', async () => {
+describe('Unified Protection overview', () => {
+  it('uses the original Wizard for configuration-only readers', async () => {
     permissions.value = ['protection.backup_configurations.view']
-    const wrapper = mount(Overview)
-    await flushPromises()
-    expect(wrapper.find('[data-test="directory"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="wizard"]').exists()).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('retains the existing Wizard with Source view access and unmounts it on revocation', async () => {
-    permissions.value = ['protection.backup_configurations.view', 'protection.source_nas.view']
     const wrapper = mount(Overview)
     await flushPromises()
     expect(wrapper.find('[data-test="wizard"]').exists()).toBe(true)
-    permissions.value = ['protection.backup_configurations.view']
-    await flushPromises()
-    expect(wrapper.find('[data-test="wizard"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="directory"]').exists()).toBe(true)
     wrapper.unmount()
   })
 
-  it('keeps the independently routed directory mounted when an unrelated Source Group grant is added', async () => {
-    const record = appRouter.getRoutes().find(route => route.path === '/protection/backup-configurations')
-    expect(record?.components?.default).toBeDefined()
+  it('reinitializes the same Wizard after Source grants change and unmounts on configuration revocation', async () => {
+    permissions.value = ['protection.backup_configurations.view', 'protection.source_nas.view']
+    const wrapper = mount(Overview)
+    await flushPromises()
+    const wizard = wrapper.get('[data-test="wizard"]').element
+    permissions.value = ['protection.backup_configurations.view']
+    await flushPromises()
+    expect(wrapper.get('[data-test="wizard"]').element).not.toBe(wizard)
+    permissions.value = []
+    await flushPromises()
+    expect(wrapper.find('[data-test="wizard"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('redirects old list bookmarks into the Wizard instead of mounting another page', async () => {
+    const record = appRouter.getRoutes().find(route => route.path === '/protection/backup-configurations')!
+    expect(record.redirect).toBeDefined()
     const router = createRouter({
       history: createMemoryHistory(),
-      routes: [{
-        path: '/protection/backup-configurations',
-        component: record!.components!.default,
-      }],
+      routes: [
+        { path: record.path, redirect: record.redirect! },
+        { path: '/protection/backups', component: { template: '<div />' } },
+      ],
     })
-    permissions.value = ['protection.backup_configurations.view']
-    await router.push('/protection/backup-configurations')
-    const wrapper = mount({ template: '<RouterView />' }, { global: { plugins: [router] } })
-    await flushPromises()
-    expect(wrapper.find('[data-test="directory"]').exists()).toBe(true)
-    permissions.value.push('protection.source_nas.view')
-    await flushPromises()
-    expect(wrapper.find('[data-test="directory"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="wizard"]').exists()).toBe(false)
-    expect(router.currentRoute.value.path).toBe('/protection/backup-configurations')
-    wrapper.unmount()
+    await router.push('/protection/backup-configurations?org=tenant-a&id=stale&returnTo=https://example.test')
+    expect(router.currentRoute.value.path).toBe('/protection/backups')
+    expect(router.currentRoute.value.query).toEqual({ org: 'tenant-a', step: 'start-backup' })
   })
 })
