@@ -9,6 +9,7 @@ from apps.alert.constants import (
 from apps.alert.models import AlertPolicy
 from apps.alert.selectors.interface import notification_channels_for_policy
 from apps.alert.services.internal.metadata_resources import selected_resource_options
+from apps.alert.services.internal.recovery import supports_numeric_recovery
 
 _DEFAULT_EVALUATION_INTERVAL_SECONDS = 60
 
@@ -78,7 +79,33 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             )
 
         recovery_rule = data.get("recovery_rule") or {}
-        if recovery_rule and recovery_rule.get("enabled") is not False:
+        if instance is None and alert_type == AlertType.TASK and "enabled" not in recovery_rule:
+            # New rules use manual resolution. Preserve explicitly supplied
+            # legacy settings and never rewrite existing policies on read/edit.
+            recovery_rule = {**recovery_rule, "enabled": False}
+            attrs["recovery_rule"] = recovery_rule
+        previous_recovery = (instance.recovery_rule or {}) if instance else {}
+        previous_trigger = (instance.trigger_rule or {}) if instance else {}
+        recovery_changed = (
+            instance is None
+            or alert_type != instance.type
+            or supports_numeric_recovery(alert_type, trigger_rule)
+            != supports_numeric_recovery(instance.type, previous_trigger)
+            or any(
+                recovery_rule.get(key) != previous_recovery.get(key)
+                for key in ("enabled", "operator", "threshold", "duration_seconds")
+            )
+            or (
+                "threshold" not in recovery_rule
+                and trigger_rule.get("threshold") != previous_trigger.get("threshold")
+            )
+        )
+        if (
+            recovery_changed
+            and supports_numeric_recovery(alert_type, trigger_rule)
+            and recovery_rule
+            and recovery_rule.get("enabled") is not False
+        ):
             recovery_operator = recovery_rule.get("operator")
             if recovery_operator and recovery_operator not in {
                 ">",
@@ -127,6 +154,14 @@ class AlertPolicySerializer(serializers.ModelSerializer):
 
         if not resource_type:
             raise serializers.ValidationError({"resource_type": "This field is required."})
+
+        if alert_type == AlertType.METRIC and not METRICS_BY_RESOURCE_TYPE.get(resource_type):
+            raise serializers.ValidationError({
+                "resource_type": (
+                    "This resource type does not support metric alerts. "
+                    "Choose a resource type with collected metrics, such as Control Plane."
+                )
+            })
 
         if alert_type in (AlertType.METRIC, AlertType.SYSTEM):
             allowed_metrics = METRICS_BY_RESOURCE_TYPE.get(resource_type, [])

@@ -18,7 +18,7 @@ export const ALERT_RESOURCE_TYPES = [
 export type AlertResourceType = (typeof ALERT_RESOURCE_TYPES)[number]
 
 export function useAlertPolicyLabels() {
-  const { t } = useI18n()
+  const { t, te } = useI18n()
 
   function policyTypeLabel(type?: string | null): string {
     if (!type) return t('ops.task.emptyMark')
@@ -37,8 +37,16 @@ export function useAlertPolicyLabels() {
   function resourceTypeDescription(type?: string | null): string {
     if (!type) return ''
     const key = `ops.alertsCenter.resourceTypeDescriptions.${type}`
-    const translated = t(key)
-    return translated !== key ? translated : ''
+    // Descriptions are optional; querying a missing key emits an intlify warning
+    // even if we subsequently replace the returned key with an empty string.
+    if (!te(key) && !te(key, 'en')) return ''
+    return t(key)
+  }
+
+  function policyTypeDescription(type?: string | null): string {
+    if (!type) return ''
+    const key = `ops.alertsCenter.policyTypeDescriptions.${type}`
+    return te(key) || te(key, 'en') ? t(key) : ''
   }
 
   const policyTypeOptions = computed(() =>
@@ -59,6 +67,7 @@ export function useAlertPolicyLabels() {
     policyTypeLabel,
     resourceTypeLabel,
     resourceTypeDescription,
+    policyTypeDescription,
     policyTypeOptions,
     resourceTypeOptions,
   }

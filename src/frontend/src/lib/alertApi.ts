@@ -18,8 +18,8 @@ export type AlertPolicy = {
   monitoring_resources?: AlertPolicyResource[]
   triggerRule?: Record<string, unknown>
   trigger_rule?: Record<string, unknown>
-  recoveryRule?: Record<string, unknown>
-  recovery_rule?: Record<string, unknown>
+  recoveryRule?: Record<string, unknown> | null
+  recovery_rule?: Record<string, unknown> | null
   notificationChannelIds?: number[]
   notification_channel_ids?: number[]
   notificationChannels?: Array<{ id: number; name: string; type: string; enabled: boolean }>
