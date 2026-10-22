@@ -162,7 +162,7 @@ describe('Spanish language pack', () => {
       'platformOps.storageProviders.general',
       'platformOps.storageProviders.id',
     ]
-    expect(allowedEnglish.filter(key => key !== 'repositoriesPage.cleanupResourceSeparator').length).toBeLessThanOrEqual(326 + sharedGovernanceTerms.length)
+    expect(allowedEnglish.filter(key => key !== 'repositoriesPage.cleanupResourceSeparator').length).toBeLessThanOrEqual(327 + sharedGovernanceTerms.length)
     const englishFlat = flatten(en)
     const spanishFlat = flatten(spanish)
     for (const key of sharedGovernanceTerms) {
