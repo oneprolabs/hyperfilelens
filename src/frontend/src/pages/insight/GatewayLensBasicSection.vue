@@ -18,6 +18,9 @@ const { t } = useI18n()
 
 const aiPhase = computed(() => {
   if (!props.gatewayAi) return 'not_provisioned' as const
+  // SL runtime can still be online while HFL is uninstalling/upgrading it.
+  const sidecarStatus = props.gatewayAi.sidecar_status
+  if (sidecarStatus === 'removing' || sidecarStatus === 'upgrading') return sidecarStatus
   if (!props.gatewayAi.ai_enabled && !props.gatewayAi.sl_lensnode_uuid) {
     return 'not_provisioned' as const
   }
@@ -38,6 +41,9 @@ const slStatusTagType = computed((): 'success' | 'info' | 'warning' | 'danger' =
       return 'danger'
     case 'pending_install':
       return 'warning'
+    case 'removing':
+    case 'upgrading':
+      return 'info'
     default:
       return 'info'
   }

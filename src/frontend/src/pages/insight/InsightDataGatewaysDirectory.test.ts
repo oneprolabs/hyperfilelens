@@ -113,6 +113,7 @@ type DirectoryTestState = {
   canManageGateway: (row: LensGatewayInsight) => boolean
   canManageCapacity: (row: LensGatewayInsight) => boolean
   canUpgrade: (row: LensGatewayInsight) => boolean
+  aiPhase: (row: LensGatewayInsight) => string
   openCapacityDialog: (row: LensGatewayInsight) => void
   submitCapacity: () => Promise<void>
   capacityTarget: LensGatewayInsight | null
@@ -525,6 +526,42 @@ describe('granular platform gateway permissions', () => {
     state.capacityTarget = row
     await state.submitCapacity()
     expect(mocks.patchCapacity).not.toHaveBeenCalled()
+  })
+})
+
+describe('AI Engine lifecycle display', () => {
+  it.each([
+    ['/insight/data-gateways', 'removing'],
+    ['/insight/data-gateways', 'upgrading'],
+    ['/platform-ops/engine/gateways', 'removing'],
+    ['/platform-ops/engine/gateways', 'upgrading'],
+  ])('preserves %s sidecar operation %s when readiness drops', async (path, operation) => {
+    mocks.route.path = path
+    const wrapper = mountPage()
+    await flushPromises()
+    const state = stateOf(wrapper)
+    state.bridgeReady = false
+    for (const online of [true, false]) {
+      expect(state.aiPhase({
+        ...gateway(), status: 'cleaning_up', sidecar_status: operation,
+        ai_enabled: false, hfl_agent_online: online,
+      })).toBe(operation)
+    }
+  })
+
+  it('keeps ordinary runtime and installation mappings unchanged', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    const state = stateOf(wrapper)
+    for (const phase of ['online', 'offline', 'error']) {
+      expect(state.aiPhase({ ...gateway(), sidecar_status: phase })).toBe(phase)
+    }
+    expect(state.aiPhase({ ...gateway(), sidecar_status: 'pending' })).toBe('pending_install')
+    expect(state.aiPhase({ ...gateway(), sidecar_status: 'not_deployed' })).toBe('error')
+    expect(state.aiPhase({ ...gateway(), hfl_agent_online: false })).toBe('agent_offline')
+    expect(state.aiPhase({
+      ...gateway(), managed_by_hfl: false, sidecar_status: 'removing',
+    })).toBe('not_provisioned')
   })
 })
 

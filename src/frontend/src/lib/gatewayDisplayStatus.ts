@@ -3,6 +3,8 @@ import type { ApiNode } from '../types/node'
 export type GatewayAiPhase =
   | 'not_provisioned'
   | 'pending_install'
+  | 'removing'
+  | 'upgrading'
   | 'online'
   | 'agent_offline'
   | 'offline'
@@ -34,6 +36,13 @@ export function resolveAiEngineListStatus(aiPhase: GatewayAiPhase): GatewayDispl
     case 'pending_install':
       return {
         labelKey: 'insight.dataGateway.gatewayPhase.installing',
+        tagType: 'info',
+        spinning: true,
+      }
+    case 'removing':
+    case 'upgrading':
+      return {
+        labelKey: `insight.dataGateway.gatewayPhase.${aiPhase}`,
         tagType: 'info',
         spinning: true,
       }
