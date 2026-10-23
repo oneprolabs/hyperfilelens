@@ -888,6 +888,7 @@ onMounted(() => {
               <KnowledgeSourceRetrievalEnhancement
                 v-model="ingestPolicy"
                 section="document"
+                compact
                 :show-lead="true"
               />
             </section>
@@ -900,6 +901,7 @@ onMounted(() => {
               <KnowledgeSourceRetrievalEnhancement
                 v-model="ingestPolicy"
                 section="images"
+                compact
               />
             </section>
 
@@ -911,6 +913,7 @@ onMounted(() => {
               <KnowledgeSourceRetrievalEnhancement
                 v-model="ingestPolicy"
                 section="limits"
+                compact
               />
             </section>
           </div>
@@ -925,7 +928,7 @@ onMounted(() => {
               :disabled="saving || loading || !canSubmit"
               @click="handleSubmit"
             >
-              {{ isEditing ? t('common.save') : t('insight.kb.dialogConfirm') }}
+              {{ isEditing ? t('common.saveChanges') : t('insight.kb.dialogConfirm') }}
             </ElButton>
           </footer>
         </div>

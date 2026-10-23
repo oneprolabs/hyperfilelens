@@ -15,14 +15,30 @@ describe('Admin Skills / MCP Servers lists', () => {
     expect(skills).toContain('visibleRows')
   })
 
-  it('keeps Skills list to Name and Enabled without Content column', () => {
+  it('keeps Skills list to Name and Status without Content column', () => {
     expect(skills).toContain("t('insight.skills.colName')")
-    expect(skills).toContain("t('insight.skills.colEnabled')")
+    expect(skills).toContain("t('insight.skills.colStatus')")
+    expect(skills).not.toContain("t('insight.skills.colEnabled')")
     expect(skills).not.toContain("t('insight.skills.colContent')")
   })
 
-  it('confirms platform Skill deletes with assistant impact warning', () => {
-    expect(skills).toContain('deleteConfirmPlatform')
+  it('keeps MCP list to Name, Transport, Endpoint, and Status', () => {
+    expect(mcp).toContain("t('insight.mcpServers.colName')")
+    expect(mcp).toContain("t('insight.mcpServers.colTransport')")
+    expect(mcp).toContain("t('insight.mcpServers.colEndpoint')")
+    expect(mcp).toContain("t('insight.mcpServers.colStatus')")
+    expect(mcp).not.toContain("t('insight.mcpServers.colEnabled')")
+    expect(mcp).not.toContain("t('insight.mcpServers.colRuntimeSettings')")
+  })
+
+  it('confirms Skill enable, disable, and delete with Users-style DangerConfirmDialog', () => {
+    expect(skills).toContain("requestLifecycleAction('enable'")
+    expect(skills).toContain("requestLifecycleAction('disable'")
+    expect(skills).toContain("requestLifecycleAction('delete'")
+    expect(skills).toContain("confirm-mode=\"lifecycleAction === 'delete' ? 'keyword' : 'single'\"")
+    expect(skills).toContain('enableConfirmMessage')
+    expect(skills).toContain('disableConfirmWarning')
+    expect(skills).toContain('deleteConfirmWarning')
   })
 
   it('paginates MCP Servers like other Admin Engine lists', () => {
@@ -30,7 +46,13 @@ describe('Admin Skills / MCP Servers lists', () => {
     expect(mcp).toContain('visibleRows')
   })
 
-  it('confirms platform MCP deletes with assistant impact warning', () => {
-    expect(mcp).toContain('deleteConfirmPlatform')
+  it('confirms MCP enable, disable, and delete with Users-style DangerConfirmDialog', () => {
+    expect(mcp).toContain("requestLifecycleAction('enable'")
+    expect(mcp).toContain("requestLifecycleAction('disable'")
+    expect(mcp).toContain("requestLifecycleAction('delete'")
+    expect(mcp).toContain("confirm-mode=\"lifecycleAction === 'delete' ? 'keyword' : 'single'\"")
+    expect(mcp).toContain('enableConfirmMessage')
+    expect(mcp).toContain('disableConfirmWarning')
+    expect(mcp).toContain('deleteConfirmWarning')
   })
 })

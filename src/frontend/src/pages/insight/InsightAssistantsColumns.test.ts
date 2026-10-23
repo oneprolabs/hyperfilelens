@@ -21,6 +21,20 @@ describe('Admin Assistants list', () => {
     expect(page).not.toContain("t('insight.assistants.colVisibility')")
   })
 
+  it('keeps inventory columns to Name, Organization, Knowledge Source, Scenario, Status', () => {
+    expect(page).toContain("t('insight.assistants.colName')")
+    expect(page).toContain("t('insight.assistants.colOrganization')")
+    expect(page).toContain("t('insight.assistants.colKnowledgeSource')")
+    expect(page).toContain("t('insight.assistants.colScenario')")
+    expect(page).toContain("t('insight.assistants.colStatus')")
+    expect(page).not.toContain('insight-assistants-slug')
+    expect(page).not.toContain('knowledgeSourceMeta')
+    expect(page).toContain('filterOrgKey')
+    expect(page).toContain("t('insight.assistants.orgFilterPlaceholder')")
+    expect(page).toContain('organizationId')
+    expect(page).toContain('`/platform-ops/orgs/${organizationId(row)}`')
+  })
+
   it('paginates like Data Gateways and uses inventory Scenario titles', () => {
     expect(page).toContain('PlatformOpsPagination')
     expect(page).toContain('visibleRows')
@@ -28,8 +42,15 @@ describe('Admin Assistants list', () => {
     expect(page).not.toContain('fetchLensAssistantFormOptions')
   })
 
-  it('confirms deletes with organization context', () => {
-    expect(page).toContain('deleteConfirmPlatform')
-    expect(page).toContain('organizationLabel')
+  it('confirms enable, disable, and delete with Users-style DangerConfirmDialog', () => {
+    expect(page).toContain("requestLifecycleAction('enable'")
+    expect(page).toContain("requestLifecycleAction('disable'")
+    expect(page).toContain("requestLifecycleAction('delete'")
+    expect(page).toContain("confirm-mode=\"lifecycleAction === 'delete' ? 'keyword' : 'single'\"")
+    expect(page).toContain('lifecycleSubtitle')
+    expect(page).toContain('organizationContext')
+    expect(page).toContain('enableConfirmMessage')
+    expect(page).toContain('disableConfirmWarning')
+    expect(page).toContain('deleteConfirmWarning')
   })
 })

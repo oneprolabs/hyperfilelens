@@ -52,14 +52,37 @@ class LocalPlatformGatewayConfigTests(SimpleTestCase):
             platform_gateway_api_base()
 
     @override_settings(FRONTEND_URL="https://127.0.0.1:11443")
-    def test_remote_platform_gateway_rejects_loopback_origin(self):
-        with self.assertRaisesMessage(ValueError, "network-reachable"):
-            platform_gateway_api_base(require_remote=True)
+    @mock.patch(
+        "common.deploy.site.tenant_public_url",
+        return_value="https://127.0.0.1:11443",
+    )
+    def test_remote_platform_gateway_allows_loopback_for_local_enrollment(self, _mock_url):
+        self.assertEqual(
+            platform_gateway_api_base(require_remote=True),
+            "https://127.0.0.1:11443",
+        )
 
-    @override_settings(FRONTEND_URL="https://0.0.0.0:11443")
-    def test_remote_platform_gateway_rejects_unspecified_origin(self):
-        with self.assertRaisesMessage(ValueError, "network-reachable"):
-            platform_gateway_api_base(require_remote=True)
+    @override_settings(FRONTEND_URL="https://127.0.0.1:11443")
+    @mock.patch(
+        "common.deploy.site.tenant_public_url",
+        return_value="https://agents.example.com:11443",
+    )
+    def test_remote_platform_gateway_uses_external_access_origin(self, _mock_url):
+        self.assertEqual(
+            platform_gateway_api_base(require_remote=True),
+            "https://agents.example.com:11443",
+        )
+
+    @override_settings(FRONTEND_URL="https://127.0.0.1:11443")
+    @mock.patch(
+        "common.deploy.site.tenant_public_url",
+        return_value="https://agents.example.com:11443",
+    )
+    def test_local_platform_gateway_keeps_deployment_frontend_url(self, _mock_url):
+        self.assertEqual(
+            platform_gateway_api_base(),
+            "https://127.0.0.1:11443",
+        )
 
     def test_registration_metadata_requires_trusted_installer_state(self):
         untrusted = registration_metadata(LOCAL_PLATFORM_GATEWAY_METADATA)

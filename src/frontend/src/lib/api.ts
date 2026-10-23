@@ -99,40 +99,56 @@ function extractFields(data: unknown): Record<string, string[]> | undefined {
   return undefined
 }
 
+function usableErrorText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  if (!text || text.toLowerCase() === 'failed') return undefined
+  return text
+}
+
+function extractDiagnosticMessage(payload: Record<string, unknown>): string | undefined {
+  const detail = usableErrorText(payload.detail)
+  if (detail) return detail
+  const title = usableErrorText(payload.title)
+  if (title) return title
+  const meta = payload.meta
+  if (meta && typeof meta === 'object') {
+    const diagnostic = usableErrorText((meta as Record<string, unknown>).diagnostic)
+    if (diagnostic) return diagnostic
+  }
+  return usableErrorText(payload.message)
+}
+
 function extractMessage(data: unknown): string | undefined {
   if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>
-    // data.data.error.message (the actual response structure)
+    // data.data.* (platform envelope: { code, message: "failed", data: {...} })
     if ('data' in d && d.data && typeof d.data === 'object') {
       const inner = d.data as Record<string, unknown>
-      if (
-        'message' in inner
-        && typeof inner.message === 'string'
-        && inner.message.trim()
-        && inner.message.toLowerCase() !== 'failed'
-      ) {
-        return inner.message
-      }
+      const fromInner = extractDiagnosticMessage(inner)
+      if (fromInner) return fromInner
       if ('error' in inner && typeof inner.error === 'string' && inner.error.trim()) {
         return inner.error
       }
-      if ('message' in inner) return inner.message as string
       if ('error' in inner && typeof inner.error === 'object') {
         const err = inner.error as Record<string, unknown>
-        if ('message' in err) return err.message as string
+        const nested = extractDiagnosticMessage(err) || usableErrorText(err.message)
+        if (nested) return nested
       }
     }
     // data.error.message (single-nested)
     if ('error' in d && typeof d.error === 'object') {
       const err = d.error as Record<string, unknown>
-      if ('message' in err) return err.message as string
+      const nested = extractDiagnosticMessage(err) || usableErrorText(err.message)
+      if (nested) return nested
     }
     // Some legacy endpoints return a human-readable diagnostic as a
     // top-level string instead of a Problem Details object.
     if ('error' in d && typeof d.error === 'string' && d.error.trim()) {
       return d.error
     }
-    if ('message' in d) return d.message as string
+    const fromTop = extractDiagnosticMessage(d)
+    if (fromTop) return fromTop
   }
   return undefined
 }

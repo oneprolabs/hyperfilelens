@@ -99,6 +99,10 @@
 .hfl-list-toolbar > .el-dropdown,
 .hfl-list-toolbar > .inline-flex,
 .hfl-list-toolbar > a,
+.hfl-list-toolbar__actions > .el-button,
+.hfl-list-toolbar__actions > .el-dropdown,
+.hfl-list-toolbar__actions > .inline-flex,
+.hfl-list-toolbar__actions > a,
 .hfl-list-toolbar__primary > .el-button,
 .hfl-list-toolbar__primary > .el-dropdown,
 .hfl-list-toolbar__primary > .inline-flex,
@@ -126,8 +130,14 @@
   margin-left: auto;
 }
 
+/* Primary Add + More Actions group — match Governance / Platform (8px). */
+.hfl-list-toolbar__actions,
 .hfl-list-toolbar__primary {
-  display: contents;
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .hfl-list-toolbar__utility {
@@ -251,6 +261,21 @@
 
 .hfl-list-search {
   width: 230px;
+}
+
+/* Match Admin Governance / Platform directory search sizing. */
+.hfl-list-search.platform-list-search.el-input,
+.hfl-list-search.platform-list-search {
+  flex: 0 1 280px;
+  width: 280px;
+  min-width: 0;
+  max-width: 100%;
+  height: 34px;
+  font-size: 13px;
+}
+
+.hfl-list-search.platform-list-search .el-input__inner {
+  font-size: 13px;
 }
 
 .hfl-list-search-group {
@@ -569,16 +594,16 @@ html[data-theme='dark'] {
     align-items: center;
   }
 
-  .hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary {
-    display: flex;
+  .hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary,
+  .hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__actions {
     grid-column: 1;
     grid-row: 1;
     flex-wrap: wrap;
     align-items: flex-start;
-    gap: 8px;
   }
 
-  .hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary > .el-dropdown {
+  .hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__primary > .el-dropdown,
+  .hfl-list-toolbar--mobile-primary-utility > .hfl-list-toolbar__actions > .el-dropdown {
     align-self: flex-start;
     line-height: 1;
     vertical-align: top;
@@ -604,6 +629,8 @@ html[data-theme='dark'] {
 
   .hfl-list-toolbar > .el-button,
   .hfl-list-toolbar > .el-dropdown,
+  .hfl-list-toolbar__actions > .el-button,
+  .hfl-list-toolbar__actions > .el-dropdown,
   .hfl-list-toolbar__primary > .el-button,
   .hfl-list-toolbar__primary > .el-dropdown,
   .hfl-list-toolbar__right > .el-button,
@@ -616,6 +643,9 @@ html[data-theme='dark'] {
   .hfl-list-toolbar > .el-dropdown .el-button,
   .hfl-list-toolbar > .inline-flex .el-button,
   .hfl-list-toolbar > a .el-button,
+  .hfl-list-toolbar__actions > .el-dropdown .el-button,
+  .hfl-list-toolbar__actions > .inline-flex .el-button,
+  .hfl-list-toolbar__actions > a .el-button,
   .hfl-list-toolbar__primary > .el-dropdown .el-button,
   .hfl-list-toolbar__primary > .inline-flex .el-button,
   .hfl-list-toolbar__primary > a .el-button {

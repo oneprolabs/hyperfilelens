@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { lensKnowledgePath } from '../../lib/lensEngineRoutes'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, Pencil, Plus, RefreshCw, Search, Trash2 } from 'lucide-vue-next'
 import { ElMessage, type ElTable } from 'element-plus'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
+import { usePlatformEngineListSearch } from '../../composables/usePlatformEngineListSearch'
 import { apiErrorMessage } from '../../lib/api'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
@@ -19,12 +20,22 @@ import {
 } from '../../lib/lensApi'
 import InsightKnowledgeSourceDetailDrawer from './InsightKnowledgeSourceDetailDrawer.vue'
 import HflTypeLabel from '../../components/HflTypeLabel.vue'
-import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
+import DangerConfirmDialog, {
+  type DangerConfirmItem,
+  type DangerLevel,
+} from '../../components/DangerConfirmDialog.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
+
+type KnowledgeSourceAction = 'sync' | 'delete'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const {
+  listSearchPlaceholder,
+  listSearchClass,
+  listSearchSize,
+} = usePlatformEngineListSearch('insight.kb.searchPlaceholder', 'knowledgeSources')
 
 const TABLE_HEADER_STYLE: Record<string, string> = {
   background: 'rgba(248, 250, 252, 0.96)',
@@ -42,22 +53,71 @@ const { appliedSearch, clearSearch } = useListSearch(search, () => {
   pagination.page = 1
 })
 const statusFilter = ref<string>('')
+const filterOrgKey = ref('')
+const knownOrganizations = ref<Array<{ key: string; name: string }>>([])
 const detailOpen = ref(false)
 const detailRow = ref<LensKnowledgeSource | null>(null)
-const deleteOpen = ref(false)
-const deleteLoading = ref(false)
-const deleteTarget = ref<LensKnowledgeSource | null>(null)
+const actionType = ref<KnowledgeSourceAction | null>(null)
+const actionTarget = ref<LensKnowledgeSource | null>(null)
+const actionLoading = ref(false)
 const selectedRows = ref<LensKnowledgeSource[]>([])
 const moreActionsOpen = ref(false)
+
+const actionOpen = computed(() => Boolean(actionType.value && actionTarget.value))
+const actionLevel = computed<DangerLevel>(() => (actionType.value === 'delete' ? 'high' : 'low'))
+const actionTitle = computed(() => {
+  if (actionType.value === 'sync') return t('insight.kb.syncTitle')
+  if (actionType.value === 'delete') return t('insight.kb.deleteTitle')
+  return ''
+})
+const actionMessage = computed(() => {
+  const row = actionTarget.value
+  if (!row || !actionType.value) return ''
+  if (actionType.value === 'sync') return t('insight.kb.syncConfirmMessage')
+  if (row.organization_key) {
+    return t('insight.kb.deleteConfirmPlatform', { org: organizationConfirmLabel(row) })
+  }
+  return t('insight.kb.deleteConfirm')
+})
+const actionConfirmText = computed(() => {
+  if (actionType.value === 'sync') return t('insight.kb.syncConfirm')
+  if (actionType.value === 'delete') return t('common.delete')
+  return ''
+})
+const actionItems = computed<DangerConfirmItem[]>(() => {
+  const row = actionTarget.value
+  if (!row) return []
+  return [{
+    key: row.id,
+    name: row.name,
+    status: {
+      label: statusLabel(row.status),
+      tone: statusTone(row.status),
+    },
+  }]
+})
+const actionContext = computed(() => JSON.stringify([
+  actionType.value,
+  actionTarget.value?.id || '',
+]))
 
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const tableBlockRef = ref<HTMLElement | null>(null)
 const { tableMaxHeight, layoutTable, handleTableScroll } = useListTableLayout(tableRef, tableBlockRef)
 
+const organizationFilterOptions = computed(() => {
+  const options = knownOrganizations.value
+  const selected = filterOrgKey.value.trim()
+  if (!selected || options.some((org) => org.key === selected)) return options
+  return [{ key: selected, name: selected }, ...options]
+})
+
 const filteredRows = computed(() => {
   const q = appliedSearch.value.trim().toLowerCase()
+  const orgKey = filterOrgKey.value.trim()
   return rows.value.filter((row) => {
     if (statusFilter.value && row.status !== statusFilter.value) return false
+    if (orgKey && String(row.organization_key || '').trim() !== orgKey) return false
     if (!q) return true
     const hay = [
       row.name,
@@ -68,6 +128,7 @@ const filteredRows = computed(() => {
       row.ingest_summary,
       row.status_detail,
       sourceTypeLabel(row),
+      ...((row.source_scopes_json || []).map((scope) => scope.source_path)),
     ]
       .filter(Boolean)
       .join(' ')
@@ -91,7 +152,7 @@ watch(
   { immediate: true },
 )
 
-watch(statusFilter, () => {
+watch([statusFilter, filterOrgKey], () => {
   pagination.page = 1
 })
 
@@ -105,10 +166,54 @@ function onPaginationSizeChange() {
 }
 
 function organizationLabel(row: LensKnowledgeSource) {
-  const name = row.organization_name?.trim()
-  const key = row.organization_key?.trim()
-  if (name && key && name !== key) return `${name} (${key})`
-  return name || key || '—'
+  return row.organization_name?.trim() || ''
+}
+
+function organizationConfirmLabel(row: LensKnowledgeSource) {
+  return organizationLabel(row) || row.organization_key?.trim() || '—'
+}
+
+function organizationId(row: LensKnowledgeSource) {
+  return Number(row.organization_id || 0) || null
+}
+
+function rememberOrganizations(list: LensKnowledgeSource[]) {
+  const byKey = new Map(knownOrganizations.value.map((org) => [org.key, org]))
+  for (const row of list) {
+    const key = String(row.organization_key || '').trim()
+    if (!key) continue
+    byKey.set(key, {
+      key,
+      name: String(row.organization_name || key).trim() || key,
+    })
+  }
+  knownOrganizations.value = [...byKey.values()].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key),
+  )
+}
+
+function sourcePathEntries(row: LensKnowledgeSource): string[] {
+  const scopes = (row.source_scopes_json || [])
+    .map((scope) => scope.source_path?.trim())
+    .filter((path): path is string => Boolean(path))
+  const primary = row.source_path?.trim()
+  const unique: string[] = []
+  for (const path of [primary, ...scopes]) {
+    if (!path || unique.includes(path)) continue
+    unique.push(path)
+  }
+  return unique
+}
+
+function sourcePathLabel(row: LensKnowledgeSource) {
+  const paths = sourcePathEntries(row)
+  if (paths.length === 0) return ''
+  if (paths.length === 1) return paths[0]!
+  return t('insight.kb.sourcePathExtra', { path: paths[0], n: paths.length - 1 })
+}
+
+function sourcePathTitle(row: LensKnowledgeSource) {
+  return sourcePathEntries(row).join('\n')
 }
 
 const batchDisabled = computed(() => selectedRows.value.length === 0)
@@ -126,6 +231,13 @@ function statusLabel(status: string) {
   if (status === 'paused') return t('insight.kb.statusPaused')
   if (status === 'learning' || status === 'provisioning') return t('insight.kb.statusSyncing')
   return status
+}
+
+function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'ready') return 'success'
+  if (status === 'error') return 'danger'
+  if (status === 'degraded' || status === 'paused') return 'warning'
+  return 'info'
 }
 
 function rowSyncDisabled(row: LensKnowledgeSource) {
@@ -149,7 +261,9 @@ async function load() {
     const health = await fetchLensHealth()
     bridgeReady.value = Boolean(health.lens.configured && health.lens.authenticated)
     if (bridgeReady.value) {
-      rows.value = await listKnowledgeSources()
+      const list = await listKnowledgeSources()
+      rows.value = list
+      rememberOrganizations(list)
       if (hasSyncingRows.value) startSyncPolling()
     } else {
       rows.value = []
@@ -184,23 +298,52 @@ function onDetailUpdated(row: LensKnowledgeSource) {
   detailRow.value = row
 }
 
-async function syncRow(row: LensKnowledgeSource) {
-  if (rowSyncDisabled(row)) return
+function requestAction(action: KnowledgeSourceAction, row: LensKnowledgeSource) {
+  if (actionLoading.value) return
+  if (action === 'sync' && rowSyncDisabled(row)) return
+  actionType.value = action
+  actionTarget.value = row
+}
+
+function closeAction() {
+  if (actionLoading.value) return
+  actionType.value = null
+  actionTarget.value = null
+}
+
+async function confirmAction() {
+  const action = actionType.value
+  const row = actionTarget.value
+  if (!action || !row || actionLoading.value) return
+  actionLoading.value = true
   try {
-    const updated = await syncKnowledgeSource(row.id)
-    rows.value = rows.value.map((item) => (item.id === row.id ? updated : item))
-    if (detailRow.value?.id === row.id) detailRow.value = updated
-    ElMessage.success({ message: t('insight.kb.syncStarted'), grouping: true })
-    startSyncPolling()
+    if (action === 'sync') {
+      const updated = await syncKnowledgeSource(row.id)
+      rows.value = rows.value.map((item) => (item.id === row.id ? updated : item))
+      if (detailRow.value?.id === row.id) detailRow.value = updated
+      ElMessage.success({ message: t('insight.kb.syncStarted'), grouping: true })
+      startSyncPolling()
+    } else {
+      await deleteKnowledgeSource(row.id)
+      ElMessage.success({ message: t('insight.kb.deleteSuccess'), grouping: true })
+      selectedRows.value = []
+      await load()
+    }
+    actionType.value = null
+    actionTarget.value = null
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
+  } finally {
+    actionLoading.value = false
   }
 }
 
 async function refreshRowsQuietly() {
   if (!bridgeReady.value) return
   try {
-    rows.value = await listKnowledgeSources()
+    const list = await listKnowledgeSources()
+    rows.value = list
+    rememberOrganizations(list)
     if (detailRow.value) {
       detailRow.value = rows.value.find((row) => row.id === detailRow.value!.id) ?? detailRow.value
     }
@@ -225,29 +368,6 @@ function startSyncPolling() {
   }, 4000)
 }
 
-function deleteRow(row: LensKnowledgeSource) {
-  deleteTarget.value = row
-  deleteOpen.value = true
-}
-
-async function confirmDelete() {
-  const row = deleteTarget.value
-  if (!row) return
-  deleteLoading.value = true
-  try {
-    await deleteKnowledgeSource(row.id)
-    ElMessage.success({ message: t('insight.kb.deleteSuccess'), grouping: true })
-    selectedRows.value = []
-    await load()
-    deleteOpen.value = false
-    deleteTarget.value = null
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, t('errors.generic.requestFailed')), grouping: true })
-  } finally {
-    deleteLoading.value = false
-  }
-}
-
 function onDetailEdit(id: number) {
   const row = rows.value.find((item) => item.id === id) ?? detailRow.value
   if (row) openEdit(row)
@@ -259,16 +379,16 @@ function editSelected() {
   openEdit(row)
 }
 
-async function syncSelected() {
+function syncSelected() {
   const row = singleSelected.value
   if (!row) return
-  await syncRow(row)
+  requestAction('sync', row)
 }
 
-async function deleteSelected() {
+function deleteSelected() {
   const row = singleSelected.value
   if (!row) return
-  await deleteRow(row)
+  requestAction('delete', row)
 }
 
 watch(
@@ -302,20 +422,21 @@ watch(hasSyncingRows, (syncing) => {
   <div class="hfl-list-shell hfl-list-shell--fill">
     <div class="hfl-list-panel hfl-list-panel--fill">
       <div class="hfl-list-toolbar">
-        <ElButton
-          type="primary"
-          :disabled="!bridgeReady"
-          @click="openCreate"
-        >
-          <Plus :size="16" />
-          {{ t('platformOps.engineActions.addKnowledgeSource') }}
-        </ElButton>
+        <div class="hfl-list-toolbar__actions">
+          <ElButton
+            type="primary"
+            :disabled="!bridgeReady"
+            @click="openCreate"
+          >
+            <Plus :size="16" />
+            {{ t('platformOps.engineActions.addKnowledgeSource') }}
+          </ElButton>
 
-        <ElDropdown
-          trigger="click"
-          popper-class="hfl-actions-dropdown"
-          @visible-change="moreActionsOpen = $event"
-        >
+          <ElDropdown
+            trigger="click"
+            popper-class="hfl-actions-dropdown"
+            @visible-change="moreActionsOpen = $event"
+          >
           <ElButton :disabled="!bridgeReady">
             {{ t('platformOps.engineActions.knowledgeSourceActions') }}
             <ChevronDown
@@ -366,15 +487,33 @@ watch(hasSyncingRows, (syncing) => {
               </ElDropdownItem>
             </ElDropdownMenu>
           </template>
-        </ElDropdown>
+          </ElDropdown>
+        </div>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
+          <ElSelect
+            v-model="filterOrgKey"
+            clearable
+            filterable
+            size="small"
+            class="ks-org-filter"
+            :placeholder="t('insight.kb.orgFilterPlaceholder')"
+            :aria-label="t('insight.kb.orgFilterPlaceholder')"
+          >
+            <ElOption
+              v-for="org in organizationFilterOptions"
+              :key="org.key"
+              :value="org.key"
+              :label="org.name || org.key"
+            />
+          </ElSelect>
           <ElSelect
             v-model="statusFilter"
             clearable
             size="small"
+            class="ks-status-filter"
             :placeholder="t('insight.kb.filterRunState')"
-            style="width: 160px"
+            :aria-label="t('insight.kb.filterRunState')"
           >
             <ElOption
               value="ready"
@@ -400,13 +539,16 @@ watch(hasSyncingRows, (syncing) => {
           <ElInput
             v-model="search"
             clearable
-            size="small"
-            :placeholder="t('insight.kb.searchPlaceholder')"
-            class="hfl-list-search"
+            :size="listSearchSize"
+            :placeholder="listSearchPlaceholder"
+            :class="listSearchClass"
             @clear="clearSearch"
           >
             <template #prefix>
-              <Search :size="14" />
+              <Search
+                :size="16"
+                class="hfl-list-search__icon"
+              />
             </template>
           </ElInput>
           <div class="hfl-list-toolbar__utility">
@@ -446,7 +588,7 @@ watch(hasSyncingRows, (syncing) => {
           />
           <ElTableColumn
             :label="t('insight.kb.colName')"
-            min-width="220"
+            min-width="180"
             fixed="left"
             class-name="hfl-table-name-col"
           >
@@ -454,13 +596,24 @@ watch(hasSyncingRows, (syncing) => {
               <button
                 type="button"
                 class="hfl-table-name-link hfl-table-name-link--full"
+                :title="row.name"
                 @click="openDetail(row)"
               >
-                <div class="ks-identity">
-                  <strong>{{ row.name }}</strong>
-                  <span>{{ row.source_path }}</span>
-                </div>
+                {{ row.name }}
               </button>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn
+            :label="t('insight.kb.colSourcePath')"
+            min-width="200"
+            class-name="ks-source-path-col"
+          >
+            <template #default="{ row }">
+              <span
+                class="ks-source-path"
+                :class="{ 'hfl-empty-mark': !sourcePathLabel(row) }"
+                :title="sourcePathTitle(row) || undefined"
+              >{{ sourcePathLabel(row) || '—' }}</span>
             </template>
           </ElTableColumn>
           <ElTableColumn
@@ -468,7 +621,17 @@ watch(hasSyncingRows, (syncing) => {
             min-width="160"
           >
             <template #default="{ row }">
-              <span :class="{ 'hfl-empty-mark': organizationLabel(row) === '—' }">{{ organizationLabel(row) }}</span>
+              <RouterLink
+                v-if="organizationId(row) && organizationLabel(row)"
+                :to="`/platform-ops/orgs/${organizationId(row)}`"
+                class="hfl-table-name-link"
+              >
+                {{ organizationLabel(row) }}
+              </RouterLink>
+              <span
+                v-else
+                :class="{ 'hfl-empty-mark': !organizationLabel(row) }"
+              >{{ organizationLabel(row) || '—' }}</span>
             </template>
           </ElTableColumn>
           <ElTableColumn
@@ -547,47 +710,56 @@ watch(hasSyncingRows, (syncing) => {
       @edit="onDetailEdit"
     />
     <DangerConfirmDialog
-      v-model="deleteOpen"
-      :title="t('insight.kb.deleteTitle')"
-      :message="deleteTarget ? (deleteTarget.organization_key
-        ? t('insight.kb.deleteConfirmPlatform', {
-          name: deleteTarget.name,
-          org: organizationLabel(deleteTarget),
-        })
-        : t('insight.kb.deleteConfirm', { name: deleteTarget.name })) : ''"
-      :items="deleteTarget ? [{ key: deleteTarget.id, name: deleteTarget.name }] : []"
+      v-if="actionOpen"
+      :model-value="true"
+      class="ks-action-confirm"
+      width="640px"
+      :title="actionTitle"
+      :level="actionLevel"
+      :message="actionMessage"
+      :items="actionItems"
+      :items-heading="t('nodesPage.selectedCount', { n: actionItems.length })"
+      :item-name-label="t('insight.kb.entityName')"
+      :item-status-label="t('common.dangerItemStatus')"
+      :show-item-details="false"
+      :confirmation-context="actionContext"
+      :confirm-mode="actionType === 'delete' ? 'keyword' : 'single'"
+      :confirm-keyword="t('common.deleteKeyword')"
+      :confirm-keyword-placeholder="t('common.deleteKeyword')"
+      :confirm-keyword-hint="t('common.dangerConfirmKeywordHint', { keyword: t('common.deleteKeyword') })"
       :cancel-text="t('common.cancel')"
-      :confirm-text="t('common.delete')"
-      :loading="deleteLoading"
-      @confirm="confirmDelete"
-      @cancel="deleteTarget = null"
+      :confirm-text="actionConfirmText"
+      :loading="actionLoading"
+      :confirm-disabled="actionLoading || !actionTarget"
+      @confirm="confirmAction"
+      @cancel="closeAction"
     />
   </div>
 </template>
 
 <style scoped>
-.ks-identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  text-align: left;
+.ks-org-filter {
+  width: 200px;
 }
 
-.ks-identity strong {
+.ks-status-filter {
+  width: 140px;
+}
+
+.ks-source-path {
+  display: block;
   min-width: 0;
   overflow: hidden;
-  color: rgb(15 23 42);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ks-identity span {
-  color: rgb(100 116 139);
+  color: rgb(71 85 105);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   font-size: 12px;
-  overflow: hidden;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:deep(.ks-source-path-col .cell) {
+  min-width: 0;
 }
 
 .ks-list-muted {

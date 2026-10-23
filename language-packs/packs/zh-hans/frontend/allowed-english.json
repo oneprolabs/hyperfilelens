@@ -34,12 +34,12 @@
   "insight.dataGateway.statusAiPrefix",
   "insight.kb.colGateway",
   "insight.kb.fieldLensnodeUuid",
+  "insight.kb.sourcePathExtra",
   "insight.kb.wizardStepGateway",
   "insight.mcpServers.colEndpoint",
   "insight.mcpServers.fieldEndpoint",
   "insight.mcpServers.fieldEndpointPhStdio",
   "insight.mcpServers.fieldEndpointPhUrl",
-  "insight.skills.fieldSlug",
   "nodeLifecycle.entityGateway",
   "nodeLifecycle.entityHost",
   "nodeLifecycle.supportedLinuxAgentArch",
@@ -193,6 +193,7 @@
   "repositoriesPage.associatedSourceColEndpoint",
   "repositoriesPage.associatedSourceColId",
   "repositoriesPage.associatedSourceTypeNas",
+  "repositoriesPage.cleanupResourceSeparator",
   "repositoriesPage.colEndpoint",
   "repositoriesPage.colRegion",
   "repositoriesPage.colS3Bucket",
@@ -216,6 +217,5 @@
   "repositoriesPage.protocolNfs",
   "repositoriesPage.protocolSmb",
   "repositoriesPage.storageTypeNas",
-  "searchPage.colId",
-  "repositoriesPage.cleanupResourceSeparator"
+  "searchPage.colId"
 ]

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
 import { DETAIL_EMPTY } from '../../lib/nodeInventoryDisplay'
 import { lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
-import HflDetailDrawerFooter from '../../components/HflDetailDrawerFooter.vue'
 import {
   fetchLensAssistant,
   fetchLensAssistantFormOptions,
@@ -73,10 +73,10 @@ const agentModelLabel = computed(() => modelRefLabel(activeRow.value?.agent_mode
 const multimodalModelLabel = computed(() => modelRefLabel(activeRow.value?.multimodal_model_ref))
 
 const scenarioLabel = computed(() => {
-  const taskName = String(activeRow.value?.selected_task || '')
+  const taskName = String(activeRow.value?.selected_task || props.row?.selected_task || '')
   if (!taskName) return DETAIL_EMPTY
   const task = selectedGateway.value?.tasks.find((item) => item.name === taskName)
-  return task?.title || taskName
+  return task?.title || props.row?.selected_task_title || taskName
 })
 
 const knowledgeSourceLabel = computed(() => {
@@ -197,6 +197,23 @@ const analysisDepthLabel = computed(() => {
   return value
 })
 
+const organizationName = computed(() => {
+  const fromDetail = String(activeRow.value?.organization_name || '').trim()
+  if (fromDetail) return fromDetail
+  return props.row?.organization_name?.trim() || ''
+})
+
+const organizationId = computed(() => {
+  const fromDetail = Number(activeRow.value?.organization_id || 0)
+  if (fromDetail) return fromDetail
+  return Number(props.row?.organization_id || 0) || null
+})
+
+const slugValue = computed(() => {
+  const slug = String(activeRow.value?.slug || props.row?.slug || '').trim()
+  return slug || DETAIL_EMPTY
+})
+
 function modelRefLabel(ref: unknown) {
   if (!ref) return DETAIL_EMPTY
   const refStr = String(ref)
@@ -237,10 +254,14 @@ async function loadDetail() {
   }
   loading.value = true
   try {
+    const orgKey = props.row.organization_key?.trim()
     const [row, modelRows, options] = await Promise.all([
       fetchLensAssistant(props.row.uuid),
       listLensModels().catch(() => [] as LensLlmConfig[]),
-      fetchLensAssistantFormOptions().catch(() => null),
+      fetchLensAssistantFormOptions(
+        props.row.uuid,
+        orgKey ? { organization_key: orgKey } : undefined,
+      ).catch(() => null),
     ])
     detailRaw.value = row
     models.value = modelRows
@@ -251,13 +272,6 @@ async function loadDetail() {
   } finally {
     loading.value = false
   }
-}
-
-function onEdit() {
-  const uuid = props.row?.uuid
-  if (!uuid) return
-  drawerOpen.value = false
-  emit('edit', uuid)
 }
 
 function onDrawerOpened() {
@@ -312,16 +326,35 @@ onUnmounted(() => {
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
-              {{ t('insight.assistants.sectionBasics') }}
+              {{ t('insight.assistants.sectionGeneral') }}
             </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldName') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.colName') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="detailValueClass(displayValue(activeRow.name))"
                 >
                   {{ displayValue(activeRow.name) }}
+                </span>
+              </div>
+              <div
+                v-if="organizationName || organizationId"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.colOrganization') }}</span>
+                <span class="hfl-detail-row__value">
+                  <RouterLink
+                    v-if="organizationId && organizationName"
+                    :to="`/platform-ops/orgs/${organizationId}`"
+                    class="hfl-table-name-link"
+                  >
+                    {{ organizationName }}
+                  </RouterLink>
+                  <span
+                    v-else
+                    :class="{ 'hfl-detail-row__empty': !organizationName }"
+                  >{{ organizationName || DETAIL_EMPTY }}</span>
                 </span>
               </div>
               <div class="hfl-detail-row">
@@ -335,6 +368,29 @@ onUnmounted(() => {
                   </ElTag>
                 </span>
               </div>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldVisibility') }}</span>
+                <span class="hfl-detail-row__value">
+                  <ElTag
+                    :type="visibilityScope === 'user' ? 'warning' : 'success'"
+                    size="small"
+                  >
+                    {{
+                      visibilityScope === 'user'
+                        ? t('insight.assistants.visibilityOnlyMe')
+                        : t('insight.assistants.visibilityOrganization')
+                    }}
+                  </ElTag>
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.assistants.sectionModels') }}
+            </h4>
+            <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldAgentModel') }}</span>
                 <span
@@ -380,7 +436,7 @@ onUnmounted(() => {
             </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldKnowledgeSource') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.colKnowledgeSource') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="detailValueClass(knowledgeSourceLabel)"
@@ -398,7 +454,7 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.kb.colLearnStatus') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldKnowledgeSourceStatus') }}</span>
                 <span class="hfl-detail-row__value">
                   <ElTag
                     v-if="knowledgeSourceStatusDisplay !== DETAIL_EMPTY"
@@ -414,7 +470,7 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldScenario') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.colScenario') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="detailValueClass(scenarioLabel)"
@@ -422,29 +478,54 @@ onUnmounted(() => {
                   {{ scenarioLabel }}
                 </span>
               </div>
-              <div class="hfl-detail-row hfl-detail-row--full">
+            </div>
+          </section>
+
+          <section class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.assistants.sectionRetrieval') }}
+            </h4>
+            <div class="hfl-detail-grid">
+              <div
+                v-if="retrievalScopeLines.length === 1"
+                class="hfl-detail-row"
+              >
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldRetrievalScope') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <div
-                    v-if="retrievalScopeLines.length"
-                    class="create-filter-rules-preview"
-                  >
-                    <code
-                      v-for="line in retrievalScopeLines"
-                      :key="line"
-                      class="create-filter-rules-preview__line"
-                    >{{ line }}</code>
-                  </div>
-                  <span
-                    v-else
-                    class="hfl-detail-row__empty"
-                  >{{ DETAIL_EMPTY }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(retrievalScopeLines[0], true)"
+                  :title="retrievalScopeLines[0]"
+                >
+                  {{ retrievalScopeLines[0] }}
                 </span>
+              </div>
+              <div
+                v-else-if="retrievalScopeLines.length > 1"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldRetrievalScope') }}</span>
+                <span
+                  class="hfl-detail-row__value hfl-detail-row__value--stacked hfl-detail-row__value--mono"
+                  :title="retrievalScopeLines.join('\n')"
+                >
+                  <span
+                    v-for="(line, index) in retrievalScopeLines"
+                    :key="`scope-${index}`"
+                    class="hfl-detail-row__text"
+                  >{{ line }}</span>
+                </span>
+              </div>
+              <div
+                v-else
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldRetrievalScope') }}</span>
+                <span class="hfl-detail-row__value hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldExcludeExtensions') }}</span>
                 <span
-                  class="hfl-detail-row__value hfl-detail-row__value--mono"
+                  class="hfl-detail-row__value"
                   :class="detailValueClass(excludeExtensionsText === DETAIL_EMPTY ? '' : excludeExtensionsText, true)"
                 >
                   {{ excludeExtensionsText }}
@@ -453,7 +534,7 @@ onUnmounted(() => {
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldExcludeDirs') }}</span>
                 <span
-                  class="hfl-detail-row__value hfl-detail-row__value--mono"
+                  class="hfl-detail-row__value"
                   :class="detailValueClass(excludeDirsText === DETAIL_EMPTY ? '' : excludeDirsText, true)"
                 >
                   {{ excludeDirsText }}
@@ -531,29 +612,16 @@ onUnmounted(() => {
 
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
-              {{ t('insight.assistants.sectionVisibility') }}
+              {{ t('insight.assistants.sectionTechnical') }}
             </h4>
             <div class="hfl-detail-grid">
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldVisibility') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <ElTag
-                    :type="visibilityScope === 'user' ? 'warning' : 'success'"
-                    size="small"
-                  >
-                    {{
-                      visibilityScope === 'user'
-                        ? t('insight.assistants.visibilityOnlyMe')
-                        : t('insight.assistants.visibilityOrganization')
-                    }}
-                  </ElTag>
-                  <span class="insight-detail-row-hint">
-                    {{
-                      visibilityScope === 'user'
-                        ? t('insight.assistants.visibilityOnlyMeDesc')
-                        : t('insight.assistants.visibilityOrganizationDesc')
-                    }}
-                  </span>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldSlug') }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(slugValue === DETAIL_EMPTY ? '' : slugValue, true)"
+                >
+                  {{ slugValue }}
                 </span>
               </div>
             </div>
@@ -562,15 +630,5 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <template
-      v-if="activeRow"
-      #footer
-    >
-      <HflDetailDrawerFooter
-        :save-label="t('common.edit')"
-        @cancel="drawerOpen = false"
-        @save="onEdit"
-      />
-    </template>
   </ElDrawer>
 </template>

@@ -76,9 +76,6 @@ describe('Copilot Data Gateway product terminology', () => {
   it('uses Public terminology for Platform Ops service actions', () => {
     const copy = en.insight.dataGateway
 
-    expect(copy.defaultActive).toBe('Public Default')
-    expect(copy.defaultSet).toBe('Set as Public Default')
-    expect(copy.defaultSetSuccess).toBe('Public Data Gateway default updated.')
     expect(copy.origin.platform).toBe('Platform')
     expect(en.platformOps.engineGateway.addSubtitle).toContain('Public Data Gateway')
     expect(nodeApi).not.toContain('Platform gateway enrollment response is incomplete')

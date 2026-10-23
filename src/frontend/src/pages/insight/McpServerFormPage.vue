@@ -290,7 +290,7 @@ watch(
                 {{ t('insight.mcpServers.sectionConfigDesc') }}
               </p>
 
-              <div class="mcp-config-panel">
+              <div class="mcp-config-list">
                 <div
                   v-for="(row, index) in configRows"
                   :key="index"
@@ -313,18 +313,15 @@ watch(
                     <Trash2 :size="16" />
                   </button>
                 </div>
-                <ElButton
-                  size="small"
+                <button
+                  type="button"
                   class="mcp-config-add"
                   @click="addConfigRow"
                 >
-                  <Plus :size="14" />
+                  <Plus :size="15" />
                   {{ t('insight.mcpServers.addConfigRow') }}
-                </ElButton>
+                </button>
               </div>
-              <p class="mcp-field-hint">
-                {{ t('insight.mcpServers.fieldConfigHint') }}
-              </p>
             </section>
           </div>
         </div>
@@ -343,7 +340,7 @@ watch(
           :disabled="saving || loading"
           @click="handleSubmit"
         >
-          {{ isEditing ? t('common.save') : t('insight.mcpServers.btnCreate') }}
+          {{ isEditing ? t('common.saveChanges') : t('insight.mcpServers.btnCreate') }}
         </ElButton>
       </footer>
     </div>
@@ -389,15 +386,11 @@ watch(
   margin-bottom: 14px;
 }
 
-.mcp-config-panel {
+.mcp-config-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 100%;
-  padding: 12px;
-  border: 1px solid var(--color-border, #e2e8f0);
-  border-radius: 12px;
-  background: var(--color-bg-muted, #f8fafc);
 }
 
 .mcp-config-row {
@@ -413,20 +406,41 @@ watch(
   justify-content: center;
   width: 36px;
   height: 36px;
-  border: 1px solid var(--color-border, #e2e8f0);
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
-  background: #fff;
-  color: var(--color-text-secondary);
+  background: var(--el-bg-color);
+  color: var(--el-text-color-secondary);
   cursor: pointer;
 }
 
 .mcp-config-row__remove:hover {
-  color: var(--color-danger, #dc2626);
-  border-color: var(--color-danger, #dc2626);
+  color: var(--el-color-danger);
+  border-color: var(--el-color-danger);
 }
 
 .mcp-config-add {
-  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--el-text-color-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.mcp-config-add:hover {
+  border-color: var(--el-color-primary);
+  background: color-mix(in srgb, var(--el-color-primary) 6%, transparent);
+  color: var(--el-color-primary);
 }
 
 @media (max-width: 720px) {

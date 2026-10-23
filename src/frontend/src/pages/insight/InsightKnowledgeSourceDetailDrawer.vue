@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { formatLocalDateTime } from '../../lib/dateTime'
@@ -60,7 +61,6 @@ const hasIngestChanges = computed(
 )
 
 const isBackupSource = computed(() => Boolean(activeRow.value?.backup_source_snapshot_id))
-const isGatewayLocal = computed(() => !isBackupSource.value)
 
 const sourceTypeLabel = computed(() =>
   isBackupSource.value
@@ -72,7 +72,7 @@ const scopePaths = computed(() => {
   const row = activeRow.value
   if (!row) return []
   const scopes = row.source_scopes_json?.map((item) => item.source_path?.trim()).filter(Boolean) ?? []
-  if (scopes.length > 0) return scopes
+  if (scopes.length > 0) return scopes as string[]
   return row.source_path?.trim() ? [row.source_path.trim()] : []
 })
 
@@ -145,6 +145,53 @@ const conversionSummaryDisplay = computed(() => {
   if (conversionEmpty.value) return t('insight.copilot.documentConversionEmpty')
   return t('insight.kb.retrieval.conversionResultsEmpty')
 })
+const conversionResultDisplay = computed(() => {
+  if (conversionOk.value) return t('insight.kb.retrieval.conversionResultsOk')
+  if (conversionEmpty.value) return t('insight.copilot.documentConversionEmpty')
+  if (documentConversion.value && conversionFailed.value) {
+    return documentConversion.value.error || t('insight.copilot.documentConversionPartial')
+  }
+  if (
+    documentConversion.value
+    && !conversionRunning.value
+    && conversionSummaryLabel.value
+    && !conversionOk.value
+    && conversionProblems.value.length === 0
+  ) {
+    return t('insight.copilot.documentConversionPartial')
+  }
+  return ''
+})
+
+const conversionResultStatus = computed(() => {
+  const failedCount = conversionProblems.value.length
+  if (failedCount > 0) {
+    return t('insight.kb.conversionFailedFilesCount', { n: failedCount }, failedCount)
+  }
+  return conversionResultDisplay.value
+})
+
+const conversionFailedFiles = computed(() =>
+  conversionProblems.value.map((item) => {
+    const name = item.name?.trim() || ''
+    const reason = copilotReasonLabel(t, item.reason, item.reason_label)
+    return {
+      name: name || reason,
+      reason,
+      title: name ? `${name} · ${reason}` : reason,
+    }
+  }),
+)
+
+const conversionFailedFilesTitle = computed(() =>
+  conversionFailedFiles.value.map((item) => item.title).join('\n'),
+)
+
+const conversionWarningLines = computed(() =>
+  conversionWarnings.value.map((warning) =>
+    copilotWarningLabel(t, warning.code, warning.label || warning.code),
+  ),
+)
 
 function detailValueClass(text: string | number | null | undefined, mono = false) {
   const value = text == null || text === '' ? DETAIL_EMPTY : String(text)
@@ -158,6 +205,14 @@ function detailValueClass(text: string | number | null | undefined, mono = false
 function displayValue(text: string | number | null | undefined) {
   if (text == null || text === '') return DETAIL_EMPTY
   return String(text)
+}
+
+function organizationLabel(row: LensKnowledgeSource | null | undefined) {
+  return row?.organization_name?.trim() || ''
+}
+
+function organizationId(row: LensKnowledgeSource | null | undefined) {
+  return Number(row?.organization_id || 0) || null
 }
 
 async function loadDetail() {
@@ -273,15 +328,14 @@ onUnmounted(() => {
             :label="t('insight.kb.tabSource')"
             name="source"
           >
-            <div class="hfl-detail-sections ks-kb-detail-sections">
-              <section class="hfl-detail-section ks-kb-detail-card">
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.sectionBasicInfo') }}
+            <div class="hfl-detail-sections">
+              <section class="hfl-detail-section">
+                <h4 class="hfl-detail-section__title">
+                  {{ t('insight.kb.sectionGeneral') }}
                 </h4>
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldName') }}</span>
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.colName') }}</span>
                     <span
                       class="hfl-detail-row__value"
                       :class="detailValueClass(activeRow.name)"
@@ -290,8 +344,36 @@ onUnmounted(() => {
                     </span>
                   </div>
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldSourceType') }}</span>
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.colSourceType') }}</span>
                     <span class="hfl-detail-row__value">{{ sourceTypeLabel }}</span>
+                  </div>
+                  <div
+                    v-if="organizationLabel(activeRow) || organizationId(activeRow)"
+                    class="hfl-detail-row"
+                  >
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.colOrganization') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <RouterLink
+                        v-if="organizationId(activeRow) && organizationLabel(activeRow)"
+                        :to="`/platform-ops/orgs/${organizationId(activeRow)}`"
+                        class="hfl-table-name-link"
+                      >
+                        {{ organizationLabel(activeRow) }}
+                      </RouterLink>
+                      <span
+                        v-else
+                        :class="{ 'hfl-detail-row__empty': !organizationLabel(activeRow) }"
+                      >{{ organizationLabel(activeRow) || DETAIL_EMPTY }}</span>
+                    </span>
+                  </div>
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.colLearnStatus') }}</span>
+                    <span class="hfl-detail-row__value">
+                      <ElTag
+                        v-bind="lifecycleStatusTagAttrs(activeRow.status)"
+                        size="small"
+                      >{{ statusLabel }}</ElTag>
+                    </span>
                   </div>
                   <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('insight.kb.fieldScanEnabled') }}</span>
@@ -305,16 +387,7 @@ onUnmounted(() => {
                     </span>
                   </div>
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.colLearnStatus') }}</span>
-                    <span class="hfl-detail-row__value">
-                      <ElTag
-                        v-bind="lifecycleStatusTagAttrs(activeRow.status)"
-                        size="small"
-                      >{{ statusLabel }}</ElTag>
-                    </span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldIngestSummary') }}</span>
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.colRetrieval') }}</span>
                     <span
                       class="hfl-detail-row__value"
                       :class="detailValueClass(activeRow.ingest_summary)"
@@ -337,91 +410,24 @@ onUnmounted(() => {
                 </div>
               </section>
 
-              <section class="hfl-detail-section ks-kb-detail-card">
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.retrieval.conversionResultsTitle') }}
+              <section class="hfl-detail-section">
+                <h4 class="hfl-detail-section__title">
+                  {{ t('insight.kb.sectionSource') }}
                 </h4>
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionSummary') }}</span>
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.colGateway') }}</span>
                     <span
                       class="hfl-detail-row__value"
-                      :class="detailValueClass(conversionSummaryDisplay)"
+                      :class="detailValueClass(activeRow.gateway_name)"
                     >
-                      {{ conversionSummaryDisplay }}
+                      {{ displayValue(activeRow.gateway_name) }}
                     </span>
                   </div>
                   <div
-                    v-if="conversionOk"
+                    v-if="isBackupSource"
                     class="hfl-detail-row"
                   >
-                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
-                    <span class="hfl-detail-row__value">{{ t('insight.kb.retrieval.conversionResultsOk') }}</span>
-                  </div>
-                  <div
-                    v-else-if="conversionEmpty"
-                    class="hfl-detail-row"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
-                    <span class="hfl-detail-row__value">{{ t('insight.copilot.documentConversionEmpty') }}</span>
-                  </div>
-                  <div
-                    v-else-if="documentConversion && conversionFailed"
-                    class="hfl-detail-row"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
-                    <span class="hfl-detail-row__value">{{ documentConversion.error || t('insight.copilot.documentConversionPartial') }}</span>
-                  </div>
-                  <div
-                    v-else-if="documentConversion && !conversionRunning && conversionSummaryLabel && !conversionOk && conversionProblems.length === 0"
-                    class="hfl-detail-row"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
-                    <span class="hfl-detail-row__value">{{ t('insight.copilot.documentConversionPartial') }}</span>
-                  </div>
-                  <div
-                    v-if="conversionProblems.length"
-                    class="hfl-detail-row ks-kb-detail-row--stack"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionTitle') }}</span>
-                    <ul class="ks-kb-conversion-list">
-                      <li
-                        v-for="(item, index) in conversionProblems"
-                        :key="`${item.name}-${index}`"
-                      >
-                        <strong>{{ item.name }}</strong>
-                        <span>{{ copilotReasonLabel(t, item.reason, item.reason_label) }}</span>
-                      </li>
-                    </ul>
-                  </div>
-                  <div
-                    v-if="conversionWarnings.length"
-                    class="hfl-detail-row ks-kb-detail-row--stack"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('insight.copilot.documentConversionWarnings') }}</span>
-                    <ul class="ks-kb-conversion-list">
-                      <li
-                        v-for="(warning, index) in conversionWarnings"
-                        :key="`${warning.code}-${index}`"
-                      >
-                        <span>{{ copilotWarningLabel(t, warning.code, warning.label || warning.code) }}</span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-              </section>
-
-              <section
-                v-if="isBackupSource"
-                class="hfl-detail-section ks-kb-detail-card"
-              >
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.sourceTypeBackup') }}
-                </h4>
-                <div class="hfl-detail-grid">
-                  <div class="hfl-detail-row">
                     <span class="hfl-detail-row__label">{{ t('insight.kb.fieldBackupSource') }}</span>
                     <span
                       class="hfl-detail-row__value"
@@ -430,7 +436,10 @@ onUnmounted(() => {
                       {{ backupSourceLabel }}
                     </span>
                   </div>
-                  <div class="hfl-detail-row">
+                  <div
+                    v-if="isBackupSource"
+                    class="hfl-detail-row"
+                  >
                     <span class="hfl-detail-row__label">{{ t('insight.kb.fieldSnapshot') }}</span>
                     <span
                       class="hfl-detail-row__value"
@@ -439,75 +448,33 @@ onUnmounted(() => {
                       {{ snapshotLabel }}
                     </span>
                   </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.colLinkedVersion') }}</span>
+                  <div
+                    v-if="isBackupSource"
+                    class="hfl-detail-row"
+                  >
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldSnapshotMode') }}</span>
                     <span class="hfl-detail-row__value">{{ linkedVersionLabel }}</span>
                   </div>
-                  <div class="hfl-detail-row ks-kb-detail-row--stack">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldRestoreScope') }}</span>
-                    <div class="ks-kb-detail-scope-list">
-                      <div
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.colSourcePath') }}</span>
+                    <span
+                      v-if="scopePaths.length <= 1"
+                      class="hfl-detail-row__value"
+                      :class="detailValueClass(scopePaths[0], true)"
+                      :title="scopePaths[0] || undefined"
+                    >
+                      {{ displayValue(scopePaths[0]) }}
+                    </span>
+                    <span
+                      v-else
+                      class="hfl-detail-row__value hfl-detail-row__value--stacked hfl-detail-row__value--mono"
+                      :title="scopePaths.join('\n')"
+                    >
+                      <span
                         v-for="(path, index) in scopePaths"
                         :key="`${index}-${path}`"
-                        class="ks-kb-detail-scope-list__item"
-                      >
-                        <span class="ks-kb-detail-scope-list__index">
-                          {{ String(index + 1).padStart(2, '0') }}
-                        </span>
-                        <span class="ks-kb-detail-scope-list__path">{{ path }}</span>
-                      </div>
-                      <span
-                        v-if="scopePaths.length === 0"
-                        class="hfl-detail-row__empty"
-                      >{{ DETAIL_EMPTY }}</span>
-                    </div>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.colGateway') }}</span>
-                    <span
-                      class="hfl-detail-row__value"
-                      :class="detailValueClass(activeRow.gateway_name)"
-                    >
-                      {{ displayValue(activeRow.gateway_name) }}
-                    </span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldWorkspaceRestore') }}</span>
-                    <span
-                      class="hfl-detail-row__value"
-                      :class="detailValueClass(activeRow.workspace_path_on_lensnode, true)"
-                    >
-                      {{ displayValue(activeRow.workspace_path_on_lensnode) }}
-                    </span>
-                  </div>
-                </div>
-              </section>
-
-              <section
-                v-if="isGatewayLocal"
-                class="hfl-detail-section ks-kb-detail-card"
-              >
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.sourceTypeGatewayLocal') }}
-                </h4>
-                <div class="hfl-detail-grid">
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.colGateway') }}</span>
-                    <span
-                      class="hfl-detail-row__value"
-                      :class="detailValueClass(activeRow.gateway_name)"
-                    >
-                      {{ displayValue(activeRow.gateway_name) }}
-                    </span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('insight.kb.wizardStepPath') }}</span>
-                    <span
-                      class="hfl-detail-row__value"
-                      :class="detailValueClass(activeRow.source_path, true)"
-                    >
-                      {{ displayValue(activeRow.source_path) }}
+                        class="hfl-detail-row__text"
+                      >{{ path }}</span>
                     </span>
                   </div>
                   <div class="hfl-detail-row">
@@ -522,10 +489,96 @@ onUnmounted(() => {
                 </div>
               </section>
 
-              <section class="hfl-detail-section ks-kb-detail-card">
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.tabDiagnostics') }}
+              <section class="hfl-detail-section">
+                <h4 class="hfl-detail-section__title">
+                  {{ t('insight.kb.sectionConversion') }}
+                </h4>
+                <div class="hfl-detail-grid">
+                  <div class="hfl-detail-row">
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldConversionSummary') }}</span>
+                    <span
+                      class="hfl-detail-row__value"
+                      :class="detailValueClass(conversionSummaryDisplay)"
+                    >
+                      {{ conversionSummaryDisplay }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="conversionResultStatus"
+                    class="hfl-detail-row"
+                  >
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldConversionResult') }}</span>
+                    <span
+                      class="hfl-detail-row__value"
+                      :class="detailValueClass(conversionResultStatus)"
+                    >
+                      {{ conversionResultStatus }}
+                    </span>
+                  </div>
+                  <div
+                    v-if="conversionFailedFiles.length === 1"
+                    class="hfl-detail-row"
+                  >
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldConversionFailedFiles') }}</span>
+                    <span
+                      class="hfl-detail-row__value"
+                      :class="detailValueClass(conversionFailedFiles[0]?.name, true)"
+                      :title="conversionFailedFilesTitle"
+                    >
+                      {{ conversionFailedFiles[0]?.name }}
+                    </span>
+                  </div>
+                  <div
+                    v-else-if="conversionFailedFiles.length > 1"
+                    class="hfl-detail-row"
+                  >
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldConversionFailedFiles') }}</span>
+                    <span
+                      class="hfl-detail-row__value hfl-detail-row__value--stacked hfl-detail-row__value--mono"
+                      :title="conversionFailedFilesTitle"
+                    >
+                      <span
+                        v-for="(item, index) in conversionFailedFiles"
+                        :key="`failed-${index}`"
+                        class="hfl-detail-row__text"
+                      >{{ item.name }}</span>
+                    </span>
+                  </div>
+                  <div
+                    v-if="conversionWarningLines.length === 1"
+                    class="hfl-detail-row"
+                  >
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldConversionWarnings') }}</span>
+                    <span
+                      class="hfl-detail-row__value"
+                      :class="detailValueClass(conversionWarningLines[0])"
+                      :title="conversionWarningLines[0]"
+                    >
+                      {{ conversionWarningLines[0] }}
+                    </span>
+                  </div>
+                  <div
+                    v-else-if="conversionWarningLines.length > 1"
+                    class="hfl-detail-row"
+                  >
+                    <span class="hfl-detail-row__label">{{ t('insight.kb.fieldConversionWarnings') }}</span>
+                    <span
+                      class="hfl-detail-row__value hfl-detail-row__value--stacked"
+                      :title="conversionWarningLines.join('\n')"
+                    >
+                      <span
+                        v-for="(line, index) in conversionWarningLines"
+                        :key="`warn-${index}`"
+                        class="hfl-detail-row__text"
+                      >{{ line }}</span>
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              <section class="hfl-detail-section">
+                <h4 class="hfl-detail-section__title">
+                  {{ t('insight.kb.sectionTechnical') }}
                 </h4>
                 <div class="hfl-detail-grid">
                   <div class="hfl-detail-row">
@@ -582,38 +635,56 @@ onUnmounted(() => {
             :label="t('insight.kb.tabIngest')"
             name="retrieval"
           >
-            <div class="hfl-detail-sections ks-kb-detail-sections">
-              <section class="hfl-detail-section ks-kb-detail-card">
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.retrieval.documentContentTitle') }}
-                </h4>
+            <div class="ks-retrieval-panels">
+              <p class="ks-retrieval-panels__lead">
+                {{ t('insight.kb.retrieval.stepDesc') }}
+              </p>
+
+              <section class="ks-retrieval-panel">
+                <div class="ks-retrieval-panel__header">
+                  <h4 class="ks-retrieval-panel__title">
+                    {{ t('insight.kb.retrieval.documentContentTitle') }}
+                  </h4>
+                  <p class="ks-retrieval-panel__desc">
+                    {{ t('insight.kb.retrieval.documentContentHint') }}
+                  </p>
+                </div>
                 <KnowledgeSourceRetrievalEnhancement
                   v-model="ingestPolicy"
                   section="document"
-                  :show-lead="true"
+                  compact
                 />
               </section>
 
-              <section class="hfl-detail-section ks-kb-detail-card">
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.retrieval.standaloneImagesTitle') }}
-                </h4>
+              <section class="ks-retrieval-panel">
+                <div class="ks-retrieval-panel__header">
+                  <h4 class="ks-retrieval-panel__title">
+                    {{ t('insight.kb.retrieval.standaloneImagesTitle') }}
+                  </h4>
+                  <p class="ks-retrieval-panel__desc">
+                    {{ t('insight.kb.retrieval.standaloneImagesHint') }}
+                  </p>
+                </div>
                 <KnowledgeSourceRetrievalEnhancement
                   v-model="ingestPolicy"
                   section="images"
+                  compact
                 />
               </section>
 
-              <section class="hfl-detail-section ks-kb-detail-card">
-                <h4 class="ks-kb-detail-card__title">
-                  <span class="ks-kb-detail-card__indicator" />
-                  {{ t('insight.kb.retrieval.globalConversionLimitsTitle') }}
-                </h4>
+              <section class="ks-retrieval-panel">
+                <div class="ks-retrieval-panel__header">
+                  <h4 class="ks-retrieval-panel__title">
+                    {{ t('insight.kb.retrieval.globalConversionLimitsTitle') }}
+                  </h4>
+                  <p class="ks-retrieval-panel__desc">
+                    {{ t('insight.kb.retrieval.globalConversionLimitsHint') }}
+                  </p>
+                </div>
                 <KnowledgeSourceRetrievalEnhancement
                   v-model="ingestPolicy"
                   section="limits"
+                  compact
                 />
               </section>
             </div>
@@ -637,105 +708,56 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.ks-kb-detail-sections {
-  gap: 16px;
-}
-
-.ks-kb-detail-card {
-  padding: 0;
-}
-
-.ks-kb-detail-card__title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 14px 16px 0;
-  color: rgb(15 23 42);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.ks-kb-detail-card__indicator {
-  width: 3px;
-  height: 16px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: linear-gradient(
-    180deg,
-    var(--color-primary) 0%,
-    color-mix(in srgb, var(--color-primary) 82%, #000) 100%
-  );
-}
-
-.ks-kb-detail-card :deep(.hfl-detail-grid) {
-  padding: 12px 16px 16px;
-}
-
-.ks-kb-detail-card :deep(.ks-retrieval-stack) {
-  padding: 0 16px 16px;
-}
-
-.ks-kb-detail-row--stack {
-  align-items: flex-start;
-}
-
-.ks-kb-detail-scope-list {
+.ks-retrieval-panels {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
+  gap: 14px;
 }
 
-.ks-kb-conversion-list {
-  display: grid;
-  gap: 8px;
+.ks-retrieval-panels__lead {
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.ks-kb-conversion-list li {
-  display: grid;
-  gap: 2px;
-}
-
-.ks-kb-conversion-list strong {
-  overflow-wrap: anywhere;
-  color: rgb(15 23 42);
+  color: var(--color-text-secondary, #64748b);
   font-size: 12px;
-}
-
-.ks-kb-conversion-list span {
-  color: rgb(100 116 139);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.ks-kb-detail-scope-list__item {
-  display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  padding: 8px 10px;
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  border-radius: 8px;
-  background: rgb(248 250 252);
-}
-
-.ks-kb-detail-scope-list__index {
-  color: rgb(100 116 139);
-  font-size: 12px;
-  font-weight: 700;
   line-height: 1.5;
 }
 
-.ks-kb-detail-scope-list__path {
-  color: rgb(30 41 59);
-  font-size: 13px;
+.ks-retrieval-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--color-border, rgba(226, 232, 240, 0.95));
+  border-radius: 12px;
+  background: var(--color-card-bg, #fff);
+}
+
+.ks-retrieval-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ks-retrieval-panel__title {
+  margin: 0;
+  color: var(--color-text-title, #0f172a);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.ks-retrieval-panel__desc {
+  margin: 0;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 12px;
   line-height: 1.45;
-  word-break: break-all;
+}
+
+html[data-theme='dark'] .ks-retrieval-panel {
+  border-color: #3b4658;
+  background: #151a22;
+}
+
+html[data-theme='dark'] .ks-retrieval-panel__title {
+  color: #e5e7eb;
 }
 </style>

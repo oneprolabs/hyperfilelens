@@ -51,9 +51,16 @@ const hasUpgradeLifecycle = computed(() => {
   return lc != null && lc.kind === 'upgrade' && lc.timeline != null && lc.timeline.length > 0
 })
 
+const showDrawerFooter = computed(() =>
+  Boolean(node.value && (drawerTab.value === 'basic' || drawerTab.value === 'performance')),
+)
+
 const hasDrawerChanges = computed(() => {
-  const perfChanged = perfPanelRef.value?.hasPerfChanges ?? false
-  return perfChanged
+  const perfChanged = drawerTab.value === 'performance'
+    && (perfPanelRef.value?.hasPerfChanges ?? false)
+  const nameChanged = drawerTab.value === 'basic'
+    && (basicPanelRef.value?.hasNameChanges ?? false)
+  return perfChanged || nameChanged
 })
 
 function onNodeUpdated(updated: ApiNode) {
@@ -65,9 +72,13 @@ function onDrawerOpened() {
   bindDrawerResize()
 }
 
-function onDrawerClosed() {
+function discardDrawerEdits() {
   basicPanelRef.value?.discardNameEdit()
   perfPanelRef.value?.cancelPerfEdits()
+}
+
+function onDrawerClosed() {
+  discardDrawerEdits()
   requests.abortScope('proxy-node-detail')
   unbindDrawerResize()
   node.value = null
@@ -79,12 +90,17 @@ function onDrawerClosed() {
   }
 }
 
+function cancelDrawerChanges() {
+  discardDrawerEdits()
+  open.value = false
+}
+
 async function saveDrawerChanges() {
   if (!hasDrawerChanges.value || !node.value) return
   saving.value = true
   let didSave = false
   try {
-    if (perfPanelRef.value?.hasPerfChanges) {
+    if (drawerTab.value === 'performance' && perfPanelRef.value?.hasPerfChanges) {
       try {
         const updated = await perfPanelRef.value.savePerfSettings(node.value)
         if (updated) {
@@ -94,6 +110,9 @@ async function saveDrawerChanges() {
       } catch {
         // Child panel surfaces validation/API errors.
       }
+    }
+    if (drawerTab.value === 'basic' && basicPanelRef.value?.hasNameChanges) {
+      didSave = await basicPanelRef.value.saveName() || didSave
     }
     if (didSave) savedInSession.value = true
   } finally {
@@ -287,13 +306,13 @@ onUnmounted(() => {
     </div>
 
     <template
-      v-if="node && drawerTab === 'performance'"
+      v-if="showDrawerFooter"
       #footer
     >
       <HflDetailDrawerFooter
         :saving="saving"
         :save-disabled="!hasDrawerChanges"
-        @cancel="open = false"
+        @cancel="cancelDrawerChanges"
         @save="saveDrawerChanges"
       />
     </template>

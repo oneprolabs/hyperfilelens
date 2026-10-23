@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElButton, ElDialog } from 'element-plus'
-import { AlertTriangle, ArrowUpCircle } from 'lucide-vue-next'
+import DangerConfirmDialog from './DangerConfirmDialog.vue'
 import {
-  buildUpgradeConfirmSkipGroups,
+  buildUpgradeConfirmDialogItems,
   upgradePreviewSkippedCount,
 } from '../lib/nodeLifecycleUpgradeConfirm'
 import type { NodeOperationBatchPreview } from '../types/nodeLifecycle'
-import './backupSourceFlowActionDialog.css'
 
 const props = defineProps<{
   modelValue: boolean
@@ -35,17 +33,37 @@ const skippedCount = computed(() =>
 )
 const hasSkipped = computed(() => skippedCount.value > 0)
 
-const message = computed(() =>
-  t('nodeLifecycle.confirmUpgradeAgents', {
-    selected: requestedCount.value,
-    eligible: eligibleCount.value,
-    skipped: skippedCount.value,
-  }),
+const items = computed(() =>
+  props.preview ? buildUpgradeConfirmDialogItems(t, props.preview) : [],
 )
 
-const skipGroups = computed(() =>
-  props.preview ? buildUpgradeConfirmSkipGroups(t, props.preview) : [],
+const itemsHeading = computed(() =>
+  hasSkipped.value
+    ? t('nodeLifecycle.confirmUpgradeItemsHeading', {
+      selected: requestedCount.value,
+      eligible: eligibleCount.value,
+      skipped: skippedCount.value,
+    })
+    : t('nodesPage.selectedCount', { n: requestedCount.value }),
 )
+
+const message = computed(() =>
+  hasSkipped.value
+    ? t('nodeLifecycle.confirmUpgradeAgents', {
+      selected: requestedCount.value,
+      eligible: eligibleCount.value,
+      skipped: skippedCount.value,
+    })
+    : '',
+)
+
+const warning = computed(() => t('nodeLifecycle.confirmImpactUpgrade'))
+
+const confirmationContext = computed(() => JSON.stringify({
+  requested: requestedCount.value,
+  eligible: props.preview?.eligible.map((item) => item.node_id) || [],
+  skipped: skippedCount.value,
+}))
 
 function close() {
   visible.value = false
@@ -58,119 +76,25 @@ function confirm() {
 </script>
 
 <template>
-  <ElDialog
+  <DangerConfirmDialog
     v-model="visible"
+    class="hfl-upgrade-confirm"
+    width="640px"
     :title="t('nodeLifecycle.upgradeTitle')"
-    class="hfl-flow-action-dialog hfl-flow-action-dialog--confirm hfl-upgrade-confirm"
-    align-center
-    @close="close"
-  >
-    <div class="hfl-flow-action-dialog__body hfl-flow-action-dialog__body--lead-only">
-      <div class="hfl-flow-action-dialog__lead">
-        <div
-          class="hfl-flow-action-dialog__icon-badge"
-          :class="hasSkipped
-            ? 'hfl-flow-action-dialog__icon-badge--warning'
-            : 'hfl-flow-action-dialog__icon-badge--primary'"
-        >
-          <AlertTriangle
-            v-if="hasSkipped"
-            :size="18"
-          />
-          <ArrowUpCircle
-            v-else
-            :size="18"
-          />
-        </div>
-        <div class="hfl-flow-action-dialog__icon-stack-content">
-          <div
-            class="hfl-upgrade-confirm__stats"
-            role="status"
-            :aria-label="message"
-          >
-            <div class="hfl-upgrade-confirm__stat">
-              <span>{{ t('nodeLifecycle.confirmStatSelected') }}</span>
-              <strong>{{ requestedCount }}</strong>
-            </div>
-            <div class="hfl-upgrade-confirm__stat hfl-upgrade-confirm__stat--upgrade">
-              <span>{{ t('nodeLifecycle.confirmStatUpgrade') }}</span>
-              <strong>{{ eligibleCount }}</strong>
-            </div>
-            <div
-              v-if="hasSkipped"
-              class="hfl-upgrade-confirm__stat hfl-upgrade-confirm__stat--skipped"
-            >
-              <span>{{ t('nodeLifecycle.confirmStatSkipped') }}</span>
-              <strong>{{ skippedCount }}</strong>
-            </div>
-          </div>
-          <p class="hfl-upgrade-confirm__impact">
-            {{ t('nodeLifecycle.confirmImpactUpgrade') }}
-          </p>
-          <div
-            v-if="skipGroups.length"
-            class="hfl-upgrade-confirm__groups"
-            :aria-labelledby="'hfl-upgrade-confirm-skipped-title'"
-          >
-            <p
-              id="hfl-upgrade-confirm-skipped-title"
-              class="hfl-upgrade-confirm__groups-title"
-            >
-              {{ t('nodeLifecycle.confirmSkippedTitle') }}
-            </p>
-            <div
-              class="hfl-upgrade-confirm__group-list"
-              role="list"
-            >
-              <section
-                v-for="group in skipGroups"
-                :key="group.key"
-                class="hfl-upgrade-confirm__group"
-                role="listitem"
-              >
-                <p class="hfl-upgrade-confirm__group-title">
-                  {{ group.title }}
-                </p>
-                <div class="hfl-upgrade-confirm__names">
-                  <span
-                    v-for="name in group.names"
-                    :key="name.id"
-                    class="hfl-upgrade-confirm__name"
-                  >
-                    {{ name.name }}
-                  </span>
-                </div>
-                <p
-                  v-for="detail in group.details || []"
-                  :key="detail"
-                  class="hfl-upgrade-confirm__guidance"
-                >
-                  {{ detail }}
-                </p>
-                <p
-                  v-if="group.guidance"
-                  class="hfl-upgrade-confirm__guidance"
-                >
-                  <strong>{{ t('nodeLifecycle.confirmRecommendation') }}</strong>
-                  {{ group.guidance }}
-                </p>
-              </section>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <template #footer>
-      <ElButton @click="close">
-        {{ t('common.cancel') }}
-      </ElButton>
-      <ElButton
-        type="primary"
-        @click="confirm"
-      >
-        {{ t('nodeLifecycle.confirmUpgradeCount', { n: eligibleCount }) }}
-      </ElButton>
-    </template>
-  </ElDialog>
+    level="medium"
+    :message="message"
+    :warning="warning"
+    :items="items"
+    :items-heading="itemsHeading"
+    :item-name-label="t('nodeLifecycle.entityHost')"
+    :item-status-label="t('common.dangerItemStatus')"
+    :item-details-label="t('common.dangerItemDetails')"
+    :confirmation-context="confirmationContext"
+    confirm-mode="single"
+    :cancel-text="t('common.cancel')"
+    :confirm-text="t('nodesPage.actionUpgrade')"
+    :confirm-disabled="eligibleCount === 0"
+    @confirm="confirm"
+    @cancel="close"
+  />
 </template>

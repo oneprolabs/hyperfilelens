@@ -32,9 +32,26 @@ describe('backup source terminology', () => {
   it('uses contextual terminology in source details without changing gateway details', () => {
     const basicPanel = source('components/NodeBasicInfoPanel.vue')
     expect(basicPanel).toContain('useBackupSourceTerminology')
+    expect(basicPanel).toContain('useGatewayListLabels')
     expect(source('components/HostSourceDetailDrawer.vue')).toContain('use-backup-source-terminology')
     expect(source('components/ProxyNodeDetailDrawer.vue')).toContain('use-backup-source-terminology')
     expect(source('pages/insight/InsightGatewayDetailDrawer.vue')).not.toContain('use-backup-source-terminology')
+    expect(source('pages/insight/InsightGatewayDetailDrawer.vue')).toContain('use-gateway-list-labels')
+  })
+
+  it('aligns Data Gateway detail labels with the list columns', () => {
+    expect(enProtectionPages.sourceResources.colName).toBe('Name')
+    expect(enProtectionPages.sourceResources.colType).toBe('Type')
+    expect(enProtectionPages.sourceResources.fieldId).toBe('ID')
+    expect(enProtectionPages.sourceResources.colHostname).toBe('Hostname')
+    expect(enProtectionPages.sourceResources.colOs).toBe('OS')
+    expect(en.insight.dataGateway.chatRunning).toBe('Active')
+    expect(en.insight.dataGateway.chatQueued).toBe('Queued')
+    expect(en.insight.dataGateway.chatConcurrency).toBe('Concurrent Preparations')
+    expect(en.insight.dataGateway.chatQueueCapacity).toBe('Queue Capacity')
+    expect(en.insight.dataGateway.fieldSlLastHeartbeat).toBe('Last Heartbeat')
+    expect(en.insight.dataGateway.fieldSlEngineVersion).toBe('Engine Version')
+    expect(en.insight.dataGateway.fieldSlRegistered).toBe('Registered At')
   })
 
   it('renames existing related-source columns while retaining NAS Connectivity', () => {

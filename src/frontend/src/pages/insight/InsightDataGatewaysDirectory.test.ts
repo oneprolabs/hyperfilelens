@@ -499,7 +499,8 @@ describe('granular platform gateway permissions', () => {
     const state = stateOf(wrapper)
     expect(wrapper.get('.test-table').text()).toBe('295')
     expect(wrapper.find('router-link-stub').exists()).toBe(false)
-    expect(wrapper.find('el-dropdown-stub').exists()).toBe(false)
+    // Capacity-only operators still get More Actions (Edit Quota), not Add / lifecycle.
+    expect(wrapper.find('el-dropdown-stub').exists()).toBe(true)
     expect(mocks.health).not.toHaveBeenCalled()
     expect(mocks.latest).not.toHaveBeenCalled()
     expect(state.canManageGateway(row)).toBe(false)

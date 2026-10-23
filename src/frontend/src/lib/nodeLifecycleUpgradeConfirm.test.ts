@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ComposerTranslation } from 'vue-i18n'
 import {
+  buildUpgradeConfirmDialogItems,
   buildUpgradeConfirmSkipGroups,
   buildUpgradeDiskSkipDetail,
   classifyWorkloadBlockers,
@@ -20,6 +21,9 @@ const t = ((key: string, args?: Record<string, unknown>) => {
   if (key.includes('confirmSkipGroup.')) return `${key.split('.').at(-1)} (${args?.n})`
   if (key.endsWith('confirmSkipMissingNode')) return `Node ${args?.id}`
   if (key.includes('confirmSkipGuidance.')) return `${key.split('.').at(-1)} guidance`
+  if (key.endsWith('confirmStatUpgrade')) return 'Will upgrade'
+  if (key.endsWith('confirmStatSkipped')) return 'Will skip'
+  if (key.endsWith('confirmUpgradeTargetVersion')) return `Target ${args?.version}`
   return key
 }) as unknown as ComposerTranslation
 
@@ -197,5 +201,42 @@ describe('node lifecycle upgrade disk guidance', () => {
       names: [{ id: 1, name: 'ubuntu2404' }],
       details: ['ubuntu2404: 420 MiB available; at least 512 MiB required.'],
     }])
+  })
+
+  it('flattens eligible and skipped hosts into one confirm table for single and multi select', () => {
+    const value = preview([])
+    value.requested = 3
+    value.eligible = [{ node_id: 1, name: 'online-host', target_version: '1.2.3' }]
+    value.skipped_offline = [{ node_id: 2, name: 'offline-host', reason: 'offline' }]
+    value.skipped_disk_full = [{
+      node_id: 3,
+      name: 'full-host',
+      reason: 'disk_full',
+      failure_type: 'minimum_free_bytes',
+      disk_free_bytes: 100 * 1024**2,
+      required_free_bytes: 512 * 1024**2,
+    }]
+
+    expect(buildUpgradeConfirmDialogItems(t, value)).toEqual([
+      {
+        key: 1,
+        name: 'online-host',
+        description: 'Target 1.2.3',
+        status: { label: 'Will upgrade', tone: 'success' },
+      },
+      {
+        key: 'skip-offline-2',
+        name: 'offline-host',
+        description: 'offline (1)',
+        status: { label: 'Will skip', tone: 'warning' },
+        warning: 'offline guidance',
+      },
+      {
+        key: 'skip-diskFull-3',
+        name: 'full-host',
+        description: 'full-host: 100 MiB available; at least 512 MiB required.',
+        status: { label: 'Will skip', tone: 'warning' },
+      },
+    ])
   })
 })

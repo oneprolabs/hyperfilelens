@@ -724,8 +724,8 @@ describe('New Chat Public Data Gateway warning', () => {
     wrapper.unmount()
   })
 
-  it('uses the platform default Gateway as the snapshot reader in Auto mode', async () => {
-    const nonDefaultGateway: LensCopilotGatewayOption = {
+  it('uses the first ready platform Gateway as the Auto-mode snapshot preview', async () => {
+    const firstReadyGateway: LensCopilotGatewayOption = {
       ...publicGateway,
       gateway_link_id: 12,
       gateway_id: 102,
@@ -733,11 +733,11 @@ describe('New Chat Public Data Gateway warning', () => {
       is_platform_default: false,
     }
     const wrapper = await mountNewChat({
-      gatewayResponse: [nonDefaultGateway, publicGateway],
+      gatewayResponse: [firstReadyGateway, publicGateway],
     })
 
     const options = mocks.useKnowledgeSourceForm.mock.calls[0][2]
-    expect(options.snapshotGatewayLinkId.value).toBe(publicGateway.gateway_link_id)
+    expect(options.snapshotGatewayLinkId.value).toBe(firstReadyGateway.gateway_link_id)
     wrapper.unmount()
   })
 

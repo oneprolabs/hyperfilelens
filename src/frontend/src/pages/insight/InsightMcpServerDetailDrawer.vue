@@ -5,8 +5,8 @@ import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
 import { DETAIL_EMPTY } from '../../lib/nodeInventoryDisplay'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
-import HflDetailDrawerFooter from '../../components/HflDetailDrawerFooter.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
+import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import { fetchLensMcpServer, type LensMcpServer } from '../../lib/lensApi'
 
 const props = defineProps<{
@@ -45,10 +45,6 @@ function transportLabel(transport: string) {
   return transport.toUpperCase()
 }
 
-function transportTagType(transport: string): 'primary' | 'info' {
-  return transport === 'stdio' ? 'info' : 'primary'
-}
-
 function detailValueClass(text: string | null | undefined, mono = false) {
   const value = text == null || text === '' ? DETAIL_EMPTY : String(text)
   const empty = value === DETAIL_EMPTY
@@ -77,13 +73,6 @@ async function loadDetail() {
   } finally {
     loading.value = false
   }
-}
-
-function onEdit() {
-  const uuid = activeRow.value?.uuid || props.row?.uuid
-  if (!uuid) return
-  drawerOpen.value = false
-  emit('edit', uuid)
 }
 
 function onDrawerOpened() {
@@ -136,11 +125,11 @@ onUnmounted(() => {
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
-              {{ t('insight.mcpServers.detailSectionConnection') }}
+              {{ t('insight.mcpServers.sectionGeneral') }}
             </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.fieldName') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.colName') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="detailValueClass(activeRow.name)"
@@ -149,7 +138,7 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.fieldEnabled') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.colStatus') }}</span>
                 <span class="hfl-detail-row__value">
                   <HflBooleanStatusTag
                     :value="activeRow.enabled !== false"
@@ -160,22 +149,17 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.fieldTransport') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.colTransport') }}</span>
                 <span class="hfl-detail-row__value">
-                  <ElTag
-                    size="small"
-                    :type="transportTagType(activeRow.transport)"
-                    effect="plain"
-                  >
-                    {{ transportLabel(activeRow.transport) }}
-                  </ElTag>
+                  <HflTypeLabel :label="transportLabel(activeRow.transport)" />
                 </span>
               </div>
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.fieldEndpoint') }}</span>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.colEndpoint') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="detailValueClass(activeRow.endpoint, true)"
+                  :title="activeRow.endpoint || undefined"
                 >
                   {{ displayValue(activeRow.endpoint) }}
                 </span>
@@ -183,30 +167,26 @@ onUnmounted(() => {
             </div>
           </section>
 
-          <section class="hfl-detail-section">
+          <section
+            v-if="configEntries.length"
+            class="hfl-detail-section"
+          >
             <h4 class="hfl-detail-section__title">
-              {{ t('insight.mcpServers.fieldConfig') }}
+              {{ t('insight.mcpServers.sectionConfig') }}
             </h4>
             <div class="hfl-detail-grid">
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('insight.mcpServers.colRuntimeSettings') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <div
-                    v-if="configEntries.length"
-                    class="create-filter-rules-preview"
-                  >
-                    <code
-                      v-for="entry in configEntries"
-                      :key="entry.key"
-                      class="create-filter-rules-preview__line"
-                    >{{ entry.key }}={{ entry.value || DETAIL_EMPTY }}</code>
-                  </div>
-                  <span
-                    v-else
-                    class="hfl-detail-row__empty"
-                  >
-                    {{ t('insight.mcpServers.runtimeSettingsNone') }}
-                  </span>
+              <div
+                v-for="entry in configEntries"
+                :key="entry.key"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ entry.key }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(entry.value || DETAIL_EMPTY, true)"
+                  :title="entry.value || undefined"
+                >
+                  {{ entry.value || DETAIL_EMPTY }}
                 </span>
               </div>
             </div>
@@ -215,15 +195,5 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <template
-      v-if="activeRow"
-      #footer
-    >
-      <HflDetailDrawerFooter
-        :save-label="t('common.edit')"
-        @cancel="drawerOpen = false"
-        @save="onEdit"
-      />
-    </template>
   </ElDrawer>
 </template>

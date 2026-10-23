@@ -291,10 +291,6 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
       <h4 class="hfl-detail-section__title">
         {{ t('nodesDetail.perfResSection') }}
       </h4>
-      <p class="node-perf-scope">
-        {{ t('nodesDetail.perfResourceScope') }}
-        <span v-if="node?.role === 'gateway'">{{ t('nodesDetail.perfGatewayScope') }}</span>
-      </p>
       <div class="hfl-detail-config-grid">
         <div class="hfl-detail-config-cell">
           <div class="hfl-detail-config-cell__label">
@@ -580,13 +576,6 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
 
 .node-perf-status li {
   overflow-wrap: anywhere;
-}
-
-.node-perf-scope {
-  margin: 0;
-  padding: 12px 16px 0;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
 }
 
 .node-perf-drawer-sections {

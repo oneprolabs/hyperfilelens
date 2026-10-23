@@ -11,18 +11,23 @@ import { apiErrorMessage } from '../../lib/api'
 import {
   fetchGatewayAiStatus,
   fetchGatewayChatWorkload,
+  listLensGateways,
   patchGatewayChatWorkload,
+  setLensApiScope,
   type GatewayAiStatus,
   type GatewayChatWorkload,
 } from '../../lib/lensApi'
 import {
+  fetchPublicGatewayCapacities,
   fetchPublicGatewayChatWorkload,
   patchPublicGatewayChatWorkload,
+  type PlatformGatewayCapacity,
 } from '../../platform-ops/lib/platformOpsApi'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import GatewayLensBasicSection from './GatewayLensBasicSection.vue'
 import GatewayChatWorkloadSection from './GatewayChatWorkloadSection.vue'
+import { gatewayAiFromInsight } from './gatewayAiStatus'
 import type { ApiNode } from '../../types/node'
 
 const props = defineProps<{
@@ -30,6 +35,8 @@ const props = defineProps<{
   nodeId: number | null
   gatewayScope?: 'user' | 'platform'
   initialTab?: 'basic' | 'performance' | 'maintenance'
+  initialGatewayAi?: GatewayAiStatus | null
+  initialWorkspaceCapacity?: PlatformGatewayCapacity | null
 }>()
 
 const emit = defineEmits<{
@@ -48,6 +55,7 @@ const open = computed({
 const node = ref<ApiNode | null>(null)
 const gatewayAi = ref<GatewayAiStatus | null>(null)
 const gatewayWorkload = ref<GatewayChatWorkload | null>(null)
+const workspaceCapacity = ref<PlatformGatewayCapacity | null>(null)
 const workloadSaving = ref(false)
 const busy = ref(false)
 const saving = ref(false)
@@ -55,14 +63,35 @@ const savedInSession = ref(false)
 const drawerTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
 const basicPanelRef = ref<InstanceType<typeof NodeBasicInfoPanel> | null>(null)
 const perfPanelRef = ref<InstanceType<typeof NodePerfSettingsPanel> | null>(null)
+const chatWorkloadRef = ref<InstanceType<typeof GatewayChatWorkloadSection> | null>(null)
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
 let workloadWriteVersion = 0
 
 const perfTabActive = computed(() => open.value && drawerTab.value === 'performance')
+const showDrawerFooter = computed(() =>
+  Boolean(node.value && (drawerTab.value === 'basic' || drawerTab.value === 'performance')),
+)
 
 const hasDrawerChanges = computed(() => {
-  const perfChanged = perfPanelRef.value?.hasPerfChanges ?? false
-  return perfChanged
+  const perfChanged = drawerTab.value === 'performance'
+    && (perfPanelRef.value?.hasPerfChanges ?? false)
+  const nameChanged = drawerTab.value === 'basic'
+    && (basicPanelRef.value?.hasNameChanges ?? false)
+  const chatChanged = drawerTab.value === 'basic'
+    && (chatWorkloadRef.value?.hasChanges ?? false)
+  return perfChanged || nameChanged || chatChanged
+})
+
+const saveDisabled = computed(() => {
+  if (drawerTab.value === 'basic') {
+    const nameChanged = basicPanelRef.value?.hasNameChanges ?? false
+    const chatPanel = chatWorkloadRef.value
+    const chatChanged = chatPanel?.hasChanges ?? false
+    if (!nameChanged && !chatChanged) return true
+    if (chatChanged && !chatPanel?.valid) return true
+    return false
+  }
+  return !hasDrawerChanges.value
 })
 
 function onNodeUpdated(updated: ApiNode) {
@@ -74,14 +103,20 @@ function onDrawerOpened() {
   bindDrawerResize()
 }
 
-function onDrawerClosed() {
+function discardDrawerEdits() {
   basicPanelRef.value?.discardNameEdit()
   perfPanelRef.value?.cancelPerfEdits()
+  chatWorkloadRef.value?.discardChanges()
+}
+
+function onDrawerClosed() {
+  discardDrawerEdits()
   requests.abortScope('gateway-node-detail')
   unbindDrawerResize()
   node.value = null
   gatewayAi.value = null
   gatewayWorkload.value = null
+  workspaceCapacity.value = null
   drawerTab.value = 'basic'
   stopPolling()
   if (savedInSession.value) {
@@ -90,12 +125,31 @@ function onDrawerClosed() {
   }
 }
 
+async function resolveWorkspaceCapacity(
+  id: number,
+  isPlatform: boolean,
+  signal?: AbortSignal,
+): Promise<PlatformGatewayCapacity | null> {
+  if (!isPlatform) return null
+  try {
+    const payload = await fetchPublicGatewayCapacities({ signal })
+    return payload.results.find((item) => item.gateway_id === id) ?? null
+  } catch {
+    return props.initialWorkspaceCapacity ?? null
+  }
+}
+
+function cancelDrawerChanges() {
+  discardDrawerEdits()
+  open.value = false
+}
+
 async function saveDrawerChanges() {
-  if (!hasDrawerChanges.value || !node.value) return
+  if (!node.value || saveDisabled.value) return
   saving.value = true
   let didSave = false
   try {
-    if (perfPanelRef.value?.hasPerfChanges) {
+    if (drawerTab.value === 'performance' && perfPanelRef.value?.hasPerfChanges) {
       try {
         const updated = await perfPanelRef.value.savePerfSettings(node.value)
         if (updated) {
@@ -106,10 +160,34 @@ async function saveDrawerChanges() {
         // Child panel surfaces validation/API errors.
       }
     }
+    if (drawerTab.value === 'basic') {
+      if (basicPanelRef.value?.hasNameChanges) {
+        didSave = await basicPanelRef.value.saveName() || didSave
+      }
+      const draft = chatWorkloadRef.value?.getDraftSettings()
+      if (draft) {
+        didSave = await saveChatWorkload(draft) || didSave
+      }
+    }
     if (didSave) savedInSession.value = true
   } finally {
     saving.value = false
   }
+}
+
+async function resolveGatewayAi(id: number, isPlatform: boolean): Promise<GatewayAiStatus | null> {
+  if (!isPlatform) {
+    return fetchGatewayAiStatus(id).catch(() => props.initialGatewayAi ?? null)
+  }
+  try {
+    setLensApiScope('platform')
+    const rows = await listLensGateways()
+    const row = rows.find((item) => item.id === id)
+    if (row) return gatewayAiFromInsight(row)
+  } catch {
+    // Fall through to the list snapshot passed when the drawer opened.
+  }
+  return props.initialGatewayAi ?? null
 }
 
 async function refresh() {
@@ -118,6 +196,7 @@ async function refresh() {
     node.value = null
     gatewayAi.value = null
     gatewayWorkload.value = null
+    workspaceCapacity.value = null
     return
   }
   const signal = requests.nextSignal('gateway-node-detail')
@@ -132,15 +211,17 @@ async function refresh() {
   busy.value = true
   try {
     const isPlatform = scope === 'platform'
-    const [nodeRow, aiRow, workloadRow] = await Promise.all([
+    const [nodeRow, aiRow, workloadRow, capacityRow] = await Promise.all([
       getGatewayNode(id, props.gatewayScope === 'platform' ? 'platform' : 'tenant', { signal }),
-      isPlatform ? Promise.resolve(null) : fetchGatewayAiStatus(id).catch(() => null),
+      resolveGatewayAi(id, isPlatform),
       isPlatform
         ? fetchPublicGatewayChatWorkload(id, { signal }).catch(() => previousWorkload)
         : fetchGatewayChatWorkload(id, { signal }).catch(() => previousWorkload),
+      resolveWorkspaceCapacity(id, isPlatform, signal),
     ])
     node.value = nodeRow
-    gatewayAi.value = aiRow
+    gatewayAi.value = aiRow ?? props.initialGatewayAi ?? null
+    workspaceCapacity.value = capacityRow ?? props.initialWorkspaceCapacity ?? null
     if (
       workloadVersion === workloadWriteVersion
       && props.nodeId === id
@@ -153,6 +234,7 @@ async function refresh() {
     node.value = null
     gatewayAi.value = null
     gatewayWorkload.value = null
+    workspaceCapacity.value = null
   } finally {
     requests.releaseSignal('gateway-node-detail', signal)
     if (!signal.aborted) busy.value = false
@@ -162,9 +244,9 @@ async function refresh() {
 async function saveChatWorkload(settings: {
   chat_prepare_concurrency: number
   chat_queue_capacity: number
-}) {
+}): Promise<boolean> {
   const id = props.nodeId
-  if (id == null || workloadSaving.value) return
+  if (id == null || workloadSaving.value) return false
   const scope = props.gatewayScope ?? 'user'
   workloadWriteVersion += 1
   workloadSaving.value = true
@@ -178,13 +260,14 @@ async function saveChatWorkload(settings: {
     ) {
       gatewayWorkload.value = updatedWorkload
     }
-    savedInSession.value = true
     ElMessage.success({ message: t('insight.dataGateway.chatWorkloadSaved'), grouping: true })
+    return true
   } catch (error) {
     ElMessage.error({
       message: apiErrorMessage(error, t('insight.dataGateway.chatWorkloadSaveFailed')),
       grouping: true,
     })
+    return false
   } finally {
     workloadSaving.value = false
   }
@@ -196,6 +279,8 @@ watch(
     if (isOpen && id != null) {
       drawerTab.value = props.initialTab ?? 'basic'
       savedInSession.value = false
+      gatewayAi.value = props.initialGatewayAi ?? null
+      workspaceCapacity.value = props.initialWorkspaceCapacity ?? null
       void refresh()
     }
     if (!isOpen) {
@@ -203,6 +288,7 @@ watch(
       node.value = null
       gatewayAi.value = null
       gatewayWorkload.value = null
+      workspaceCapacity.value = null
       stopPolling()
     }
   },
@@ -287,15 +373,18 @@ onUnmounted(() => {
               :node-scope="gatewayScope === 'platform' ? 'platform' : 'tenant'"
               :source-type-label="t('ops.monitorPage.sourceTypeGateway')"
               use-unified-capacity
+              use-gateway-list-labels
               @node-updated="onNodeUpdated"
             >
               <template #before-runtime>
-                <GatewayLensBasicSection :gateway-ai="gatewayAi" />
+                <GatewayLensBasicSection
+                  :gateway-ai="gatewayAi"
+                  :workspace-capacity="workspaceCapacity"
+                />
                 <GatewayChatWorkloadSection
                   v-if="gatewayWorkload"
+                  ref="chatWorkloadRef"
                   :workload="gatewayWorkload"
-                  :saving="workloadSaving"
-                  @save="saveChatWorkload"
                 />
               </template>
             </NodeBasicInfoPanel>
@@ -337,13 +426,13 @@ onUnmounted(() => {
     </div>
 
     <template
-      v-if="node && drawerTab === 'performance'"
+      v-if="showDrawerFooter"
       #footer
     >
       <HflDetailDrawerFooter
-        :saving="saving"
-        :save-disabled="!hasDrawerChanges"
-        @cancel="open = false"
+        :saving="saving || workloadSaving"
+        :save-disabled="saveDisabled"
+        @cancel="cancelDrawerChanges"
         @save="saveDrawerChanges"
       />
     </template>

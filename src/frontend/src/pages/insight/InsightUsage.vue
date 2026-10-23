@@ -480,6 +480,7 @@ onBeforeUnmount(() => {
   display: block;
   overflow: hidden;
   width: 100%;
+  color: var(--el-color-primary);
   font-size: 12px;
   font-weight: 500;
   text-align: left;

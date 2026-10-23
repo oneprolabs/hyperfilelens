@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import {
   ArrowUpCircle,
   ChevronDown,
-  Pencil,
+  Gauge,
   Plus,
   RefreshCw,
   Search,
@@ -27,6 +27,7 @@ import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
+import { usePlatformEngineListSearch } from '../../composables/usePlatformEngineListSearch'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { fetchDeployProfile, getCachedDeployProfile } from '../../composables/useDeployProfile'
 import { sanitizeErrorDetails } from '../../lib/errors/details'
@@ -39,19 +40,21 @@ import {
   listLensGatewayDirectory,
   listLensGateways,
   refreshLensGatewayDirectoryStatus,
-  setPlatformLensGatewayDefault,
   setLensApiScope,
   type LensGatewayInsight,
 } from '../../lib/lensApi'
 import {
   fetchLatestAgentVersion,
-  updateNode,
 } from '../../lib/nodeApi'
 import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
 import {
   isGatewayConnectivityOnline,
   type GatewayAiPhase,
 } from '../../lib/gatewayDisplayStatus'
+import {
+  gatewayInventoryType,
+  type GatewayInventoryType,
+} from '../../lib/gatewayInventoryType'
 import {
   formatNodeBytes,
   formatNodeDate,
@@ -64,6 +67,7 @@ import {
   type NodeOsPlatformLabels,
 } from '../../lib/nodeInventoryDisplay'
 import InsightGatewayDetailDrawer from './InsightGatewayDetailDrawer.vue'
+import { gatewayAiFromInsight } from './gatewayAiStatus'
 import GatewayCompositeStatusCell from './GatewayCompositeStatusCell.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
 import {
@@ -72,6 +76,7 @@ import {
   type PlatformGatewayCapacity,
 } from '../../platform-ops/lib/platformOpsApi'
 import type { ApiNode } from '../../types/node'
+import '../../components/backupSourceFlowActionDialog.css'
 
 const MIB = 1024 ** 2
 const GIB = 1024 ** 3
@@ -86,6 +91,11 @@ const pageRequests = usePageRequestScope()
 
 /** Prefer route over module scope — Admin Engine can race with tenant scope resets. */
 const isPlatformEngine = computed(() => route.path.startsWith('/platform-ops/engine'))
+const {
+  listSearchPlaceholder,
+  listSearchClass,
+  listSearchSize,
+} = usePlatformEngineListSearch('insight.dataGateway.searchPlaceholder', 'gateways')
 const platformPermissions = ref(getCachedDeployProfile()?.platform_permissions ?? [])
 const canManagePlatformGateways = computed(() => platformPermissions.value.includes('platform.infra.public_gateway.manage'))
 const canManagePlatformCapacity = computed(() => platformPermissions.value.includes('platform.infra.public_gateway.capacity.manage'))
@@ -102,6 +112,9 @@ const rows = ref<InsightGatewayRow[]>([])
 const busy = ref(false)
 const listLoaded = ref(false)
 const search = ref('')
+const filterType = ref<'' | GatewayInventoryType>('')
+const filterOrgKey = ref('')
+const knownOrganizations = ref<Array<{ key: string; name: string; id: number }>>([])
 const bridgeReady = ref(false)
 const latestAgentVersion = ref<string | null>(null)
 const selectedRows = ref<InsightGatewayRow[]>([])
@@ -117,9 +130,8 @@ const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
 const detailNodeId = ref<number | null>(null)
 const detailInitialTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
-const renameDialogOpen = ref(false)
-const renameInput = ref('')
-const renameTarget = ref<InsightGatewayRow | null>(null)
+const detailInitialGatewayAi = ref<ReturnType<typeof gatewayAiFromInsight> | null>(null)
+const detailInitialWorkspaceCapacity = ref<PlatformGatewayCapacity | null>(null)
 const capacityByGatewayId = ref<Map<number, PlatformGatewayCapacity>>(new Map())
 const capacityDialogOpen = ref(false)
 const capacitySaving = ref(false)
@@ -160,14 +172,44 @@ let lastSuccessfulDirectoryQuery: {
   pageSize: number
   search: string
 } | null = null
+const organizationFilterOptions = computed(() => {
+  const options = knownOrganizations.value
+  const selected = filterOrgKey.value.trim()
+  if (!selected || options.some((org) => org.key === selected)) return options
+  return [{ key: selected, name: selected, id: 0 }, ...options]
+})
+const inventoryFilteredRows = computed(() => {
+  if (!isPlatformEngine.value) return rows.value
+  const type = filterType.value
+  const orgKey = filterOrgKey.value.trim()
+  return rows.value.filter((row) => {
+    if (type && gatewayInventoryType(row) !== type) return false
+    if (orgKey && String(row.organization_key || '').trim() !== orgKey) return false
+    return true
+  })
+})
 const visibleRows = computed(() => {
   if (!isPlatformEngine.value) return rows.value
+  const list = inventoryFilteredRows.value
   const start = (pagination.page - 1) * pagination.pageSize
-  return rows.value.slice(start, start + pagination.pageSize)
+  return list.slice(start, start + pagination.pageSize)
 })
 const { appliedSearch, clearSearch, resetSearch } = useListSearch(search, () => {
   pagination.page = 1
   void load()
+})
+watch([filterType, filterOrgKey], () => {
+  if (!isPlatformEngine.value) return
+  pagination.page = 1
+  // reserve-selection keeps hidden rows selected across client filters; clear so
+  // batch delete/upgrade cannot target gateways outside the active filter.
+  clearSelection()
+})
+watch(inventoryFilteredRows, (list) => {
+  if (!isPlatformEngine.value) return
+  pagination.count = list.length
+  const lastPage = Math.max(1, Math.ceil(list.length / pagination.pageSize) || 1)
+  if (pagination.page > lastPage) pagination.page = lastPage
 })
 
 const osPlatformLabels = computed((): NodeOsPlatformLabels => ({
@@ -237,10 +279,17 @@ const batchDisabled = computed(() => selectedRows.value.length === 0 || !selecte
   isPlatformEngine.value ? canManagePlatformGateways.value : resourcePermissions.permitted('node', row.id, 'delete'),
 ))
 const batchRenameDisabled = computed(() => selectedRows.value.length !== 1 || !selectedRows.value.every(canManageGateway))
+const batchCapacityDisabled = computed(() => {
+  const row = singleSelected.value
+  return !row || !canManageCapacity(row)
+})
 const batchUpgradeDisabled = computed(() => {
   const upgradable = selectedRows.value.filter((row) => lifecycleOps.canUpgradeNode(row, canUpgrade))
   return upgradable.length === 0
 })
+const showPlatformMoreActions = computed(() => (
+  !isPlatformEngine.value || canManagePlatformGateways.value || canManagePlatformCapacity.value
+))
 
 function canUpgrade(row: ApiNode) {
   if ((row as InsightGatewayRow).managed_by_hfl === false) return false
@@ -481,7 +530,8 @@ async function load(options: { forceStatus?: boolean } = {}) {
       ? lensRows.filter((row) => {
           const name = (row.name || '').toLowerCase()
           const ip = String(row.ip_address || '').toLowerCase()
-          return name.includes(term) || ip.includes(term)
+          const org = `${row.organization_name || ''} ${row.organization_key || ''}`.toLowerCase()
+          return name.includes(term) || ip.includes(term) || org.includes(term)
         })
       : lensRows
     const next = filtered.map((lens) => {
@@ -519,6 +569,7 @@ async function load(options: { forceStatus?: boolean } = {}) {
       await load(options)
       return
     }
+    rememberOrganizations(next)
     applyGatewayRows(next, directoryTotal ?? filtered.length)
     if (!isPlatformEngine.value) lastSuccessfulDirectoryQuery = directoryQuery
     refreshCurrentPageStatus(options.forceStatus === true)
@@ -555,6 +606,8 @@ function openDetail(row: InsightGatewayRow) {
   if (row.managed_by_hfl === false) return
   detailNodeId.value = row.id
   detailInitialTab.value = 'basic'
+  detailInitialGatewayAi.value = gatewayAiFromInsight(row)
+  detailInitialWorkspaceCapacity.value = capacityFor(row) ?? null
   detailOpen.value = true
 }
 
@@ -563,6 +616,8 @@ function openSelectedMaintenance() {
   if (!row || !canManageGateway(row)) return
   detailNodeId.value = row.id
   detailInitialTab.value = 'maintenance'
+  detailInitialGatewayAi.value = gatewayAiFromInsight(row)
+  detailInitialWorkspaceCapacity.value = capacityFor(row) ?? null
   detailOpen.value = true
 }
 
@@ -583,20 +638,33 @@ function readinessLabel(row: InsightGatewayRow) {
   return 'HFL Ready'
 }
 
-function originLabel(row: InsightGatewayRow) {
-  const origin = row.origin || 'external'
-  return t(`insight.dataGateway.origin.${origin}`)
+function inventoryTypeLabel(row: InsightGatewayRow) {
+  return t(`insight.dataGateway.type.${gatewayInventoryType(row)}`)
 }
 
-async function setPlatformDefault(row: InsightGatewayRow) {
-  if (row.origin !== 'platform' || !canManageGateway(row) || !row.hfl_usable) return
-  try {
-    await setPlatformLensGatewayDefault(row.id)
-    ElMessage.success({ message: t('insight.dataGateway.defaultSetSuccess'), grouping: true })
-    await load()
-  } catch (error) {
-    ElMessage.error({ message: apiErrorMessage(error, t('errors.generic.loadFailed')), grouping: true })
+function organizationLabel(row: InsightGatewayRow) {
+  return String(row.organization_name || '').trim()
+}
+
+function organizationId(row: InsightGatewayRow) {
+  return Number(row.owner_organization_id || row.organization || 0) || null
+}
+
+function rememberOrganizations(list: InsightGatewayRow[]) {
+  if (!isPlatformEngine.value) return
+  const byKey = new Map(knownOrganizations.value.map((org) => [org.key, org]))
+  for (const row of list) {
+    const key = String(row.organization_key || '').trim()
+    if (!key) continue
+    byKey.set(key, {
+      key,
+      name: String(row.organization_name || key).trim() || key,
+      id: organizationId(row) || 0,
+    })
   }
+  knownOrganizations.value = [...byKey.values()].sort(
+    (a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key),
+  )
 }
 
 function onSelectionChange(selection: InsightGatewayRow[]) {
@@ -608,50 +676,19 @@ function clearSelection() {
   tableRef.value?.clearSelection()
 }
 
-type MoreAction = 'rename' | 'upgrade' | 'maintenance' | 'setDefault' | 'remove'
-
-const batchSetDefaultDisabled = computed(() => {
-  const row = singleSelected.value
-  if (!row || !isPlatformEngine.value) return true
-  return !(row.origin === 'platform' && canManageGateway(row) && row.hfl_usable && !row.is_platform_default)
-})
+type MoreAction = 'capacity' | 'upgrade' | 'maintenance' | 'remove'
 
 async function handleMoreAction(command: MoreAction) {
-  if (command === 'rename') openRenameDialog()
+  if (command === 'capacity') openSelectedCapacity()
   else if (command === 'upgrade') await onUpgradeSelected()
   else if (command === 'maintenance') openSelectedMaintenance()
-  else if (command === 'setDefault') {
-    const row = singleSelected.value
-    if (row) await setPlatformDefault(row)
-  }
   else if (command === 'remove') await deleteSelected()
 }
 
-function openRenameDialog() {
-  const node = singleSelected.value
-  if (!node || !canManageGateway(node)) return
-  renameTarget.value = node
-  renameInput.value = node.name
-  renameDialogOpen.value = true
-}
-
-async function submitRename() {
-  const node = renameTarget.value
-  if (!node || !canManageGateway(node)) return
-  const name = renameInput.value.trim()
-  if (!name) {
-    ElMessage.warning({ message: t('nodesPage.renamePlaceholder'), grouping: true })
-    return
-  }
-  try {
-    await updateNode(node.id, { name }, isPlatformEngine.value ? 'platform' : 'tenant')
-    ElMessage.success({ message: t('nodesPage.renameSuccess'), grouping: true })
-    renameDialogOpen.value = false
-    clearSelection()
-    await load()
-  } catch {
-    ElMessage.error({ message: t('nodesPage.renameFailed'), grouping: true })
-  }
+function openSelectedCapacity() {
+  const row = singleSelected.value
+  if (!row || !canManageCapacity(row)) return
+  openCapacityDialog(row)
 }
 
 async function onUpgradeSelected() {
@@ -821,7 +858,7 @@ onUnmounted(() => {
           </RouterLink>
 
           <ElDropdown
-            v-if="!isPlatformEngine || canManagePlatformGateways"
+            v-if="showPlatformMoreActions"
             trigger="click"
             popper-class="hfl-actions-dropdown"
             @visible-change="moreActionsOpen = $event"
@@ -838,18 +875,20 @@ onUnmounted(() => {
             <template #dropdown>
               <ElDropdownMenu>
                 <ElDropdownItem
-                  command="rename"
-                  :disabled="batchRenameDisabled"
+                  v-if="isPlatformEngine && canManagePlatformCapacity"
+                  command="capacity"
+                  :disabled="batchCapacityDisabled"
                 >
                   <span class="el-dropdown-menu__item-content">
-                    <Pencil
+                    <Gauge
                       :size="14"
                       class="shrink-0"
                     />
-                    <span>{{ t('nodesPage.btnBatchRename') }}</span>
+                    <span>{{ t('platformOps.engineGateway.editCapacity') }}</span>
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  v-if="!isPlatformEngine || canManagePlatformGateways"
                   command="upgrade"
                   :disabled="batchUpgradeDisabled"
                 >
@@ -862,6 +901,7 @@ onUnmounted(() => {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  v-if="!isPlatformEngine || canManagePlatformGateways"
                   command="maintenance"
                   :disabled="batchRenameDisabled"
                 >
@@ -874,15 +914,7 @@ onUnmounted(() => {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
-                  v-if="isPlatformEngine"
-                  command="setDefault"
-                  :disabled="batchSetDefaultDisabled"
-                >
-                  <span class="el-dropdown-menu__item-content">
-                    <span>{{ t('insight.dataGateway.defaultSet') }}</span>
-                  </span>
-                </ElDropdownItem>
-                <ElDropdownItem
+                  v-if="!isPlatformEngine || canManagePlatformGateways"
                   command="remove"
                   divided
                   class="el-dropdown-menu__item--danger"
@@ -902,12 +934,51 @@ onUnmounted(() => {
         </div>
 
         <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
+          <el-select
+            v-if="isPlatformEngine"
+            v-model="filterType"
+            clearable
+            size="small"
+            class="dg-inventory-filter"
+            :placeholder="t('insight.dataGateway.typeFilterPlaceholder')"
+            :aria-label="t('insight.dataGateway.typeFilterPlaceholder')"
+          >
+            <el-option
+              value="bundled"
+              :label="t('insight.dataGateway.type.bundled')"
+            />
+            <el-option
+              value="installed"
+              :label="t('insight.dataGateway.type.installed')"
+            />
+            <el-option
+              value="private"
+              :label="t('insight.dataGateway.type.private')"
+            />
+          </el-select>
+          <el-select
+            v-if="isPlatformEngine"
+            v-model="filterOrgKey"
+            clearable
+            filterable
+            size="small"
+            class="dg-inventory-filter dg-inventory-filter--org"
+            :placeholder="t('insight.dataGateway.orgFilterPlaceholder')"
+            :aria-label="t('insight.dataGateway.orgFilterPlaceholder')"
+          >
+            <el-option
+              v-for="org in organizationFilterOptions"
+              :key="org.key"
+              :value="org.key"
+              :label="org.key && org.key !== org.name ? `${org.name} (${org.key})` : org.name"
+            />
+          </el-select>
           <ElInput
             v-model="search"
             clearable
-            size="small"
-            :placeholder="t('insight.dataGateway.searchPlaceholder')"
-            class="hfl-list-search"
+            :size="listSearchSize"
+            :placeholder="listSearchPlaceholder"
+            :class="listSearchClass"
             @clear="clearSearch"
           >
             <template #prefix>
@@ -946,7 +1017,7 @@ onUnmounted(() => {
           ref="tableRef"
           v-table-overflow-title
           v-table-header-scroll-sync
-          v-table-column-resize="'insight.dataGateways.list'"
+          v-table-column-resize="'insight.dataGateways.list.v2'"
           v-loading="tableLoading"
           row-key="id"
           :data="visibleRows"
@@ -985,16 +1056,35 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column
             v-if="isPlatformEngine"
-            :label="t('insight.dataGateway.colOrigin')"
-            min-width="110"
+            :label="t('insight.dataGateway.colType')"
+            min-width="150"
           >
             <template #default="{ row }">
-              <span>{{ originLabel(row) }}</span>
+              <span>{{ inventoryTypeLabel(row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            v-if="isPlatformEngine"
+            :label="t('insight.dataGateway.colOrganization')"
+            min-width="140"
+          >
+            <template #default="{ row }">
+              <RouterLink
+                v-if="organizationId(row) && organizationLabel(row)"
+                :to="`/platform-ops/orgs/${organizationId(row)}`"
+                class="hfl-table-name-link"
+              >
+                {{ organizationLabel(row) }}
+              </RouterLink>
+              <span
+                v-else
+                :class="{ 'hfl-empty-mark': !organizationLabel(row) }"
+              >{{ organizationLabel(row) || '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column
             :label="t('protection.sourceResources.colLifecycleStatus')"
-            min-width="155"
+            min-width="140"
             align="center"
             header-align="center"
           >
@@ -1009,16 +1099,15 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column
             :label="t('protection.sourceResources.colHostIp')"
-            min-width="140"
+            min-width="130"
           >
             <template #default="{ row }">
               {{ ipLine(row) }}
             </template>
           </el-table-column>
           <el-table-column
-            v-if="!isPlatformEngine"
-            label="OS"
-            min-width="120"
+            :label="t('protection.sourceResources.colOs')"
+            min-width="110"
           >
             <template #default="{ row }">
               <div class="source-os-cell source-os-cell--compact hfl-table-no-tooltip">
@@ -1030,36 +1119,42 @@ onUnmounted(() => {
             </template>
           </el-table-column>
           <el-table-column
-            v-if="!isPlatformEngine"
             :label="t('protection.sourceResources.colCpu')"
             min-width="88"
           >
             <template #default="{ row }">
-              <span :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }">{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
+              <span
+                class="dg-metric-cell"
+                :class="{ 'hfl-empty-mark': nodeCpuCores(row) == null }"
+              >{{ nodeCpuCores(row) != null ? t('protection.sourceResources.cpuCoresValue', { n: nodeCpuCores(row) }) : '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column
-            v-if="!isPlatformEngine"
             :label="t('protection.sourceResources.colMemory')"
-            min-width="100"
-          >
-            <template #default="{ row }">
-              <span :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }">{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            v-if="!isPlatformEngine"
-            :label="t('protection.sourceResources.colDiskCount')"
             min-width="96"
           >
             <template #default="{ row }">
-              <span :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }">{{ nodeDiskCount(row) ?? '—' }}</span>
+              <span
+                class="dg-metric-cell"
+                :class="{ 'hfl-empty-mark': nodeMemoryTotalBytes(row) == null }"
+              >{{ nodeMemoryTotalBytes(row) != null ? formatNodeBytes(nodeMemoryTotalBytes(row)!) : '—' }}</span>
             </template>
           </el-table-column>
           <el-table-column
-            v-if="!isPlatformEngine"
+            :label="t('protection.sourceResources.colDiskCount')"
+            min-width="80"
+          >
+            <template #default="{ row }">
+              <span
+                class="dg-metric-cell"
+                :class="{ 'hfl-empty-mark': nodeDiskCount(row) == null }"
+              >{{ nodeDiskCount(row) ?? '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
             :label="t('protection.sourceResources.colCapacity')"
-            min-width="200"
+            min-width="180"
+            class-name="dg-capacity-col"
           >
             <template #default="{ row }">
               <HflCapacityCell
@@ -1073,7 +1168,8 @@ onUnmounted(() => {
           <el-table-column
             v-if="isPlatformEngine"
             :label="t('platformOps.engineGateway.colCapacity')"
-            min-width="250"
+            min-width="180"
+            class-name="dg-capacity-col"
           >
             <template #default="{ row }">
               <div class="dg-capacity-cell">
@@ -1089,21 +1185,7 @@ onUnmounted(() => {
                       ? t('platformOps.engineGateway.capacityUnlimited')
                       : undefined
                   "
-                >
-                  <template
-                    v-if="canManageCapacity(row)"
-                    #trailing
-                  >
-                    <ElButton
-                      link
-                      type="primary"
-                      class="dg-capacity-cell__edit"
-                      @click="openCapacityDialog(row)"
-                    >
-                      {{ t('platformOps.engineGateway.editCapacity') }}
-                    </ElButton>
-                  </template>
-                </HflCapacityCell>
+                />
                 <span
                   v-else
                   class="hfl-empty-mark"
@@ -1119,7 +1201,7 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column
             :label="t('protection.sourceResources.colConnectivity')"
-            min-width="110"
+            min-width="100"
             align="center"
             header-align="center"
           >
@@ -1136,7 +1218,7 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column
             :label="t('insight.dataGateway.colAiEngine')"
-            min-width="150"
+            min-width="130"
             align="center"
             header-align="center"
           >
@@ -1151,7 +1233,10 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column
             :label="t('protection.sourceResources.colVersion')"
-            min-width="130"
+            width="108"
+            align="center"
+            header-align="center"
+            class-name="dg-version-col"
           >
             <template #default="{ row }">
               <NodeVersionCell
@@ -1166,43 +1251,13 @@ onUnmounted(() => {
           </el-table-column>
           <el-table-column
             :label="t('protection.sourceResources.colRegisteredAt')"
-            min-width="170"
+            min-width="168"
           >
             <template #default="{ row }">
               <span
                 class="hfl-table-cell-time"
                 :class="{ 'hfl-empty-mark': !row.created_at }"
               >{{ formatNodeDate(row.created_at) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column
-            v-if="isPlatformEngine"
-            :label="t('platformOps.engineGateway.columnActions')"
-            width="150"
-            fixed="right"
-            align="right"
-          >
-            <template #default="{ row }">
-              <ElButton
-                v-if="canManageGateway(row)"
-                link
-                type="primary"
-                @click="openDetail(row)"
-              >
-                {{ t('platformOps.engineGateway.viewDetails') }}
-              </ElButton>
-              <ElButton
-                v-if="row.origin === 'platform' && canManageGateway(row) && row.hfl_usable && !row.is_platform_default"
-                link
-                type="primary"
-                @click="setPlatformDefault(row)"
-              >
-                {{ t('insight.dataGateway.defaultSet') }}
-              </ElButton>
-              <span
-                v-else-if="!canManageGateway(row)"
-                class="hfl-empty-mark"
-              >—</span>
             </template>
           </el-table-column>
           <template #empty>
@@ -1242,63 +1297,24 @@ onUnmounted(() => {
     </div>
 
     <el-dialog
-      v-model="renameDialogOpen"
-      class="source-action-dialog"
-      :title="t('nodesPage.renameTitle')"
-      width="480px"
-      align-center
-      destroy-on-close
-    >
-      <ElForm
-        label-position="top"
-        class="source-action-dialog__form"
-        @submit.prevent="submitRename"
-      >
-        <ElFormItem
-          :label="t('nodesPage.renameLabel')"
-          required
-        >
-          <ElInput
-            v-model="renameInput"
-            :placeholder="t('nodesPage.renamePlaceholder')"
-            maxlength="128"
-            show-word-limit
-          />
-        </ElFormItem>
-      </ElForm>
-      <template #footer>
-        <el-button @click="renameDialogOpen = false">
-          {{ t('common.cancel') }}
-        </el-button>
-        <el-button
-          type="primary"
-          @click="submitRename"
-        >
-          {{ t('common.save') }}
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
       v-model="capacityDialogOpen"
-      class="source-action-dialog"
+      class="hfl-flow-action-dialog hfl-flow-action-dialog--form dg-capacity-dialog"
       :title="t('platformOps.engineGateway.capacityDialogTitle')"
-      width="480px"
       align-center
       destroy-on-close
     >
-      <p class="source-action-dialog__hint">
+      <p class="hfl-flow-action-dialog__form-hint">
         {{ t('platformOps.engineGateway.capacityDialogHint') }}
       </p>
       <p
         v-if="capacityTarget && capacityFor(capacityTarget)?.used_incomplete"
-        class="dg-capacity-dialog__warn"
+        class="hfl-flow-action-dialog__form-hint hfl-flow-action-dialog__form-hint--sub dg-capacity-dialog__warn"
       >
         {{ t('platformOps.engineGateway.capacityUsedIncomplete') }}
       </p>
       <ElForm
         label-position="top"
-        class="source-action-dialog__form dg-capacity-dialog__form"
+        class="hfl-flow-action-dialog__form dg-capacity-dialog__form"
         @submit.prevent="submitCapacity"
       >
         <ElFormItem
@@ -1308,7 +1324,7 @@ onUnmounted(() => {
           <div class="dg-capacity-dialog__input">
             <ElInputNumber
               v-model="capacityDraft"
-              class="w-full"
+              class="dg-capacity-dialog__number"
               :min="0"
               :step="1"
               :precision="0"
@@ -1330,7 +1346,7 @@ onUnmounted(() => {
             </el-select>
           </div>
         </ElFormItem>
-        <ElFormItem>
+        <ElFormItem class="dg-capacity-dialog__unlimited">
           <ElCheckbox v-model="capacityUnlimited">
             {{ t('platformOps.engineGateway.capacityUnlimited') }}
           </ElCheckbox>
@@ -1357,6 +1373,8 @@ onUnmounted(() => {
       v-model="detailOpen"
       :node-id="detailNodeId"
       :initial-tab="detailInitialTab"
+      :initial-gateway-ai="detailInitialGatewayAi"
+      :initial-workspace-capacity="detailInitialWorkspaceCapacity"
       :gateway-scope="isPlatformEngine ? 'platform' : 'user'"
       @saved="load"
     />
@@ -1368,9 +1386,16 @@ onUnmounted(() => {
     />
     <DangerConfirmDialog
       v-model="deleteOpen"
+      class="dg-delete-confirm"
+      width="640px"
       :title="deleteForce ? t('insight.dataGateway.deleteForceTitle') : t('insight.dataGateway.deleteTitle')"
       :message="deleteForce ? t('insight.dataGateway.deleteForceConfirm', { n: pendingDelete.length }) : deleteConfirmationMessage"
+      :warning="deleteForce ? t('insight.dataGateway.deleteForceHint') : ''"
       :items="pendingDelete.map(gatewayDeleteDialogItem)"
+      :items-heading="t('nodesPage.selectedCount', { n: pendingDelete.length })"
+      :item-name-label="t('nodeLifecycle.entityGateway')"
+      :item-status-label="t('common.dangerItemStatus')"
+      :show-item-details="false"
       :confirmation-context="pendingDelete.map(row => row.id).sort((a, b) => a - b).join(',')"
       confirm-mode="keyword"
       :confirm-keyword="deleteForce ? 'FORCE DELETE' : t('common.deleteKeyword')"
@@ -1379,6 +1404,7 @@ onUnmounted(() => {
       :cancel-text="t('common.cancel')"
       :confirm-text="deleteForce ? t('nodesPage.proxyDeleteForceAction') : t('nodesPage.actionDelete')"
       :loading="deleteLoading"
+      :confirm-disabled="pendingDelete.length === 0"
       @confirm="confirmDelete"
       @cancel="cancelDelete"
     >
@@ -1421,49 +1447,94 @@ onUnmounted(() => {
 }
 
 
+.dg-metric-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+:deep(.dg-version-col .node-version-cell) {
+  align-items: center;
+}
+
+:deep(.dg-version-col .node-version-cell__value),
+:deep(.dg-version-col .node-version-cell__from),
+:deep(.dg-version-col .node-version-cell__to) {
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+
+:deep(.dg-version-col .node-version-cell__hint) {
+  justify-content: center;
+}
+
+.dg-inventory-filter {
+  width: 168px;
+}
+
+.dg-inventory-filter--org {
+  width: 200px;
+}
+
 .dg-capacity-cell {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
   min-width: 0;
+  width: 100%;
 }
 
-.dg-capacity-cell__edit {
-  padding: 0;
-  height: auto;
-  font-size: 12px;
-  line-height: 1;
+/* Keep Host Capacity and Workspace Quota bars the same visual length. */
+:deep(.dg-capacity-col .repo-usage-cell) {
+  width: 148px;
+  max-width: 100%;
+}
+
+:deep(.dg-capacity-col .repo-usage-bar) {
+  width: 148px;
+  max-width: 100%;
 }
 
 .dg-capacity-cell__incomplete {
   color: var(--el-color-warning);
   font-size: 11px;
   line-height: 1.3;
+  max-width: 148px;
+}
+
+:global(.dg-capacity-dialog.hfl-flow-action-dialog.el-dialog) {
+  --el-dialog-width: min(480px, calc(100vw - 32px));
 }
 
 .dg-capacity-dialog__warn {
-  margin: 0 0 12px;
+  margin-top: -8px;
+  margin-bottom: 12px;
   color: var(--el-color-warning);
-  font-size: 12px;
-  line-height: 1.4;
 }
 
 .dg-capacity-dialog__form :deep(.el-form-item) {
   margin-bottom: 16px;
 }
 
-.dg-capacity-dialog__form :deep(.el-form-item:last-child) {
+.dg-capacity-dialog__form :deep(.el-form-item:last-child),
+.dg-capacity-dialog__unlimited {
   margin-bottom: 0;
 }
 
 .dg-capacity-dialog__input {
   display: flex;
+  align-items: center;
   gap: 10px;
+  width: 100%;
+}
+
+.dg-capacity-dialog__number {
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
 }
 
 .dg-capacity-dialog__unit {
   flex: 0 0 104px;
+  width: 104px;
 }
 </style>

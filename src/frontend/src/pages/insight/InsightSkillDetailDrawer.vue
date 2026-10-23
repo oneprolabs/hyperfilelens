@@ -5,7 +5,6 @@ import { ElMessage } from 'element-plus'
 import { apiErrorMessage } from '../../lib/api'
 import { DETAIL_EMPTY } from '../../lib/nodeInventoryDisplay'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
-import HflDetailDrawerFooter from '../../components/HflDetailDrawerFooter.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import { fetchLensSkill, type LensSkill } from '../../lib/lensApi'
 import {
@@ -46,9 +45,18 @@ const contentText = computed(() => {
   return skillContent(activeRow.value) || DETAIL_EMPTY
 })
 
-function detailValueClass(text: string | null | undefined) {
+const slugValue = computed(() => {
+  const slug = activeRow.value?.slug?.trim()
+  return slug || DETAIL_EMPTY
+})
+
+function detailValueClass(text: string | null | undefined, mono = false) {
   const value = text == null || text === '' ? DETAIL_EMPTY : String(text)
-  return { 'hfl-detail-row__empty': value === DETAIL_EMPTY }
+  const empty = value === DETAIL_EMPTY
+  return {
+    'hfl-detail-row__empty': empty,
+    'hfl-detail-row__value--mono': mono && !empty,
+  }
 }
 
 function displayValue(text: string | null | undefined) {
@@ -70,13 +78,6 @@ async function loadDetail() {
   } finally {
     loading.value = false
   }
-}
-
-function onEdit() {
-  const uuid = activeRow.value?.uuid || props.row?.uuid
-  if (!uuid) return
-  drawerOpen.value = false
-  emit('edit', uuid)
 }
 
 function onDrawerOpened() {
@@ -129,11 +130,11 @@ onUnmounted(() => {
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
-              {{ t('insight.skills.detailSectionBasics') }}
+              {{ t('insight.skills.sectionGeneral') }}
             </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.skills.fieldName') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.skills.colName') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="detailValueClass(activeRow.name)"
@@ -142,7 +143,7 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.skills.fieldEnabled') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.skills.colStatus') }}</span>
                 <span class="hfl-detail-row__value">
                   <HflBooleanStatusTag
                     :value="activeRow.enabled !== false"
@@ -152,28 +153,29 @@ onUnmounted(() => {
                   />
                 </span>
               </div>
-              <div
-                v-if="isWorkspaceGuideSkill(activeRow)"
-                class="hfl-detail-row"
-              >
+              <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('insight.skills.colType') }}</span>
                 <span class="hfl-detail-row__value">
                   <ElTag
                     size="small"
-                    type="primary"
+                    :type="isWorkspaceGuideSkill(activeRow) ? 'primary' : 'info'"
                     effect="plain"
                   >
-                    {{ t('insight.skills.typeWorkspaceGuide') }}
+                    {{
+                      isWorkspaceGuideSkill(activeRow)
+                        ? t('insight.skills.typeWorkspaceGuide')
+                        : t('insight.skills.typeSkill')
+                    }}
                   </ElTag>
                 </span>
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('insight.skills.fieldDescription') }}</span>
+                <span class="hfl-detail-row__label">{{ t('insight.skills.colDescription') }}</span>
                 <span
-                  class="hfl-detail-row__value hfl-detail-row__value--stacked"
+                  class="hfl-detail-row__value"
                   :class="detailValueClass(descriptionText === DETAIL_EMPTY ? '' : descriptionText)"
                 >
-                  <span class="hfl-detail-row__text">{{ descriptionText }}</span>
+                  {{ descriptionText }}
                 </span>
               </div>
             </div>
@@ -181,22 +183,32 @@ onUnmounted(() => {
 
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
-              {{ t('insight.skills.fieldContent') }}
+              {{ t('insight.skills.sectionContent') }}
+            </h4>
+            <pre
+              v-if="contentText !== DETAIL_EMPTY"
+              class="insight-skill-detail-content"
+            >{{ contentText }}</pre>
+            <p
+              v-else
+              class="insight-skill-detail-content insight-skill-detail-content--empty"
+            >
+              {{ DETAIL_EMPTY }}
+            </p>
+          </section>
+
+          <section class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">
+              {{ t('insight.skills.sectionTechnical') }}
             </h4>
             <div class="hfl-detail-grid">
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('insight.skills.colContent') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                  <div
-                    v-if="contentText !== DETAIL_EMPTY"
-                    class="create-filter-rules-preview"
-                  >
-                    <pre class="create-filter-rules-preview__line">{{ contentText }}</pre>
-                  </div>
-                  <span
-                    v-else
-                    class="hfl-detail-row__empty"
-                  >{{ DETAIL_EMPTY }}</span>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('insight.skills.fieldSlug') }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="detailValueClass(slugValue === DETAIL_EMPTY ? '' : slugValue, true)"
+                >
+                  {{ slugValue }}
                 </span>
               </div>
             </div>
@@ -205,15 +217,24 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <template
-      v-if="activeRow"
-      #footer
-    >
-      <HflDetailDrawerFooter
-        :save-label="t('common.edit')"
-        @cancel="drawerOpen = false"
-        @save="onEdit"
-      />
-    </template>
   </ElDrawer>
 </template>
+
+<style scoped>
+.insight-skill-detail-content {
+  margin: 0;
+  max-height: min(42vh, 320px);
+  overflow: auto;
+  padding: 14px 16px;
+  color: var(--el-text-color-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.insight-skill-detail-content--empty {
+  color: var(--el-text-color-placeholder);
+}
+</style>

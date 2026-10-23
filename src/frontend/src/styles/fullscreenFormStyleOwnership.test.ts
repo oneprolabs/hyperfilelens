@@ -39,8 +39,10 @@ describe('fullscreen form style ownership', () => {
       .sort()
 
     expect(consumers).toEqual([
+      'components/NodeMaintenancePanel.vue',
       'pages/account/CreateOrganization.vue',
       'pages/insight/AiModelFormPage.vue',
+      'pages/insight/AssistantFormPage.vue',
       'pages/insight/KnowledgeSourceFormPage.vue',
       'pages/insight/McpServerFormPage.vue',
       'pages/insight/NewCopilotChat.vue',
