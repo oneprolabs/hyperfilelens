@@ -1791,6 +1791,8 @@ export const en = {
         degraded: 'AI Engine Offline',
         setup_incomplete: 'AI Engine Missing',
         installing: 'Installing AI Engine',
+        removing: 'Removing AI Engine',
+        upgrading: 'Upgrading AI Engine',
         error: 'AI Engine Error',
         unavailable: 'Unavailable',
       },
@@ -1804,6 +1806,8 @@ export const en = {
       aiPhase: {
         not_provisioned: 'AI Engine Missing',
         pending_install: 'Installing AI Engine',
+        removing: 'Removing AI Engine',
+        upgrading: 'Upgrading AI Engine',
         online: 'AI Engine Online',
         offline: 'AI Engine Offline',
         error: 'AI Engine Error',

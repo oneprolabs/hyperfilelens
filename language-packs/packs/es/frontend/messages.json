@@ -4207,6 +4207,8 @@
         "degraded": "Motor de IA sin conexión",
         "setup_incomplete": "Motor de IA sin configurar",
         "installing": "Instalando el motor de IA",
+        "removing": "Desinstalando el motor de IA",
+        "upgrading": "Actualizando el motor de IA",
         "error": "Error del motor de IA",
         "unavailable": "No disponible"
       },
@@ -4220,6 +4222,8 @@
       "aiPhase": {
         "not_provisioned": "Motor de IA sin configurar",
         "pending_install": "Instalando el motor de IA",
+        "removing": "Desinstalando el motor de IA",
+        "upgrading": "Actualizando el motor de IA",
         "online": "Motor de IA en línea",
         "offline": "Motor de IA sin conexión",
         "error": "Error del motor de IA"

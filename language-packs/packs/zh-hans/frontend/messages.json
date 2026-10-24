@@ -4207,6 +4207,8 @@
         "degraded": "AI 引擎离线",
         "setup_incomplete": "未安装 AI 引擎",
         "installing": "正在安装 AI 引擎",
+        "removing": "正在卸载 AI 引擎",
+        "upgrading": "正在升级 AI 引擎",
         "error": "AI 引擎异常",
         "unavailable": "不可用"
       },
@@ -4220,6 +4222,8 @@
       "aiPhase": {
         "not_provisioned": "未安装 AI 引擎",
         "pending_install": "正在安装 AI 引擎",
+        "removing": "正在卸载 AI 引擎",
+        "upgrading": "正在升级 AI 引擎",
         "online": "AI 引擎在线",
         "offline": "AI 引擎离线",
         "error": "AI 引擎异常"

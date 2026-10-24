@@ -318,6 +318,10 @@ function availabilityTagType(row: InsightGatewayRow): 'success' | 'danger' {
 }
 
 function aiPhase(row: InsightGatewayRow): GatewayAiPhase {
+  // Explicit sidecar operations remain authoritative while readiness drops.
+  if (row.managed_by_hfl !== false && (row.sidecar_status === 'removing' || row.sidecar_status === 'upgrading')) {
+    return row.sidecar_status
+  }
   if (isPlatformEngine.value && canManagePlatformGateways.value && !bridgeReady.value) return 'not_provisioned'
   if (row.managed_by_hfl === false) return 'not_provisioned'
   if (!row.hfl_agent_online) return 'agent_offline'
