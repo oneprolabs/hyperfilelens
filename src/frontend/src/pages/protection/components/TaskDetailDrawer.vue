@@ -63,6 +63,8 @@ import { cancelTask, getTask, listTaskEvents, type TaskEventRow, type TaskResour
 import { isRestoreTaskType } from '../../../lib/taskType'
 import { snapshotUsageFailureText, snapshotUsageReasonKey, type SnapshotUsageReason } from '../../../lib/snapshotUsageFailureDisplay'
 
+type TaskFetchInit = Parameters<typeof getTask>[1]
+
 const props = withDefaults(defineProps<{
   modelValue: boolean
   taskUuid?: string
@@ -71,12 +73,12 @@ const props = withDefaults(defineProps<{
   readOnly?: boolean
   resourceListMode?: 'default' | 'target_repositories'
   /** Cross-tenant / alternate detail loader (defaults to tenant getTask). */
-  fetchTask?: (taskUuid: string, init?: RequestInit) => Promise<TaskRow>
+  fetchTask?: (taskUuid: string, init?: TaskFetchInit) => Promise<TaskRow>
   /** Cross-tenant / alternate events loader (defaults to tenant listTaskEvents). */
   fetchTaskEvents?: (
     taskUuid: string,
     params?: Record<string, string | number | undefined>,
-    init?: RequestInit,
+    init?: TaskFetchInit,
   ) => Promise<{ count: number; results: TaskEventRow[] }>
   /** When set, cancel uses this instead of tenant-scoped cancel APIs. */
   cancelTaskRequest?: (task: TaskRow, reason: string) => Promise<TaskRow>
@@ -94,14 +96,14 @@ const emit = defineEmits<{
   'task-updated': [task: TaskRow]
 }>()
 
-function loadTask(taskUuid: string, init?: RequestInit) {
+function loadTask(taskUuid: string, init?: TaskFetchInit) {
   return props.fetchTask ? props.fetchTask(taskUuid, init) : getTask(taskUuid, init)
 }
 
 function loadTaskEvents(
   taskUuid: string,
   params?: Record<string, string | number | undefined>,
-  init?: RequestInit,
+  init?: TaskFetchInit,
 ) {
   return props.fetchTaskEvents
     ? props.fetchTaskEvents(taskUuid, params, init)
