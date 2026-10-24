@@ -57,12 +57,17 @@ class _AlertPolicyViewSetBase(viewsets.ModelViewSet):
         return ctx
 
     def perform_create(self, serializer):
+        from common.resource_scope import ResourceScope
+
         org = require_org(self.request)
         from apps.subscription.services.interface import enforce_license_quota
 
         with transaction.atomic():
             enforce_license_quota(org, "max_alert_policies", additional=1)
-            policy = serializer.save(organization=org)
+            policy = serializer.save(
+                organization=org,
+                owner_scope=ResourceScope.ORGANIZATION,
+            )
             write_audit_log(
                 organization=org,
                 user=self.request.user,

@@ -18,6 +18,13 @@ import { listChannels } from '../../lib/notificationApi'
 import { apiErrorMessageI18n } from '../../lib/api'
 import { toApiError } from '../../lib/errors'
 import {
+  createPlatformAlertPolicy,
+  fetchPlatformAlertMetadataResources,
+  fetchPlatformAlertPolicy,
+  listPlatformNotificationChannelOptions,
+  updatePlatformAlertPolicy,
+} from '../../platform-ops/lib/platformOpsApi'
+import {
   backendTriggerErrorSpecs,
   isValidTriggerValue,
   triggerSpecsForType,
@@ -80,6 +87,14 @@ const { t } = useI18n()
 const { policyTypeLabel, policyTypeOptions, policyTypeDescription, resourceTypeOptions, resourceTypeLabel, resourceTypeDescription } = useAlertPolicyLabels()
 const PREVIEW_EMPTY_VALUE = '—'
 
+/** Admin Console Alerting reuses this editor for platform-owned alert rules. */
+const isPlatformOps = computed(() => route.path.startsWith('/platform-ops/'))
+const listPath = computed(() => (
+  isPlatformOps.value
+    ? '/platform-ops/alert-center/policies'
+    : '/ops/alerts/rules'
+))
+
 const saving = ref(false)
 const pageRef = ref<HTMLElement | null>(null)
 const mainRef = ref<HTMLElement | null>(null)
@@ -92,6 +107,11 @@ const currentRecoveryKind = computed(() => recoveryKind(form.type, form.triggerR
 const legacyNumericRecovery = computed(() =>
   currentRecoveryKind.value === 'numeric' && !hasNumericRecovery(form.recoveryRule),
 )
+const channels = ref<Array<{ id: number; name: string; type?: string; enabled?: boolean }>>([])
+const editingId = computed(() => {
+  const id = route.params.id
+  return typeof id === 'string' && id ? id : null
+})
 const legacyTaskRecovery = computed(() =>
   form.type === 'task' && !!editingId.value && form.recoveryRule.enabled !== false,
 )
@@ -99,11 +119,6 @@ const displayedAutoRecovery = computed(() =>
   form.recoveryRule.enabled !== false
   && (currentRecoveryKind.value !== 'manual' || legacyTaskRecovery.value),
 )
-const channels = ref<Array<{ id: number; name: string }>>([])
-const editingId = computed(() => {
-  const id = route.params.id
-  return typeof id === 'string' && id ? id : null
-})
 
 const resourcesLoading = ref(false)
 const hydratingPolicy = ref(false)
@@ -473,15 +488,27 @@ const previewRuleRows = computed(() => [
 
 async function loadChannels() {
   try {
-    const res = await listChannels({ enabled: 'true', page_size: 200 })
-    channels.value = res.results.filter((c) => c.enabled)
+    if (isPlatformOps.value) {
+      const options = await listPlatformNotificationChannelOptions()
+      channels.value = options.map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.channel_type,
+        enabled: c.is_active,
+      })).filter((c) => c.enabled)
+    } else {
+      const res = await listChannels({ enabled: 'true', page_size: 200 })
+      channels.value = res.results.filter((c) => c.enabled)
+    }
   } catch {
     channels.value = []
   }
 }
 
 async function loadPolicy(id: string) {
-  const row = await getPolicy(id)
+  const row = isPlatformOps.value
+    ? await fetchPlatformAlertPolicy(id) as Awaited<ReturnType<typeof getPolicy>>
+    : await getPolicy(id)
   const loadedTriggerRule = row.triggerRule || row.trigger_rule || {}
   hydratingPolicy.value = true
   Object.assign(form, {
@@ -587,14 +614,22 @@ async function savePolicy() {
   saving.value = true
   try {
     const body = policyPayload()
-    if (editingId.value) {
+    if (isPlatformOps.value) {
+      if (editingId.value) {
+        await updatePlatformAlertPolicy(editingId.value, body)
+        ElMessage.success({ message: t('ops.alerts.rules.msgUpdated'), grouping: true })
+      } else {
+        await createPlatformAlertPolicy(body)
+        ElMessage.success({ message: t('ops.alerts.rules.msgCreated'), grouping: true })
+      }
+    } else if (editingId.value) {
       await updatePolicy(editingId.value, body)
       ElMessage.success({ message: t('ops.alerts.rules.msgUpdated'), grouping: true })
     } else {
       await createPolicy(body)
       ElMessage.success({ message: t('ops.alerts.rules.msgCreated'), grouping: true })
     }
-    router.push('/ops/alerts/rules')
+    router.push(listPath.value)
   } catch (e: unknown) {
     applyBackendTriggerErrors(e)
     ElMessage.error({
@@ -607,7 +642,7 @@ async function savePolicy() {
 }
 
 function handleBack() {
-  router.push('/ops/alerts/rules')
+  router.push(listPath.value)
 }
 
 function stringList(value: unknown): value is string[] {
@@ -689,7 +724,9 @@ async function loadResources() {
   }
   resourcesLoading.value = true
   try {
-    resourceOptions.value = await fetchMetadataResources(form.resourceType)
+    resourceOptions.value = isPlatformOps.value
+      ? await fetchPlatformAlertMetadataResources(form.resourceType)
+      : await fetchMetadataResources(form.resourceType)
   } finally {
     resourcesLoading.value = false
   }

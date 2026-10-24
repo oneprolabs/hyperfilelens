@@ -555,10 +555,13 @@ watch(hasSyncingRows, (syncing) => {
             <ElButton
               class="hfl-refresh-button"
               :title="t('common.refresh')"
-              :loading="loading"
+              :disabled="loading"
               @click="load"
             >
-              <RefreshCw :size="16" />
+              <RefreshCw
+                :size="16"
+                :class="{ 'is-spinning': loading }"
+              />
             </ElButton>
           </div>
         </div>

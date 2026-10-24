@@ -12,7 +12,10 @@ type RangeValue = [string, string] | ''
 
 const props = withDefaults(
   defineProps<{
+    /** Accessible name for the control (not used as the empty-state placeholder). */
     label: string
+    startPlaceholder?: string
+    endPlaceholder?: string
     presets?: HflDateTimeRangePreset[]
     selectedPreset?: string
     start?: string
@@ -25,6 +28,8 @@ const props = withDefaults(
     maxSpanHours?: number
   }>(),
   {
+    startPlaceholder: 'Start time',
+    endPlaceholder: 'End time',
     presets: () => [],
     selectedPreset: '',
     start: '',
@@ -56,7 +61,6 @@ const rangeInputNames: [string, string] = [
   `${rangeInputId}-end`,
 ]
 
-const displayPlaceholder = computed(() => props.label || '')
 const maxSpanMs = computed(() => (
   props.maxSpanHours && props.maxSpanHours > 0
     ? props.maxSpanHours * 60 * 60 * 1000
@@ -244,8 +248,8 @@ watch(
       :aria-label="label"
       :shortcuts="shortcuts"
       :disabled-date="disabledDate"
-      :start-placeholder="displayPlaceholder"
-      :end-placeholder="displayPlaceholder"
+      :start-placeholder="startPlaceholder"
+      :end-placeholder="endPlaceholder"
       :range-separator="'~'"
       :popper-class="popperClass"
       :disabled="disabled"

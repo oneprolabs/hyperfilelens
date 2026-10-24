@@ -22,12 +22,26 @@ import {
   testChannelConfig,
   updateChannel,
 } from '../../lib/notificationApi'
+import {
+  createPlatformNotificationChannel,
+  fetchPlatformNotificationChannel,
+  testPlatformNotificationChannelConfig,
+  updatePlatformNotificationChannel,
+} from '../../platform-ops/lib/platformOpsApi'
 import type { ChannelType } from './notificationTypes'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const { channelTypeLabel } = useNotificationLabels()
+
+/** Admin Console Alerting reuses this editor for platform-owned channels. */
+const isPlatformOps = computed(() => route.path.startsWith('/platform-ops/'))
+const channelsListPath = computed(() => (
+  isPlatformOps.value
+    ? '/platform-ops/alert-center/notification-channels'
+    : '/ops/channels'
+))
 
 const saving = ref(false)
 const testing = ref(false)
@@ -329,7 +343,7 @@ const previewTargetRows = computed(() => {
 })
 
 function handleBack() {
-  router.push('/ops/channels')
+  router.push(channelsListPath.value)
 }
 
 function buildConfig() {
@@ -452,6 +466,14 @@ async function persistChannel(): Promise<number> {
     enabled: form.enabled,
     config: buildConfig(),
   }
+  if (isPlatformOps.value) {
+    if (editingId.value) {
+      await updatePlatformNotificationChannel(editingId.value, body)
+      return editingId.value
+    }
+    const created = await createPlatformNotificationChannel(body)
+    return created.id
+  }
   if (editingId.value) {
     await updateChannel(editingId.value, body)
     return editingId.value
@@ -471,7 +493,7 @@ async function saveChannel() {
     ElMessage.success(
       isEdit ? t('ops.notification.updateSuccess') : t('ops.notification.createSuccess'),
     )
-    router.push('/ops/channels')
+    router.push(channelsListPath.value)
   } catch (e: unknown) {
     ElMessage.error({
       message: apiErrorMessageI18n(e, t, t('ops.notification.createFailed')),
@@ -488,12 +510,15 @@ async function testFromEditor() {
   testing.value = true
   try {
     if (!(await confirmSecretClear())) return
-    const res = await testChannelConfig({
+    const payload = {
       ...(editingId.value ? { channel_id: editingId.value } : {}),
       name: form.name,
       type: form.type,
       config: buildConfig(),
-    })
+    }
+    const res = isPlatformOps.value
+      ? await testPlatformNotificationChannelConfig(payload)
+      : await testChannelConfig(payload)
     const ok = res.status === 'success'
     if (ok) ElMessage.success({ message: t('ops.notification.testDraftSuccess'), grouping: true })
     else {
@@ -521,11 +546,19 @@ async function testFromEditor() {
 onMounted(async () => {
   if (editingId.value) {
     try {
-      const row = await getChannel(editingId.value)
-      form.name = row.name
-      form.type = row.type as ChannelType
-      form.enabled = row.enabled
-      loadNotificationChannelConfig(form, form.type, row.config || {})
+      if (isPlatformOps.value) {
+        const row = await fetchPlatformNotificationChannel(editingId.value)
+        form.name = row.name
+        form.type = row.channel_type as ChannelType
+        form.enabled = row.is_active
+        loadNotificationChannelConfig(form, form.type, row.config || {})
+      } else {
+        const row = await getChannel(editingId.value)
+        form.name = row.name
+        form.type = row.type as ChannelType
+        form.enabled = row.enabled
+        loadNotificationChannelConfig(form, form.type, row.config || {})
+      }
     } catch (e: unknown) {
       ElMessage.error({
         message: apiErrorMessageI18n(e, t, t('ops.notification.createFailed')),

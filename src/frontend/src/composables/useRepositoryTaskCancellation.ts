@@ -10,6 +10,7 @@ type Options = {
   onUpdate: (task: TaskRow) => void | Promise<void>
   onTerminal?: (task: TaskRow) => void | Promise<void>
   onError?: (error: unknown) => void
+  fetchTask?: (taskUuid: string, init?: RequestInit) => Promise<TaskRow>
 }
 
 export function useRepositoryTaskCancellation(
@@ -18,7 +19,7 @@ export function useRepositoryTaskCancellation(
 ) {
   const pending = computed(() => isRepositoryTaskCancellationPending(activeTask.value))
   const poller = createRepositoryTaskCancellationPoller({
-    fetchTask: getTask,
+    fetchTask: options.fetchTask || getTask,
     onUpdate: async (task) => {
       if (activeTask.value?.task_uuid !== task.task_uuid) return
       await options.onUpdate(task)

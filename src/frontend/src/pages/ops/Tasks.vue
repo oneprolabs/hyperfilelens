@@ -292,10 +292,6 @@ function routeDateTimeRange(): [Date, Date] | null {
 
 const taskAdvancedRangeStart = computed(() => formatLocalInputDateTime(advancedFilterDraft.created_range?.[0]))
 const taskAdvancedRangeEnd = computed(() => formatLocalInputDateTime(advancedFilterDraft.created_range?.[1]))
-const taskAdvancedRangeLabel = computed(() => {
-  if (!advancedFilterDraft.created_range) return t('ops.task.timeRange')
-  return `${formatLocalDateTime(advancedFilterDraft.created_range[0].toISOString())} ~ ${formatLocalDateTime(advancedFilterDraft.created_range[1].toISOString())}`
-})
 
 const canCancel = computed(() => {
   if (activeTask.value?.actions) return activeTask.value.actions.can_cancel
@@ -1234,6 +1230,7 @@ watch(
             >
               <template #default="{ row }">
                 <ResourceNameSummaryCell
+                  class="hfl-table-no-tooltip"
                   :name="row.display_name"
                   :summary="row.task_uuid"
                   kind="task"
@@ -1245,9 +1242,11 @@ watch(
             <el-table-column
               :label="t('ops.task.colType')"
               min-width="190"
+              class-name="hfl-table-no-tooltip"
             >
               <template #default="{ row }">
                 <TaskTypeLabel
+                  class="hfl-table-no-tooltip"
                   :type="row.task_type"
                   :operation-type="row.operation_type"
                 />
@@ -1369,7 +1368,9 @@ watch(
           <HflDateTimeRangePicker
             class="hfl-filter-range"
             constrain-to-trigger
-            :label="taskAdvancedRangeLabel"
+            :label="t('ops.monitorPage.timeRange')"
+            :start-placeholder="t('ops.monitorPage.startTime')"
+            :end-placeholder="t('ops.monitorPage.endTime')"
             :presets="taskDateTimeRangePresets"
             :start="taskAdvancedRangeStart"
             :end="taskAdvancedRangeEnd"

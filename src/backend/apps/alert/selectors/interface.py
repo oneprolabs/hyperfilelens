@@ -10,11 +10,39 @@ from apps.notification.selectors.interface import channel_summaries_for_ids
 
 
 def policies_for_org(*, organization_id: int) -> QuerySet[AlertPolicy]:
-    return AlertPolicy.objects.filter(organization_id=organization_id)
+    from common.resource_scope import ResourceScope
+
+    return AlertPolicy.objects.filter(
+        owner_scope=ResourceScope.ORGANIZATION,
+        organization_id=organization_id,
+    )
+
+
+def policies_for_platform() -> QuerySet[AlertPolicy]:
+    from common.resource_scope import ResourceScope
+
+    return AlertPolicy.objects.filter(
+        owner_scope=ResourceScope.PLATFORM,
+        organization__isnull=True,
+    )
 
 
 def records_for_org(*, organization_id: int) -> QuerySet[AlertRecord]:
-    return AlertRecord.objects.filter(organization_id=organization_id)
+    from common.resource_scope import ResourceScope
+
+    return AlertRecord.objects.filter(
+        owner_scope=ResourceScope.ORGANIZATION,
+        organization_id=organization_id,
+    )
+
+
+def records_for_platform() -> QuerySet[AlertRecord]:
+    from common.resource_scope import ResourceScope
+
+    return AlertRecord.objects.filter(
+        owner_scope=ResourceScope.PLATFORM,
+        organization__isnull=True,
+    )
 
 
 def filter_policies(
@@ -72,7 +100,13 @@ def filter_records(
     return queryset.order_by("-last_triggered_at", "-created_at")
 
 
-def notification_channels_for_policy(policy: AlertPolicy, org: Organization) -> list[dict]:
+def notification_channels_for_policy(
+    policy: AlertPolicy,
+    org: Organization | None,
+) -> list[dict]:
+    from common.resource_scope import ResourceScope
+    from apps.notification.selectors.interface import platform_channels_by_ids
+
     ids = policy.notification_channel_ids or []
     int_ids: list[int] = []
     for raw in ids:
@@ -80,6 +114,16 @@ def notification_channels_for_policy(policy: AlertPolicy, org: Organization) -> 
             int_ids.append(int(raw))
         except (TypeError, ValueError):
             continue
+    if policy.owner_scope == ResourceScope.PLATFORM or org is None:
+        return [
+            {
+                "id": ch.id,
+                "name": ch.name,
+                "type": ch.channel_type,
+                "enabled": ch.is_active,
+            }
+            for ch in platform_channels_by_ids(channel_ids=int_ids)
+        ]
     return channel_summaries_for_ids(organization_id=org.id, channel_ids=int_ids)
 
 

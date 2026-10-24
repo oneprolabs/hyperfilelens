@@ -70,6 +70,16 @@ const props = withDefaults(defineProps<{
   drawerZIndex?: number
   readOnly?: boolean
   resourceListMode?: 'default' | 'target_repositories'
+  /** Cross-tenant / alternate detail loader (defaults to tenant getTask). */
+  fetchTask?: (taskUuid: string, init?: RequestInit) => Promise<TaskRow>
+  /** Cross-tenant / alternate events loader (defaults to tenant listTaskEvents). */
+  fetchTaskEvents?: (
+    taskUuid: string,
+    params?: Record<string, string | number | undefined>,
+    init?: RequestInit,
+  ) => Promise<{ count: number; results: TaskEventRow[] }>
+  /** When set, cancel uses this instead of tenant-scoped cancel APIs. */
+  cancelTaskRequest?: (task: TaskRow, reason: string) => Promise<TaskRow>
 }>(), {
   taskUuid: '',
   drawerSize: '700px',
@@ -83,6 +93,20 @@ const emit = defineEmits<{
   'open-task': [taskUuid: string]
   'task-updated': [task: TaskRow]
 }>()
+
+function loadTask(taskUuid: string, init?: RequestInit) {
+  return props.fetchTask ? props.fetchTask(taskUuid, init) : getTask(taskUuid, init)
+}
+
+function loadTaskEvents(
+  taskUuid: string,
+  params?: Record<string, string | number | undefined>,
+  init?: RequestInit,
+) {
+  return props.fetchTaskEvents
+    ? props.fetchTaskEvents(taskUuid, params, init)
+    : listTaskEvents(taskUuid, params, init)
+}
 
 const { t, te } = useI18n()
 const { tableMaxHeight: resourceTableMaxHeight, containerRef: resourceTableRef } = useDrawerTableMaxHeight()
@@ -366,6 +390,21 @@ const usesTargetRepositoryResources = computed(() => props.resourceListMode === 
 
 const canCancel = computed(() => {
   if (props.readOnly) return false
+  // Injected cancel (e.g. Admin Console) must not depend on tenant authz action flags —
+  // TaskSerializer clears can_cancel when an authz provider is enabled without org context.
+  if (props.cancelTaskRequest) {
+    const task = activeTask.value
+    // Mirror platform cancel_task guards so Admin Console does not offer cancel
+    // for types the generic/platform path rejects (restore, node lifecycle, …).
+    if (!task || task.task_type === 'source_unregister') return false
+    if (task.task_type === 'node_lifecycle') return false
+    if (task.task_type === 'backup_config_provision') return false
+    if (isRestoreTaskType(task.task_type)) return false
+    if (task.task_type === 'repository_operation') {
+      return canCancelRepositoryTask(task)
+    }
+    return task.status === 'pending' || task.status === 'waiting' || task.status === 'running'
+  }
   if (activeTask.value?.actions) return activeTask.value.actions.can_cancel
   if (activeTask.value?.task_type === 'source_unregister') return false
   if (activeTask.value?.task_type === 'repository_operation') {
@@ -379,12 +418,13 @@ const {
   stop: stopRepositoryCancellation,
   sync: syncRepositoryCancellation,
 } = useRepositoryTaskCancellation(activeTask, {
+  fetchTask: (taskUuid, init) => loadTask(taskUuid, init),
   onUpdate: async (task) => {
     activeTask.value = task
     emit('task-updated', task)
   },
   onTerminal: async (task) => {
-    const events = await listTaskEvents(task.task_uuid, { page: 1, page_size: 300 })
+    const events = await loadTaskEvents(task.task_uuid, { page: 1, page_size: 300 })
     if (activeTask.value?.task_uuid !== task.task_uuid) return
     detailEvents.value = events.results
     initExpandedSteps(task)
@@ -785,7 +825,7 @@ async function loadTaskDetail(taskUuid: string) {
   detailRefreshing.value = true
   detailLoadError.value = ''
   try {
-    const task = await getTask(uuid)
+    const task = await loadTask(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
     activeTask.value = task
     resetDrawerScroll()
@@ -797,7 +837,7 @@ async function loadTaskDetail(taskUuid: string) {
     initExpandedSteps(task)
     activeDetailTab.value = 'steps'
     void loadTaskOwner(task)
-    const events = await listTaskEvents(uuid, { page: 1, page_size: 300 })
+    const events = await loadTaskEvents(uuid, { page: 1, page_size: 300 })
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
     detailEvents.value = events.results
     syncRepositoryCancellation(task)
@@ -829,14 +869,14 @@ async function refreshRunningTaskStatus() {
         return
       }
     }
-    const task = await getTask(uuid)
+    const task = await loadTask(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid
       || activeTask.value?.task_uuid !== uuid || detailRefreshing.value || actionBusy.value) return
     activeTask.value = task
     emit('task-updated', task)
     syncRepositoryCancellation(task)
     if (task.status !== 'running') {
-      const events = await listTaskEvents(uuid, { page: 1, page_size: 300 })
+      const events = await loadTaskEvents(uuid, { page: 1, page_size: 300 })
       if (requestId === detailRequestId && props.modelValue && props.taskUuid === uuid) {
         detailEvents.value = events.results
       }
@@ -884,22 +924,37 @@ async function cancelActiveTask() {
   }
   actionBusy.value = true
   try {
-    const updated = task.task_type === 'backup'
-      ? await (async () => {
-          const result = await cancelProtectionBackupTask(task.task_uuid)
-          return getTask(result.task_uuid)
-        })()
-      : isRestoreTaskType(task.task_type)
-        ? await (async () => {
-            const result = await cancelProtectionRestoreTask(task.task_uuid)
-            return getTask(result.task_uuid)
-          })()
-        : task.task_type === 'repository_operation'
-          ? await cancelStorageRepositoryTask(task.task_uuid, t('ops.task.cancelReason'))
-          : await cancelTask(task.task_uuid, t('ops.task.cancelReason'))
+    const reason = t('ops.task.cancelReason')
+    // Prefer type-specific cancel flows. Injected cancelTaskRequest (Admin Console)
+    // is used when present — the platform cancel endpoint must implement backup /
+    // repository_operation semantics (cancel_backup / enqueue maintenance cancel).
+    let updated: TaskRow
+    if (task.task_type === 'backup') {
+      if (props.cancelTaskRequest) {
+        updated = await props.cancelTaskRequest(task, reason)
+      } else {
+        const result = await cancelProtectionBackupTask(task.task_uuid)
+        updated = await loadTask(result.task_uuid)
+      }
+    } else if (isRestoreTaskType(task.task_type)) {
+      if (props.cancelTaskRequest) {
+        updated = await props.cancelTaskRequest(task, reason)
+      } else {
+        const result = await cancelProtectionRestoreTask(task.task_uuid)
+        updated = await loadTask(result.task_uuid)
+      }
+    } else if (task.task_type === 'repository_operation') {
+      updated = props.cancelTaskRequest
+        ? await props.cancelTaskRequest(task, reason)
+        : await cancelStorageRepositoryTask(task.task_uuid, reason)
+    } else if (props.cancelTaskRequest) {
+      updated = await props.cancelTaskRequest(task, reason)
+    } else {
+      updated = await cancelTask(task.task_uuid, reason)
+    }
     activeTask.value = updated
     emit('task-updated', updated)
-    const events = await listTaskEvents(updated.task_uuid, { page: 1, page_size: 300 })
+    const events = await loadTaskEvents(updated.task_uuid, { page: 1, page_size: 300 })
     detailEvents.value = events.results
     initExpandedSteps(updated)
     resetRepositoryResourceRows()
@@ -1000,6 +1055,11 @@ watch(
           {{ t('ops.task.detailTitle') }}
         </h2>
         <div class="hfl-task-drawer__header-actions">
+          <slot
+            name="header-extra-actions"
+            :task="activeTask"
+            :busy="actionBusy || detailRefreshing"
+          />
           <ElButton
             v-if="canCancel"
             class="hfl-task-drawer__cancel-button"

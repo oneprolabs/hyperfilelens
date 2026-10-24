@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from django.db.models import Q
+
 from apps.alert.constants import AlertStatus, AlertType
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.alert.services.internal.lifecycle import fire_alert, resolve_alert
 from apps.task.models import Task
+from common.resource_scope import ResourceScope
 
 
 def _task_event_type(task: Task) -> str:
@@ -16,16 +19,23 @@ def _task_event_type(task: Task) -> str:
     return f"task_{task.status}"
 
 
+def _task_policies_for(task: Task):
+    """Org TASK policies for the task tenant, plus platform-owned TASK policies."""
+    return AlertPolicy.objects.filter(type=AlertType.TASK).filter(
+        Q(
+            owner_scope=ResourceScope.ORGANIZATION,
+            organization_id=task.organization_id,
+        )
+        | Q(owner_scope=ResourceScope.PLATFORM, organization__isnull=True)
+    )
+
+
 def handle_task_event(task: Task) -> None:
     event_type = _task_event_type(task)
     task_type = task.task_type
     operation = getattr(task, "repository_operation", None) if task_type == Task.Type.REPOSITORY_OPERATION else None
     operation_type = operation.operation_type if operation is not None else None
-    policies = AlertPolicy.objects.filter(
-        organization_id=task.organization_id,
-        enabled=True,
-        type=AlertType.TASK,
-    )
+    policies = _task_policies_for(task).filter(enabled=True)
     for policy in policies:
         rule = policy.trigger_rule or {}
         rule_task_type = rule.get("task_type")
@@ -59,15 +69,8 @@ def recover_task_alerts(task: Task) -> None:
     if task.status != Task.Status.SUCCESS:
         return
     task_ids = [str(task.id), str(task.task_uuid)]
-    policies = {
-        policy.id: policy
-        for policy in AlertPolicy.objects.filter(
-            organization_id=task.organization_id,
-            type=AlertType.TASK,
-        )
-    }
+    policies = {policy.id: policy for policy in _task_policies_for(task)}
     qs = AlertRecord.objects.filter(
-        organization_id=task.organization_id,
         type=AlertType.TASK,
         policy_id__in=policies,
         resource_id__in=task_ids,
@@ -76,6 +79,12 @@ def recover_task_alerts(task: Task) -> None:
             AlertStatus.FIRING,
             AlertStatus.ACKNOWLEDGED,
         ],
+    ).filter(
+        Q(
+            owner_scope=ResourceScope.ORGANIZATION,
+            organization_id=task.organization_id,
+        )
+        | Q(owner_scope=ResourceScope.PLATFORM, organization__isnull=True)
     )
     for alert in qs:
         # Legacy rules keep their existing default, but explicit opt-out applies

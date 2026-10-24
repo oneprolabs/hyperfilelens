@@ -4,13 +4,25 @@ from __future__ import annotations
 
 from django.db.models import Count, QuerySet
 
+from common.resource_scope import ResourceScope
+
 from apps.notification.constants import NotificationLogStatus
 from apps.notification.models import NotificationChannel, NotificationLog
 from apps.notification.selectors.internal.history_query import filter_logs_queryset
 
 
 def channels_for_org(*, organization_id: int) -> QuerySet[NotificationChannel]:
-    return NotificationChannel.objects.filter(organization_id=organization_id)
+    return NotificationChannel.objects.filter(
+        owner_scope=ResourceScope.ORGANIZATION,
+        organization_id=organization_id,
+    )
+
+
+def channels_for_platform() -> QuerySet[NotificationChannel]:
+    return NotificationChannel.objects.filter(
+        owner_scope=ResourceScope.PLATFORM,
+        organization__isnull=True,
+    )
 
 
 def channels_by_ids(
@@ -21,7 +33,18 @@ def channels_by_ids(
     if not channel_ids:
         return NotificationChannel.objects.none()
     return NotificationChannel.objects.filter(
+        owner_scope=ResourceScope.ORGANIZATION,
         organization_id=organization_id,
+        id__in=channel_ids,
+    )
+
+
+def platform_channels_by_ids(*, channel_ids: list[int]) -> QuerySet[NotificationChannel]:
+    if not channel_ids:
+        return NotificationChannel.objects.none()
+    return NotificationChannel.objects.filter(
+        owner_scope=ResourceScope.PLATFORM,
+        organization__isnull=True,
         id__in=channel_ids,
     )
 

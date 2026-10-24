@@ -241,7 +241,9 @@ def recent_failed_tasks(*, limit: int = 10) -> QuerySet[Task]:
     return Task.objects.filter(
         status__in=[Task.Status.FAILED, Task.Status.TIMEOUT],
         created_at__gte=fallback_since,
-    ).order_by("-finished_at", "-updated_at", "-id")[:limit]
+    ).select_related("repository_operation").order_by(
+        "-finished_at", "-updated_at", "-id"
+    )[:limit]
 
 
 def task_resource_options(*, organization_id: int, limit: int = 300) -> list[dict]:

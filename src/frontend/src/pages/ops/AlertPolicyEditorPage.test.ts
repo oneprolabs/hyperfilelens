@@ -9,7 +9,7 @@ import { en } from '../../locales/en'
 import AlertPolicyEditorPage, { type AlertPolicyFormState } from './AlertPolicyEditorPage.vue'
 
 const mocks = vi.hoisted(() => ({
-  route: { params: {} as { id?: string } }, push: vi.fn(),
+  route: { params: {} as { id?: string }, path: '/ops/alerts/rules/create' }, push: vi.fn(),
   getPolicy: vi.fn(), createPolicy: vi.fn(), updatePolicy: vi.fn(),
   fetchMetadata: vi.fn(), fetchMetadataResources: vi.fn(), listChannels: vi.fn(),
 }))
@@ -23,6 +23,13 @@ vi.mock('../../lib/alertApi', () => ({
 }))
 vi.mock('../../lib/notificationApi', () => ({ listChannels: mocks.listChannels }))
 vi.mock('../../lib/api', () => ({ apiErrorMessageI18n: () => 'Request failed' }))
+vi.mock('../../platform-ops/lib/platformOpsApi', () => ({
+  createPlatformAlertPolicy: vi.fn(),
+  fetchPlatformAlertMetadataResources: vi.fn(),
+  fetchPlatformAlertPolicy: vi.fn(),
+  listPlatformNotificationChannelOptions: vi.fn(),
+  updatePlatformAlertPolicy: vi.fn(),
+}))
 
 const wrappers: ReturnType<typeof mount>[] = []
 function catalog(locale: string) {
@@ -61,6 +68,7 @@ describe('alert policy recovery editor', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mocks.route.params = {}
+    mocks.route.path = '/ops/alerts/rules/create'
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
     Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })

@@ -208,11 +208,6 @@ function isoDateTimeParam(value: string, inclusiveEnd = false) {
   return date.toISOString()
 }
 
-const auditAdvancedRangeLabel = computed(() => {
-  if (!advancedFilterDraft.start_date || !advancedFilterDraft.end_date) return t('ops.audit.dateCustom')
-  return `${formatLocalDateTime(isoDateTimeParam(advancedFilterDraft.start_date))} ~ ${formatLocalDateTime(isoDateTimeParam(advancedFilterDraft.end_date))}`
-})
-
 function setAdvancedDateTimeRange(start: Date, end: Date) {
   if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return
   advancedFilterDraft.start_date = formatLocalInputDateTime(start)
@@ -783,7 +778,9 @@ watch(
           <HflDateTimeRangePicker
             class="hfl-filter-range"
             constrain-to-trigger
-            :label="auditAdvancedRangeLabel"
+            :label="t('ops.monitorPage.timeRange')"
+            :start-placeholder="t('ops.monitorPage.startTime')"
+            :end-placeholder="t('ops.monitorPage.endTime')"
             :presets="auditDateTimeRangePresets"
             :start="advancedFilterDraft.start_date"
             :end="advancedFilterDraft.end_date"

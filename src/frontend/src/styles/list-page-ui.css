@@ -1005,7 +1005,8 @@ html[data-theme='dark'] {
   max-width: 100%;
   align-items: center;
   gap: 5px;
-  line-height: 14px;
+  /* Keep room for glyph descenders (p/g/y); 14px was clipping “Operation”. */
+  line-height: 18px;
   vertical-align: middle;
 }
 
@@ -1023,6 +1024,7 @@ html[data-theme='dark'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: inherit;
 }
 
 .hfl-table-type-label__icon {

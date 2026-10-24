@@ -197,26 +197,41 @@ class AlertPolicySerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         {"resource_ids": "Selected resources must be valid node IDs."}
                     )
+            from common.resource_scope import ResourceScope
+
             org = self.context.get("organization") or getattr(
                 instance, "organization", None
             )
-            if org is not None:
-                found = set(
-                    Node.objects.filter(
-                        organization=org,
-                        id__in=node_ids,
-                        role=role_by_resource_type[resource_type],
-                    ).values_list("id", flat=True)
+            owner_scope = None
+            if instance is not None:
+                owner_scope = instance.owner_scope
+            elif self.context.get("owner_scope"):
+                owner_scope = self.context.get("owner_scope")
+            elif org is not None:
+                owner_scope = ResourceScope.ORGANIZATION
+
+            node_qs = Node.objects.filter(
+                id__in=node_ids,
+                role=role_by_resource_type[resource_type],
+            )
+            # Platform-owned policies target platform-scoped nodes (org is None).
+            if owner_scope == ResourceScope.PLATFORM or org is None:
+                node_qs = node_qs.filter(
+                    scope=ResourceScope.PLATFORM,
+                    organization__isnull=True,
                 )
-                if set(node_ids) != found:
-                    raise serializers.ValidationError(
-                        {
-                            "resource_ids": (
-                                "Selected resources do not match the resource type "
-                                "or organization."
-                            )
-                        }
-                    )
+            else:
+                node_qs = node_qs.filter(organization=org)
+            found = set(node_qs.values_list("id", flat=True))
+            if set(node_ids) != found:
+                raise serializers.ValidationError(
+                    {
+                        "resource_ids": (
+                            "Selected resources do not match the resource type "
+                            "or organization."
+                        )
+                    }
+                )
 
         if (
             scope == PolicyScope.SELECTED
@@ -253,8 +268,18 @@ class AlertPolicySerializer(serializers.ModelSerializer):
         org = self.context.get("organization")
         if org is None and instance is not None:
             org = instance.organization
+        owner_scope = None
+        if instance is not None:
+            owner_scope = instance.owner_scope
+        elif self.context.get("owner_scope"):
+            owner_scope = self.context.get("owner_scope")
+        elif org is not None:
+            from common.resource_scope import ResourceScope
+
+            owner_scope = ResourceScope.ORGANIZATION
         channel_ids = data.get("notification_channel_ids") or []
-        if org is not None and channel_ids:
+        if channel_ids and (org is not None or owner_scope):
+            from common.resource_scope import ResourceScope
             from apps.notification.models import NotificationChannel
 
             int_ids = []
@@ -265,11 +290,18 @@ class AlertPolicySerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         {"notification_channel_ids": f"Invalid channel id: {raw}"}
                     )
-            found = set(
-                NotificationChannel.objects.filter(
-                    organization=org, id__in=int_ids, is_active=True
-                ).values_list("id", flat=True)
-            )
+            channel_qs = NotificationChannel.objects.filter(id__in=int_ids, is_active=True)
+            if owner_scope == ResourceScope.PLATFORM:
+                channel_qs = channel_qs.filter(
+                    owner_scope=ResourceScope.PLATFORM,
+                    organization__isnull=True,
+                )
+            elif org is not None:
+                channel_qs = channel_qs.filter(
+                    owner_scope=ResourceScope.ORGANIZATION,
+                    organization=org,
+                )
+            found = set(channel_qs.values_list("id", flat=True))
             missing_ids = [cid for cid in int_ids if cid not in found]
             if missing_ids:
                 raise serializers.ValidationError(
@@ -282,10 +314,17 @@ class AlertPolicySerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        from common.resource_scope import ResourceScope
+
         request = self.context.get("request")
         org = self.context.get("organization")
-        if org is not None:
+        owner_scope = self.context.get("owner_scope")
+        if owner_scope == ResourceScope.PLATFORM:
+            validated_data["organization"] = None
+            validated_data["owner_scope"] = ResourceScope.PLATFORM
+        elif org is not None:
             validated_data["organization"] = org
+            validated_data["owner_scope"] = ResourceScope.ORGANIZATION
         if request and request.user.is_authenticated:
             validated_data["created_by"] = request.user.id
         return super().create(validated_data)
@@ -301,6 +340,7 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             organization_id=obj.organization_id,
             resource_type=obj.resource_type,
             resource_ids=obj.resource_ids or [],
+            owner_scope=obj.owner_scope,
         )
 
 

@@ -5,16 +5,27 @@ import uuid
 from django.db import models
 
 from apps.iam.models import Organization
+from common.resource_scope import ResourceScope
 
 from apps.alert.constants import AlertSeverity, AlertStatus, AlertType, ResourceType
 
 
 class AlertRecord(models.Model):
+    OwnerScope = ResourceScope
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization,
         on_delete=models.CASCADE,
         related_name="alert_records",
+        null=True,
+        blank=True,
+    )
+    owner_scope = models.CharField(
+        max_length=16,
+        choices=ResourceScope.choices,
+        default=ResourceScope.ORGANIZATION,
+        db_index=True,
     )
     policy_id = models.UUIDField(null=True, blank=True, db_index=True)
     type = models.CharField(max_length=50, choices=AlertType.choices)
@@ -60,7 +71,20 @@ class AlertRecord(models.Model):
                 fields=["organization", "status", "created_at"],
                 name="alert_rec_org_st_idx",
             ),
+            models.Index(
+                fields=["owner_scope", "status", "created_at"],
+                name="alert_rec_owner_st_idx",
+            ),
             models.Index(fields=["fingerprint"], name="alert_rec_fp_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(owner_scope=ResourceScope.ORGANIZATION, organization__isnull=False)
+                    | models.Q(owner_scope=ResourceScope.PLATFORM, organization__isnull=True)
+                ),
+                name="alert_record_owner_scope_ck",
+            ),
         ]
 
     def __str__(self) -> str:
