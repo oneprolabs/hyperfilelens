@@ -185,6 +185,56 @@ def test_metric_policy_rejects_mismatched_node_role(org_user_client):
 
 
 @pytest.mark.django_db
+def test_platform_owned_policy_rejects_tenant_node_ids(db):
+    from apps.alert.api.serializers.policy import AlertPolicySerializer
+    from common.resource_scope import ResourceScope
+
+    org = Organization.objects.create(key="platform-policy-org", name="Platform Policy Org")
+    tenant_gateway = Node.objects.create(
+        organization=org, name="tenant-gateway", role=NodeRole.GATEWAY
+    )
+    payload = {
+        "name": "Platform gateway memory",
+        "type": AlertType.METRIC,
+        "severity": "warning",
+        "enabled": True,
+        "resource_type": ResourceType.GATEWAY,
+        "scope": "selected",
+        "resource_ids": [str(tenant_gateway.id)],
+        "trigger_rule": {
+            "metric_key": "memory_usage",
+            "operator": ">=",
+            "threshold": 80,
+            "duration_seconds": 60,
+            "evaluation_interval_seconds": 60,
+        },
+        "recovery_rule": {"enabled": True},
+        "notification_channel_ids": [],
+    }
+
+    rejected = AlertPolicySerializer(
+        data=payload,
+        context={"owner_scope": ResourceScope.PLATFORM, "organization": None},
+    )
+    assert not rejected.is_valid()
+    assert "resource_ids" in rejected.errors
+
+    platform_gateway = Node.objects.create(
+        organization=None,
+        scope=ResourceScope.PLATFORM,
+        name="platform-gateway",
+        role=NodeRole.GATEWAY,
+        transport_namespace="platform:hfl-test-policy",
+    )
+    payload["resource_ids"] = [str(platform_gateway.id)]
+    accepted = AlertPolicySerializer(
+        data=payload,
+        context={"owner_scope": ResourceScope.PLATFORM, "organization": None},
+    )
+    assert accepted.is_valid(), accepted.errors
+
+
+@pytest.mark.django_db
 def test_metric_policy_rejects_metric_for_another_resource_type(org_user_client):
     client, org = org_user_client
 

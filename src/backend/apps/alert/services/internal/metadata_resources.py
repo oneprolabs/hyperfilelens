@@ -14,7 +14,14 @@ def _option(item_id, name: str, status: str = "active") -> dict:
     return {"id": str(item_id), "name": name, "status": status}
 
 
-def resource_options(*, organization_id: int, resource_type: str | None) -> list[dict]:
+def resource_options(
+    *,
+    organization_id: int | None,
+    resource_type: str | None,
+    owner_scope: str | None = None,
+) -> list[dict]:
+    from common.resource_scope import ResourceScope
+
     if not resource_type:
         return []
     if resource_type == ResourceType.SYSTEM:
@@ -25,21 +32,34 @@ def resource_options(*, organization_id: int, resource_type: str | None) -> list
                 "status": "active",
             }
         ]
+    platform_owned = owner_scope == ResourceScope.PLATFORM or organization_id is None
     if resource_type == ResourceType.SYNC_PROXY:
-        qs = Node.objects.filter(
-            organization_id=organization_id, role=NodeRole.PROXY
+        qs = Node.objects.filter(role=NodeRole.PROXY)
+        qs = (
+            qs.filter(scope=ResourceScope.PLATFORM, organization__isnull=True)
+            if platform_owned
+            else qs.filter(organization_id=organization_id)
         )
         return [_option(n.id, n.name, n.status) for n in qs.order_by("name")[:300]]
     if resource_type == ResourceType.AGENT_PROXY:
-        qs = Node.objects.filter(
-            organization_id=organization_id, role=NodeRole.AGENT
+        qs = Node.objects.filter(role=NodeRole.AGENT)
+        qs = (
+            qs.filter(scope=ResourceScope.PLATFORM, organization__isnull=True)
+            if platform_owned
+            else qs.filter(organization_id=organization_id)
         )
         return [_option(n.id, n.name, n.status) for n in qs.order_by("name")[:300]]
     if resource_type == ResourceType.GATEWAY:
-        qs = Node.objects.filter(
-            organization_id=organization_id, role=NodeRole.GATEWAY
+        qs = Node.objects.filter(role=NodeRole.GATEWAY)
+        qs = (
+            qs.filter(scope=ResourceScope.PLATFORM, organization__isnull=True)
+            if platform_owned
+            else qs.filter(organization_id=organization_id)
         )
         return [_option(n.id, n.name, n.status) for n in qs.order_by("name")[:300]]
+    if platform_owned:
+        # Platform policies do not target tenant repositories / tasks / sources.
+        return []
     if resource_type in (
         ResourceType.BACKUP_REPOSITORY,
         ResourceType.TARGET_STORAGE,
@@ -87,18 +107,26 @@ def organization_resource_options(org: Organization, resource_type: str | None) 
 
 
 def selected_resource_options(
-    *, organization_id: int, resource_type: str | None, resource_ids: list
+    *,
+    organization_id: int | None,
+    resource_type: str | None,
+    resource_ids: list,
+    owner_scope: str | None = None,
 ) -> list[dict]:
     """Resolve persisted policy resource IDs without changing their order."""
+    from common.resource_scope import ResourceScope
+
     ids = [str(value) for value in (resource_ids or [])]
     if resource_type == ResourceType.SYSTEM:
         return resource_options(
             organization_id=organization_id,
             resource_type=resource_type,
+            owner_scope=owner_scope,
         )
     if not ids:
         return []
 
+    platform_owned = owner_scope == ResourceScope.PLATFORM or organization_id is None
     rows: list[dict] = []
     if resource_type in {
         ResourceType.SYNC_PROXY,
@@ -110,14 +138,20 @@ def selected_resource_options(
             ResourceType.AGENT_PROXY: NodeRole.AGENT,
             ResourceType.GATEWAY: NodeRole.GATEWAY,
         }
+        node_qs = Node.objects.filter(
+            role=role_by_type[resource_type],
+            id__in=ids,
+        )
+        if platform_owned:
+            node_qs = node_qs.filter(scope=ResourceScope.PLATFORM, organization__isnull=True)
+        else:
+            node_qs = node_qs.filter(organization_id=organization_id)
         rows = [
             _option(node.id, node.name, node.status)
-            for node in Node.objects.filter(
-                organization_id=organization_id,
-                role=role_by_type[resource_type],
-                id__in=ids,
-            )
+            for node in node_qs
         ]
+    elif platform_owned:
+        rows = []
     elif resource_type in {
         ResourceType.BACKUP_REPOSITORY,
         ResourceType.TARGET_STORAGE,

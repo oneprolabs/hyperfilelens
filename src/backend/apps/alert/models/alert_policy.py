@@ -5,16 +5,27 @@ import uuid
 from django.db import models
 
 from apps.iam.models import Organization
+from common.resource_scope import ResourceScope
 
 from apps.alert.constants import AlertSeverity, AlertType, PolicyScope, ResourceType
 
 
 class AlertPolicy(models.Model):
+    OwnerScope = ResourceScope
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization,
         on_delete=models.CASCADE,
         related_name="alert_policies",
+        null=True,
+        blank=True,
+    )
+    owner_scope = models.CharField(
+        max_length=16,
+        choices=ResourceScope.choices,
+        default=ResourceScope.ORGANIZATION,
+        db_index=True,
     )
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")
@@ -27,6 +38,7 @@ class AlertPolicy(models.Model):
         blank=True,
         default="",
     )
+    # Monitoring target selection (all / selected) — not ownership. Ownership is owner_scope.
     scope = models.CharField(
         max_length=50,
         choices=PolicyScope.choices,
@@ -47,6 +59,16 @@ class AlertPolicy(models.Model):
         indexes = [
             models.Index(fields=["organization", "enabled"], name="alert_pol_org_en_idx"),
             models.Index(fields=["organization", "type"], name="alert_pol_org_ty_idx"),
+            models.Index(fields=["owner_scope", "enabled"], name="alert_pol_owner_en_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(owner_scope=ResourceScope.ORGANIZATION, organization__isnull=False)
+                    | models.Q(owner_scope=ResourceScope.PLATFORM, organization__isnull=True)
+                ),
+                name="alert_policy_owner_scope_ck",
+            ),
         ]
 
     def __str__(self) -> str:

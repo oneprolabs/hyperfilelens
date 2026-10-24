@@ -74,3 +74,36 @@ class RepositoryTaskAlertTests(TestCase):
         self.assertEqual(alerts.count(), 1)
         self.assertEqual(alerts.get().policy_id, matching.id)
         self.assertEqual(alerts.get().metadata["operation_type"], "maintenance.full")
+
+    def test_platform_owned_task_policy_fires_for_tenant_task(self):
+        from common.resource_scope import ResourceScope
+
+        org = Organization.objects.create(key="platform-task-alert-org", name="Platform Task Alert Org")
+        task = Task.objects.create(
+            organization_id=org.id,
+            task_type=Task.Type.BACKUP,
+            status=Task.Status.FAILED,
+            display_name="backup failed",
+            error_message="backup failed",
+        )
+        platform_policy = AlertPolicy.objects.create(
+            organization=None,
+            owner_scope=ResourceScope.PLATFORM,
+            name="Platform backup failures",
+            type=AlertType.TASK,
+            severity="warning",
+            enabled=True,
+            resource_type=ResourceType.TASK,
+            scope="all",
+            trigger_rule={
+                "task_type": Task.Type.BACKUP,
+                "event_type": "task_failed",
+            },
+        )
+
+        handle_task_event(task)
+
+        alert = AlertRecord.objects.get(policy_id=platform_policy.id)
+        self.assertEqual(alert.owner_scope, ResourceScope.PLATFORM)
+        self.assertIsNone(alert.organization_id)
+        self.assertEqual(alert.metadata["task_type"], Task.Type.BACKUP)

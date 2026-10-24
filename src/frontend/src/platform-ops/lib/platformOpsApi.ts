@@ -228,3 +228,98 @@ export async function patchPublicGatewayChatWorkload(
     },
   )
 }
+
+/** Platform-owned notification channel (Admin Console Alerting). */
+export type PlatformNotificationChannel = {
+  id: number
+  owner_scope?: string
+  organization_id?: number | null
+  organization_key?: string
+  organization_name?: string
+  name: string
+  channel_type: string
+  is_active: boolean
+  target?: string
+  config?: Record<string, unknown>
+  delivery_count?: number
+  created_at?: string
+  updated_at?: string
+}
+
+export async function fetchPlatformNotificationChannel(channelId: number) {
+  return get<PlatformNotificationChannel>(
+    `/api/v1/platform-ops/platform/notification-channels/${channelId}`,
+  )
+}
+
+export async function createPlatformNotificationChannel(body: Record<string, unknown>) {
+  return send<PlatformNotificationChannel>(
+    '/api/v1/platform-ops/platform/notification-channels',
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
+
+export async function updatePlatformNotificationChannel(
+  channelId: number,
+  body: Record<string, unknown>,
+) {
+  return send<PlatformNotificationChannel>(
+    `/api/v1/platform-ops/platform/notification-channels/${channelId}`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  )
+}
+
+export async function deletePlatformNotificationChannel(channelId: number) {
+  return send<void>(
+    `/api/v1/platform-ops/platform/notification-channels/${channelId}`,
+    { method: 'DELETE' },
+  )
+}
+
+export async function testPlatformNotificationChannelConfig(body: Record<string, unknown>) {
+  return send<{ status: string; error?: string }>(
+    '/api/v1/platform-ops/platform/notification-channels/test-config',
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
+
+export async function fetchPlatformAlertPolicy(policyId: string) {
+  return get<Record<string, unknown>>(
+    `/api/v1/platform-ops/platform/alert-policies/${policyId}`,
+  )
+}
+
+export async function createPlatformAlertPolicy(body: Record<string, unknown>) {
+  return send<Record<string, unknown>>(
+    '/api/v1/platform-ops/platform/alert-policies',
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
+
+export async function updatePlatformAlertPolicy(policyId: string, body: Record<string, unknown>) {
+  return send<Record<string, unknown>>(
+    `/api/v1/platform-ops/platform/alert-policies/${policyId}`,
+    { method: 'PATCH', body: JSON.stringify(body) },
+  )
+}
+
+export async function deletePlatformAlertPolicy(policyId: string) {
+  return send<void>(
+    `/api/v1/platform-ops/platform/alert-policies/${policyId}`,
+    { method: 'DELETE' },
+  )
+}
+
+export async function fetchPlatformAlertMetadataResources(resourceType: string) {
+  const data = await get<{ results: Array<{ id: string; name: string; status?: string }> }>(
+    `/api/v1/platform-ops/platform/alert-policies/metadata/resources?resource_type=${encodeURIComponent(resourceType)}`,
+  )
+  return data.results || []
+}
+
+export async function listPlatformNotificationChannelOptions() {
+  const data = await get<{ results: Array<{ id: number; name: string; channel_type: string; is_active: boolean }> }>(
+    '/api/v1/platform-ops/platform/notification-channels?page=1&page_size=200&enabled=true',
+  )
+  return data.results || []
+}

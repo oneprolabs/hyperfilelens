@@ -67,6 +67,7 @@ describe('TaskTypeLabel', () => {
 
     expect(wrapper.get('.hfl-table-type-label').text()).toBe('Repository Operation')
     expect(wrapper.get('.hfl-task-type-stack__operation').text()).toBe(expected)
+    expect(wrapper.get('.hfl-task-type-stack__operation').attributes('title')).toBeUndefined()
   })
 
   it('formats an unknown repository operation as a readable label', () => {

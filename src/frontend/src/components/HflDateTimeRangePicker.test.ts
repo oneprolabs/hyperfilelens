@@ -49,6 +49,8 @@ describe('HflDateTimeRangePicker accessibility', () => {
     const wrapper = mount(HflDateTimeRangePicker, {
       props: {
         label: 'Monitor time range',
+        startPlaceholder: 'Start time',
+        endPlaceholder: 'End time',
         clearText: 'Clear',
         applyText: 'Apply',
       },
@@ -68,6 +70,10 @@ describe('HflDateTimeRangePicker accessibility', () => {
     expect(inputs.map((input) => input.attributes('aria-label'))).toEqual([
       'Monitor time range',
       'Monitor time range',
+    ])
+    expect(inputs.map((input) => input.attributes('placeholder'))).toEqual([
+      'Start time',
+      'End time',
     ])
   })
 

@@ -60,6 +60,7 @@ def _policy_resource_ids(policy: AlertPolicy) -> list[str]:
         options = resource_options(
             organization_id=policy.organization_id,
             resource_type=policy.resource_type,
+            owner_scope=policy.owner_scope,
         )
         return [str(item["id"]) for item in options]
     return [str(rid) for rid in (policy.resource_ids or [])]
@@ -354,12 +355,19 @@ def _evaluate_availability_policy(policy: AlertPolicy) -> None:
     if check_type != "heartbeat":
         return
 
+    from common.resource_scope import ResourceScope
+
     now = timezone.now()
     for resource_id in _policy_resource_ids(policy):
-        node = Node.objects.filter(
-            organization_id=policy.organization_id,
-            pk=resource_id,
-        ).first()
+        node_qs = Node.objects.filter(pk=resource_id)
+        if policy.owner_scope == ResourceScope.PLATFORM:
+            node_qs = node_qs.filter(
+                scope=ResourceScope.PLATFORM,
+                organization__isnull=True,
+            )
+        else:
+            node_qs = node_qs.filter(organization_id=policy.organization_id)
+        node = node_qs.first()
         if node is None:
             continue
         expected_type = _NODE_RESOURCE_BY_ROLE.get(node.role)
@@ -442,11 +450,18 @@ def _evaluation_due(policy: AlertPolicy, now) -> bool:
 
 
 def evaluate_organization_policies(*, organization_id: int | None = None) -> dict:
+    from common.resource_scope import ResourceScope
+
     qs = AlertPolicy.objects.filter(enabled=True).exclude(type=AlertType.TASK).exclude(
         type=AlertType.EVENT
     )
     if organization_id is not None:
-        qs = qs.filter(organization_id=organization_id)
+        # Tenant runs never evaluate platform-owned policies.
+        qs = qs.filter(
+            owner_scope=ResourceScope.ORGANIZATION,
+            organization_id=organization_id,
+        )
+    # organization_id is None → platform scheduler path: org + platform policies.
 
     counts = {"metric": 0, "availability": 0, "system": 0, "skipped": 0}
     for policy in qs.iterator():

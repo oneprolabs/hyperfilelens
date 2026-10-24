@@ -129,6 +129,7 @@ def test_channel(channel: NotificationChannel) -> dict:
         if channel_type in (ChannelType.DINGTALK, ChannelType.WECOM):
             test_cfg["webhook_platform"] = channel_type
         stub = NotificationDelivery(
+            owner_scope=channel.owner_scope,
             organization_id=channel.organization_id,
             channel=channel,
             event_type="channel.test",
@@ -136,6 +137,7 @@ def test_channel(channel: NotificationChannel) -> dict:
             status=NotificationDelivery.Status.PENDING,
         )
         patched = NotificationChannel(
+            owner_scope=channel.owner_scope,
             organization_id=channel.organization_id,
             name=channel.name,
             channel_type=ChannelType.WEBHOOK,

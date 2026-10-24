@@ -70,7 +70,13 @@ function selectPreset(preset: 'today' | '7d' | '30d' | 'month') {
 }
 
 function applyCustomRange(value: [string, string] | null) {
-  if (!value?.[0] || !value?.[1]) return
+  if (!value?.[0] || !value?.[1]) {
+    // Clearing the picker must leave custom mode; fall back to the default preset.
+    if (periodPreset.value === 'custom') {
+      selectPreset('today')
+    }
+    return
+  }
   periodPreset.value = 'custom'
   startDate.value = value[0]
   endDate.value = value[1]
