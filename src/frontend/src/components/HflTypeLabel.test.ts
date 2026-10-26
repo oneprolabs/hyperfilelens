@@ -34,7 +34,7 @@ describe('HflTypeLabel', () => {
     expect(listStyles).toContain('> span:not(.el-tag):not(.hfl-table-type-label)')
     expect(listStyles).toMatch(/\.hfl-table-type-label\s*{[^}]*display:\s*inline-flex/s)
     expect(listStyles).toMatch(/\.hfl-table-type-label\s*{[^}]*max-width:\s*100%/s)
-    expect(listStyles).toMatch(/\.hfl-table-type-label\s*{[^}]*line-height:\s*14px/s)
+    expect(listStyles).toMatch(/\.hfl-table-type-label\s*{[^}]*line-height:\s*18px/s)
     expect(listStyles).toMatch(/\.hfl-table-type-label--primary\s*{[^}]*color:\s*var\(--color-text-primary[^}]*font-weight:\s*500/s)
     expect(listStyles).toMatch(/\.hfl-table-type-label--secondary\s*{[^}]*color:\s*var\(--color-text-secondary/s)
     expect(listStyles).toMatch(/\.hfl-table-type-label\s*>\s*span\s*{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s)

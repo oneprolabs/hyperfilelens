@@ -78,10 +78,7 @@ const operationLabel = computed(() => {
       :label="label"
       :emphasis="emphasis"
     />
-    <span
-      class="hfl-task-type-stack__operation"
-      :title="operationLabel"
-    >
+    <span class="hfl-task-type-stack__operation">
       {{ operationLabel }}
     </span>
   </div>

@@ -113,6 +113,7 @@ def fire_alert(
     org_id = policy.organization_id
 
     alert = AlertRecord.objects.filter(
+        owner_scope=policy.owner_scope,
         organization_id=org_id,
         fingerprint=fingerprint,
         status__in=[
@@ -169,6 +170,7 @@ def fire_alert(
         return alert
 
     alert = AlertRecord.objects.create(
+        owner_scope=policy.owner_scope,
         organization_id=org_id,
         policy_id=policy.id,
         type=policy.type,

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   getChannel: vi.fn(), updateChannel: vi.fn(), testChannelConfig: vi.fn(), push: vi.fn(),
 }))
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: '7' } }),
+  useRoute: () => ({ params: { id: '7' }, path: '/ops/channels/7/edit' }),
   useRouter: () => ({ push: mocks.push }),
 }))
 vi.mock('../../lib/api', () => ({ apiErrorMessageI18n: () => 'Request failed' }))
@@ -19,6 +19,12 @@ vi.mock('../../lib/notificationApi', () => ({
   updateChannel: mocks.updateChannel,
   testChannelConfig: mocks.testChannelConfig,
   createChannel: vi.fn(),
+}))
+vi.mock('../../platform-ops/lib/platformOpsApi', () => ({
+  createPlatformNotificationChannel: vi.fn(),
+  fetchPlatformNotificationChannel: vi.fn(),
+  testPlatformNotificationChannelConfig: vi.fn(),
+  updatePlatformNotificationChannel: vi.fn(),
 }))
 
 const wrappers: ReturnType<typeof mount>[] = []

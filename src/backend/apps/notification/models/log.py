@@ -6,16 +6,27 @@ from django.conf import settings
 from django.db import models
 
 from apps.iam.models import Organization
+from common.resource_scope import ResourceScope
 
 from apps.notification.constants import NotificationLogStatus, NotificationLogType
 
 
 class NotificationLog(models.Model):
+    OwnerScope = ResourceScope
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization,
         on_delete=models.CASCADE,
         related_name="notification_logs",
+        null=True,
+        blank=True,
+    )
+    owner_scope = models.CharField(
+        max_length=16,
+        choices=ResourceScope.choices,
+        default=ResourceScope.ORGANIZATION,
+        db_index=True,
     )
     channel = models.ForeignKey(
         "notification.NotificationChannel",
@@ -41,6 +52,19 @@ class NotificationLog(models.Model):
             models.Index(
                 fields=["organization", "status", "sent_at"],
                 name="notif_log_org_st_sent_idx",
+            ),
+            models.Index(
+                fields=["owner_scope", "status", "sent_at"],
+                name="notif_log_owner_st_sent_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(owner_scope=ResourceScope.ORGANIZATION, organization__isnull=False)
+                    | models.Q(owner_scope=ResourceScope.PLATFORM, organization__isnull=True)
+                ),
+                name="notif_log_owner_scope_ck",
             ),
         ]
 

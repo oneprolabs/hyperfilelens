@@ -401,3 +401,63 @@ def test_control_plane_metrics_are_shared_but_alerts_are_tenant_scoped(db):
 
     assert AlertRecord.objects.filter(organization=first_org).count() == 1
     assert AlertRecord.objects.filter(organization=second_org).count() == 1
+
+
+@pytest.mark.django_db
+def test_platform_system_policy_is_evaluated_and_tenant_run_skips_it(db):
+    from common.resource_scope import ResourceScope
+
+    org = Organization.objects.create(key="tenant-eval", name="Tenant Eval")
+    platform_policy = AlertPolicy.objects.create(
+        organization=None,
+        owner_scope=ResourceScope.PLATFORM,
+        name="Platform Control Plane CPU",
+        type=AlertType.METRIC,
+        severity="critical",
+        enabled=True,
+        resource_type=ResourceType.SYSTEM,
+        scope="all",
+        trigger_rule={
+            "metric_key": "cpu_usage",
+            "operator": ">",
+            "threshold": 80,
+            "duration_seconds": 0,
+            "evaluation_interval_seconds": 60,
+        },
+    )
+    tenant_policy = AlertPolicy.objects.create(
+        organization=org,
+        owner_scope=ResourceScope.ORGANIZATION,
+        name="Tenant Control Plane CPU",
+        type=AlertType.METRIC,
+        severity="warning",
+        enabled=True,
+        resource_type=ResourceType.SYSTEM,
+        scope="all",
+        trigger_rule={
+            "metric_key": "cpu_usage",
+            "operator": ">",
+            "threshold": 80,
+            "duration_seconds": 0,
+            "evaluation_interval_seconds": 60,
+        },
+    )
+    host = DeploymentHost.objects.create(hostname="platform-control-plane")
+    SystemMetric.objects.create(host=host, cpu={"usage_percent": 97})
+
+    tenant_result = evaluate_organization_policies(organization_id=org.id)
+    assert tenant_result["metric"] == 1
+    assert AlertRecord.objects.filter(
+        policy_id=tenant_policy.id,
+        owner_scope=ResourceScope.ORGANIZATION,
+        organization=org,
+    ).exists()
+    assert not AlertRecord.objects.filter(policy_id=platform_policy.id).exists()
+
+    platform_result = evaluate_organization_policies()
+    assert platform_result["metric"] >= 1
+    assert AlertRecord.objects.filter(
+        policy_id=platform_policy.id,
+        owner_scope=ResourceScope.PLATFORM,
+        organization__isnull=True,
+    ).exists()

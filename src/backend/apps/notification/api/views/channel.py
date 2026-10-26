@@ -145,8 +145,13 @@ class _NotificationChannelViewSetBase(viewsets.ModelViewSet):
         }
 
     def perform_create(self, serializer):
+        from common.resource_scope import ResourceScope
+
         org = require_org(self.request)
-        channel = serializer.save(organization=org)
+        channel = serializer.save(
+            organization=org,
+            owner_scope=ResourceScope.ORGANIZATION,
+        )
         write_audit_log(
             organization=org,
             user=self.request.user,

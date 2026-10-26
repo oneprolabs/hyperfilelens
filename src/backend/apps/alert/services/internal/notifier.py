@@ -61,6 +61,7 @@ def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
     for channel_id in channel_ids:
         channel = NotificationChannel.objects.filter(
             id=channel_id,
+            owner_scope=alert.owner_scope,
             organization_id=alert.organization_id,
             is_active=True,
         ).first()
@@ -70,6 +71,7 @@ def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
         error_message = ""
         try:
             delivery = NotificationDelivery.objects.create(
+                owner_scope=alert.owner_scope,
                 organization_id=alert.organization_id,
                 channel_id=channel.id,
                 event_type=event_type,
@@ -84,6 +86,7 @@ def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
             error_message = str(exc)
 
         NotificationLog.objects.create(
+            owner_scope=alert.owner_scope,
             organization_id=alert.organization_id,
             channel_id=channel.id,
             alert_record_id=alert.id,

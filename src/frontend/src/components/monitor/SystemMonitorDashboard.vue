@@ -28,13 +28,16 @@ defineProps<{
   networkBytesOption: unknown
   networkPacketsOption: unknown
   uniqueDiskNames: string[]
+  uniqueDiskIoNames: string[]
   uniqueNetworkNames: string[]
   selectedDisk: string
+  selectedDiskIo: string
   selectedNetwork: string
 }>()
 
 const emit = defineEmits<{
   'update:selectedDisk': [value: string]
+  'update:selectedDiskIo': [value: string]
   'update:selectedNetwork': [value: string]
 }>()
 
@@ -89,12 +92,12 @@ const { t } = useI18n()
         </div>
         <div class="chart-card">
           <div class="chart-card__head">
-            <h3>{{ t('ops.monitorPage.loadAverage') }}</h3>
+            <h3>{{ t('ops.monitorPage.memoryUsage') }}</h3>
           </div>
           <VChart
-            v-if="hasChartData(loadOption)"
+            v-if="hasChartData(memoryOption)"
             class="chart-card__chart"
-            :option="loadOption"
+            :option="memoryOption"
             autoresize
           />
           <div
@@ -107,12 +110,12 @@ const { t } = useI18n()
         </div>
         <div class="chart-card">
           <div class="chart-card__head">
-            <h3>{{ t('ops.monitorPage.memoryUsage') }}</h3>
+            <h3>{{ t('ops.monitorPage.loadAverage') }}</h3>
           </div>
           <VChart
-            v-if="hasChartData(memoryOption)"
+            v-if="hasChartData(loadOption)"
             class="chart-card__chart"
-            :option="memoryOption"
+            :option="loadOption"
             autoresize
           />
           <div
@@ -171,6 +174,24 @@ const { t } = useI18n()
         <div class="chart-card">
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.diskThroughput') }}</h3>
+            <ElSelect
+              v-if="uniqueDiskIoNames.length"
+              :model-value="selectedDiskIo"
+              size="small"
+              class="chart-card__filter"
+              @update:model-value="emit('update:selectedDiskIo', $event)"
+            >
+              <ElOption
+                :label="t('ops.monitorPage.all')"
+                value="all"
+              />
+              <ElOption
+                v-for="name in uniqueDiskIoNames"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
+            </ElSelect>
           </div>
           <VChart
             v-if="hasChartData(diskThroughputOption)"
@@ -189,6 +210,24 @@ const { t } = useI18n()
         <div class="chart-card">
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.diskIops') }}</h3>
+            <ElSelect
+              v-if="uniqueDiskIoNames.length"
+              :model-value="selectedDiskIo"
+              size="small"
+              class="chart-card__filter"
+              @update:model-value="emit('update:selectedDiskIo', $event)"
+            >
+              <ElOption
+                :label="t('ops.monitorPage.all')"
+                value="all"
+              />
+              <ElOption
+                v-for="name in uniqueDiskIoNames"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
+            </ElSelect>
           </div>
           <VChart
             v-if="hasChartData(diskIopsOption)"
@@ -252,6 +291,24 @@ const { t } = useI18n()
         <div class="chart-card">
           <div class="chart-card__head">
             <h3>{{ t('ops.monitorPage.networkPackets') }}</h3>
+            <ElSelect
+              v-if="uniqueNetworkNames.length"
+              :model-value="selectedNetwork"
+              size="small"
+              class="chart-card__filter"
+              @update:model-value="emit('update:selectedNetwork', $event)"
+            >
+              <ElOption
+                :label="t('ops.monitorPage.all')"
+                value="all"
+              />
+              <ElOption
+                v-for="name in uniqueNetworkNames"
+                :key="name"
+                :label="name"
+                :value="name"
+              />
+            </ElSelect>
           </div>
           <VChart
             v-if="hasChartData(networkPacketsOption)"

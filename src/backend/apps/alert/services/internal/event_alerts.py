@@ -82,10 +82,24 @@ def handle_platform_event(
     if not _event_in_catalog(event_category, event_type):
         return 0
 
+    from django.db.models import Q
+
+    from common.resource_scope import ResourceScope
+
+    # Tenant EVENT policies for this org, plus platform-owned EVENT policies.
     policies = AlertPolicy.objects.filter(
-        organization=organization,
         enabled=True,
         type=AlertType.EVENT,
+    ).filter(
+        Q(owner_scope=ResourceScope.ORGANIZATION, organization=organization)
+        | Q(owner_scope=ResourceScope.PLATFORM, organization__isnull=True)
+    )
+    # Include the triggering tenant in alert_key so platform-owned policies
+    # (organization_id is null) do not merge identical resource_id/global keys
+    # from different organizations into one incident.
+    resource_part = resource_id or resource_name or "global"
+    alert_key = (
+        f"{event_category}:{event_type}:org:{organization.id}:{resource_part}"
     )
     fired = 0
     for policy in policies:
@@ -101,7 +115,7 @@ def handle_platform_event(
             resource=_resource_stub(resource_id, resource_name or title),
             title=title,
             message=message or title,
-            alert_key=f"{event_category}:{event_type}:{resource_id or resource_name or 'global'}",
+            alert_key=alert_key,
             metadata={
                 **(metadata or {}),
                 "event_category": event_category,
@@ -109,6 +123,8 @@ def handle_platform_event(
                 "resource_type": resource_type,
                 "resource_id": resource_id,
                 "resource_name": resource_name,
+                "organization_id": organization.id,
+                "organization_key": organization.key,
             },
         )
         fired += 1
