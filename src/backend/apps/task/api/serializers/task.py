@@ -72,22 +72,47 @@ class TaskDependencySerializer(serializers.ModelSerializer):
         return obj.blocking_task.status if obj.blocking_task_id else None
 
 
+class TaskHistoryQuerySerializer(serializers.Serializer):
+    history_before = serializers.IntegerField(
+        min_value=1, max_value=9223372036854775807, required=False,
+    )
+
+
+def task_detail_serializer_context(request) -> dict:
+    query = TaskHistoryQuerySerializer(data=request.query_params)
+    query.is_valid(raise_exception=True)
+    return {
+        "include_execution_history": True,
+        "history_before": query.validated_data.get("history_before"),
+    }
+
+
 class TaskSerializer(serializers.ModelSerializer):
     error_details = serializers.SerializerMethodField()
     trigger_type = serializers.SerializerMethodField()
     execution_history = serializers.SerializerMethodField()
+    execution_history_next_cursor = serializers.SerializerMethodField()
 
     def get_trigger_type(self, obj: Task) -> str:
         return task_trigger_source(obj)
 
-    def get_execution_history(self, obj: Task) -> list[dict]:
+    def _execution_history_page(self, obj: Task):
+        from apps.task.selectors.interface import ExecutionHistoryPage, repository_execution_history
+
         if (
             not self.context.get("include_execution_history")
             or self._repository_operation(obj) is None
         ):
-            return []
-        from apps.task.selectors.interface import repository_execution_history
+            return ExecutionHistoryPage([])
+        if not hasattr(self, "_history_pages"):
+            self._history_pages = {}
+        if obj.pk not in self._history_pages:
+            self._history_pages[obj.pk] = repository_execution_history(
+                task=obj, before_id=self.context.get("history_before"),
+            )
+        return self._history_pages[obj.pk]
 
+    def get_execution_history(self, obj: Task) -> list[dict]:
         return [
             {
                 "task_uuid": str(task.task_uuid),
@@ -96,8 +121,11 @@ class TaskSerializer(serializers.ModelSerializer):
                 "finished_at": task.finished_at.isoformat() if task.finished_at else None,
                 "created_at": task.created_at.isoformat(),
             }
-            for task in repository_execution_history(task=obj)
+            for task in self._execution_history_page(obj).records
         ]
+
+    def get_execution_history_next_cursor(self, obj: Task) -> int | None:
+        return self._execution_history_page(obj).next_cursor
 
     def get_error_details(self, obj):
         return task_error_contract(obj, obj.resources.all())
@@ -136,6 +164,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "replaces_task_uuid",
             "replacement_task_uuid",
             "execution_history",
+            "execution_history_next_cursor",
             "trigger_type",
             "request_payload",
             "group_uuid",

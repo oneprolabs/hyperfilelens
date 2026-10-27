@@ -9,7 +9,12 @@ from apps.iam.models import Organization
 from apps.storage.repositories.models import Repository, RepositoryTask
 from apps.task.api.serializers.task import TaskSerializer
 from apps.task.models import Task
-from apps.task.selectors.interface import get_task, list_tasks
+from apps.task.selectors.interface import (
+    EXECUTION_HISTORY_PAGE_SIZE,
+    get_task,
+    list_tasks,
+    repository_execution_history,
+)
 from apps.task.services.interface import create_task, retry_task
 from apps.task.trigger import task_trigger_source
 
@@ -114,7 +119,9 @@ class TaskTriggerSourceTests(TestCase):
             display_name="Backup replacement",
             replaces_task=backup,
         )
-        ids = set(list_tasks(organization_id=self.org.id).values_list("id", flat=True))
+        ids = set(list_tasks(
+            organization_id=self.org.id, collapse_replacements=True,
+        ).values_list("id", flat=True))
         self.assertNotIn(original.id, ids)
         self.assertIn(replacement.id, ids)
         self.assertIn(unrelated.id, ids)
@@ -141,6 +148,81 @@ class TaskTriggerSourceTests(TestCase):
                 {"task_uuid", "status", "started_at", "finished_at", "created_at"},
             )
         self.assertEqual(TaskSerializer(latest).data["execution_history"], [])
+
+    def test_exact_uuid_search_keeps_replaced_executions_discoverable(self):
+        original = self.operation()
+        self.operation(parent=original)
+        for search_field in ("uuid", None):
+            rows = list_tasks(
+                organization_id=self.org.id, collapse_replacements=True,
+                search=str(original.task_uuid), search_field=search_field,
+            )
+            self.assertEqual(list(rows.values_list("id", flat=True)), [original.id])
+        self.assertIn(original.id, list_tasks(
+            organization_id=self.org.id,
+        ).values_list("id", flat=True))
+
+    def test_history_paginates_long_chains_with_one_query_per_page(self):
+        current = None
+        expected = set()
+        for _ in range(105):
+            current = self.operation(parent=current)
+            expected.add(current.id)
+        _ = current.repository_operation
+        cursor = None
+        seen = set()
+        pages = 0
+        while True:
+            with self.assertNumQueries(1):
+                page = repository_execution_history(task=current, before_id=cursor)
+            ids = [task.id for task in page.records]
+            self.assertEqual(ids, sorted(ids))
+            self.assertLessEqual(len(ids), EXECUTION_HISTORY_PAGE_SIZE)
+            self.assertFalse(seen.intersection(ids))
+            seen.update(ids)
+            pages += 1
+            if page.next_cursor is None:
+                break
+            self.assertEqual(page.next_cursor, min(ids))
+            if cursor is not None:
+                self.assertLess(page.next_cursor, cursor)
+            cursor = page.next_cursor
+        self.assertEqual(seen, expected)
+        self.assertEqual(pages, 6)
+        serializer = TaskSerializer(current, context={"include_execution_history": True})
+        with self.assertNumQueries(1):
+            self.assertEqual(
+                len(serializer.get_execution_history(current)), EXECUTION_HISTORY_PAGE_SIZE,
+            )
+            self.assertIsNotNone(serializer.get_execution_history_next_cursor(current))
+
+    def test_history_terminates_cycles_and_fences_foreign_chain_members(self):
+        root = self.operation()
+        last = self.operation(parent=root)
+        Task.objects.filter(pk=root.pk).update(replaces_task=last)
+        with self.assertNumQueries(1):
+            page = repository_execution_history(task=last)
+        self.assertEqual([task.id for task in page.records], [root.id, last.id])
+
+        root = self.operation()
+        foreign = self.operation(parent=root)
+        Task.objects.filter(pk=foreign.pk).update(organization_id=self.org.id + 1000)
+        self.operation(parent=foreign)
+        self.assertEqual(
+            [task.id for task in repository_execution_history(task=root).records],
+            [root.id],
+        )
+        other_repository = Repository.objects.create(
+            organization_id=self.org.id, name="Other history", repo_type=Repository.Type.S3,
+        )
+        root = self.operation()
+        foreign = self.operation(parent=root)
+        RepositoryTask.objects.filter(task=foreign).update(repository=other_repository)
+        self.operation(parent=foreign)
+        self.assertEqual(
+            [task.id for task in repository_execution_history(task=root).records],
+            [root.id],
+        )
 
     def test_data_migration_preserves_results_and_links_and_is_idempotent(self):
         original = self.operation(source="api")

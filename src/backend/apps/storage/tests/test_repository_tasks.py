@@ -1009,6 +1009,25 @@ class RepositoryTasksApiTests(TestCase):
                 [row["task_uuid"] for row in response.data["execution_history"]],
                 [str(original.task.task_uuid), str(replacement.task.task_uuid)],
             )
+        for url in (
+            f"/api/v1/storage/repositories/{self.repository.id}/tasks/",
+            "/api/v1/tasks/",
+        ):
+            for field in ("uuid", ""):
+                response = self.client.get(url, {
+                    "search": str(original.task.task_uuid), "search_field": field,
+                }, HTTP_X_ORG_KEY=self.org.key)
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(
+                    [row["task_uuid"] for row in response.data["data"]["list"]],
+                    [str(original.task.task_uuid)],
+                )
+        for cursor in ("invalid", "0", "-1", "9223372036854775808"):
+            response = self.client.get(
+                f"/api/v1/tasks/{original.task.task_uuid}/",
+                {"history_before": cursor}, HTTP_X_ORG_KEY=self.org.key,
+            )
+            self.assertEqual(response.status_code, 400, response.content)
         other_org = Organization.objects.create(key="other-trigger-org", name="Other")
         self.assertEqual(self.client.get(
             f"/api/v1/tasks/{original.task.task_uuid}/",

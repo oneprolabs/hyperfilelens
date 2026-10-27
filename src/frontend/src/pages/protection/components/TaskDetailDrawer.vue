@@ -73,7 +73,7 @@ const props = withDefaults(defineProps<{
   readOnly?: boolean
   resourceListMode?: 'default' | 'target_repositories'
   /** Cross-tenant / alternate detail loader (defaults to tenant getTask). */
-  fetchTask?: (taskUuid: string, init?: TaskFetchInit) => Promise<TaskRow>
+  fetchTask?: (taskUuid: string, init?: TaskFetchInit, historyBefore?: number) => Promise<TaskRow>
   /** Cross-tenant / alternate events loader (defaults to tenant listTaskEvents). */
   fetchTaskEvents?: (
     taskUuid: string,
@@ -96,8 +96,9 @@ const emit = defineEmits<{
   'task-updated': [task: TaskRow]
 }>()
 
-function loadTask(taskUuid: string, init?: TaskFetchInit) {
-  return props.fetchTask ? props.fetchTask(taskUuid, init) : getTask(taskUuid, init)
+function loadTask(taskUuid: string, init?: TaskFetchInit, historyBefore?: number) {
+  const fetch = props.fetchTask || getTask
+  return historyBefore == null ? fetch(taskUuid, init) : fetch(taskUuid, init, historyBefore)
 }
 
 function loadTaskEvents(
@@ -126,6 +127,7 @@ let statusRefreshInFlight = false
 let detailRequestId = 0
 const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
+const historyLoading = ref(false)
 const detailLoadError = ref('')
 const actionBusy = ref(false)
 const taskOwner = ref('')
@@ -823,6 +825,7 @@ async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
   const requestId = ++detailRequestId
+  historyLoading.value = false
   stopRepositoryCancellation()
   detailRefreshing.value = true
   detailLoadError.value = ''
@@ -970,6 +973,30 @@ async function cancelActiveTask() {
     ElMessage.error(apiErrorMessageI18n(err, t))
   } finally {
     actionBusy.value = false
+  }
+}
+
+async function loadOlderExecutions() {
+  const task = activeTask.value
+  const cursor = task?.execution_history_next_cursor
+  if (!task || cursor == null || historyLoading.value) return
+  const requestId = detailRequestId
+  historyLoading.value = true
+  try {
+    const page = await loadTask(task.task_uuid, undefined, cursor)
+    if (requestId !== detailRequestId || activeTask.value !== task || !props.modelValue) return
+    const existing = new Set((task.execution_history || []).map(row => row.task_uuid))
+    task.execution_history = [
+      ...(page.execution_history || []).filter(row => !existing.has(row.task_uuid)),
+      ...(task.execution_history || []),
+    ]
+    task.execution_history_next_cursor = page.execution_history_next_cursor
+  } catch (error) {
+    if (requestId === detailRequestId && props.modelValue) {
+      ElMessage.error(apiErrorMessageI18n(error, t))
+    }
+  } finally {
+    if (requestId === detailRequestId) historyLoading.value = false
   }
 }
 
@@ -1221,12 +1248,22 @@ watch(
       </section>
 
       <section
-        v-if="(activeTask.execution_history?.length || 0) > 1"
+        v-if="(activeTask.execution_history?.length || 0) > 1 || activeTask.execution_history_next_cursor != null"
         class="hfl-task-drawer__execution-history"
       >
         <h3 class="hfl-task-drawer__hero-section-title">
           {{ t('ops.task.executionHistory') }}
         </h3>
+        <ElButton
+          v-if="activeTask.execution_history_next_cursor != null"
+          link
+          type="primary"
+          :loading="historyLoading"
+          :disabled="historyLoading"
+          @click="loadOlderExecutions"
+        >
+          {{ t('ops.task.earlierRecords') }}
+        </ElButton>
         <ul>
           <li
             v-for="execution in activeTask.execution_history"

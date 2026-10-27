@@ -7161,7 +7161,8 @@
         "gateway": "Gateway",
         "source": "Agent"
       },
-      "executionHistory": "Historial de ejecución"
+      "executionHistory": "Historial de ejecución",
+      "earlierRecords": "Registros anteriores"
     },
     "alertsCenter": {
       "common": {

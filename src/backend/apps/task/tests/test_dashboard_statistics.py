@@ -80,6 +80,57 @@ class DashboardStatisticsTests(TestCase):
         self.assertEqual(empty["total"], 0)
         self.assertEqual(empty["by_task_type"], {})
 
+    def test_replacement_folding_does_not_rewrite_previous_day_outcomes(self):
+        yesterday = self.now - timedelta(days=1)
+        original = Task.objects.create(
+            organization_id=self.org.id, task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Quick maintenance", status=Task.Status.FAILED,
+            trigger_type=Task.TriggerType.SYSTEM, started_at=yesterday,
+            finished_at=yesterday,
+        )
+        replacement = Task.objects.create(
+            organization_id=self.org.id, task_type=original.task_type,
+            display_name=original.display_name, replaces_task=original,
+            trigger_type=original.trigger_type, status=Task.Status.SUCCESS,
+            started_at=self.now, finished_at=self.now,
+        )
+        window = {
+            "finished_after": (yesterday - timedelta(hours=1)).isoformat(),
+            "finished_before": (yesterday + timedelta(hours=1)).isoformat(),
+        }
+        response = self.client.get("/api/v1/tasks/dashboard-statistics/", {
+            "recovery_created_after": yesterday.isoformat(),
+            "windows": json.dumps([window]),
+        }, HTTP_X_ORG_KEY=self.org.key)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["days"][0]["failed"], 1)
+        historical_rows = self.client.get("/api/v1/tasks/", {
+            **window, "terminal_only": "true",
+        }, HTTP_X_ORG_KEY=self.org.key)
+        self.assertEqual(historical_rows.status_code, 200, historical_rows.data)
+        self.assertEqual(
+            [row["task_uuid"] for row in historical_rows.data["data"]["list"]],
+            [str(original.task_uuid)],
+        )
+        statistics = self.client.get(
+            "/api/v1/tasks/statistics/", window, HTTP_X_ORG_KEY=self.org.key,
+        )
+        self.assertEqual(statistics.data["failed"], 1)
+        failed_rows = self.client.get("/api/v1/tasks/", {
+            "status": "failed", "task_type": original.task_type,
+        }, HTTP_X_ORG_KEY=self.org.key)
+        self.assertEqual(
+            [row["task_uuid"] for row in failed_rows.data["data"]["list"]],
+            [str(original.task_uuid)],
+        )
+        default_rows = self.client.get("/api/v1/tasks/", {
+            "task_type": original.task_type,
+        }, HTTP_X_ORG_KEY=self.org.key)
+        self.assertEqual(
+            [row["task_uuid"] for row in default_rows.data["data"]["list"]],
+            [str(replacement.task_uuid)],
+        )
+
     def test_api_is_additive_and_tenant_scoped(self):
         response = self.client.get(
             "/api/v1/tasks/dashboard-statistics/", self.params(), HTTP_X_ORG_KEY=self.org.key,
