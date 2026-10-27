@@ -765,10 +765,13 @@ const repositoryTaskSearchField = ref<'name' | 'uuid'>('name')
 const repositoryTaskOperation = ref('')
 const repositoryTaskStatus = ref('')
 const repositoryTaskTimeMode = ref<'all' | '24h' | '7d' | '30d' | 'range'>('all')
-const repositoryTaskDateRange = ref<[Date, Date] | null>(null)
+type RepositoryTaskDateValue = Date | string
+type RepositoryTaskDateRange = [RepositoryTaskDateValue, RepositoryTaskDateValue]
+
+const repositoryTaskDateRange = ref<RepositoryTaskDateRange | null>(null)
 const repositoryTaskAdvancedFilterOpen = ref(false)
 const repositoryTaskAdvancedFilterDraft = reactive({
-  dateRange: null as [Date, Date] | null,
+  dateRange: null as RepositoryTaskDateRange | null,
 })
 const lastRepositoryTaskQuickTimeMode = ref<'all' | '24h' | '7d' | '30d'>('all')
 const repositoryTaskSearchFieldOptions = computed(() => [
@@ -1529,10 +1532,12 @@ function repositoryTaskCreatedRangeParams() {
     return { created_after: repositoryTaskRangeForHours(30 * 24)[0].toISOString(), created_before: undefined }
   }
   if (repositoryTaskTimeMode.value === 'range' && repositoryTaskDateRange.value) {
+    const start = repositoryTaskDateValue(repositoryTaskDateRange.value[0])
+    const end = repositoryTaskDateValue(repositoryTaskDateRange.value[1])
     return {
-      created_after: repositoryTaskDateRange.value[0].toISOString(),
+      created_after: start?.toISOString(),
       created_before: (() => {
-        const end = new Date(repositoryTaskDateRange.value[1])
+        if (!end) return undefined
         end.setMilliseconds(999)
         return end.toISOString()
       })(),
@@ -1547,6 +1552,7 @@ function onRepositoryTaskTimeModeChange(value: string) {
     return
   }
   lastRepositoryTaskQuickTimeMode.value = value as 'all' | '24h' | '7d' | '30d'
+  repositoryTaskTimeMode.value = lastRepositoryTaskQuickTimeMode.value
   repositoryTaskDateRange.value = null
   applyRepositoryTaskFilters()
 }
@@ -1568,18 +1574,25 @@ function applyRepositoryTaskAdvancedFilters() {
   applyRepositoryTaskFilters()
 }
 
-function normalizeRepositoryTaskDateRange(range: [Date, Date] | null) {
+function repositoryTaskDateValue(value: RepositoryTaskDateValue) {
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) ? date : undefined
+}
+
+function normalizeRepositoryTaskDateRange(range: RepositoryTaskDateRange | null): RepositoryTaskDateRange | null {
   if (!range) return null
-  const [start, selectedEnd] = range
-  const end = new Date(selectedEnd)
+  const start = repositoryTaskDateValue(range[0])
+  const selectedEnd = repositoryTaskDateValue(range[1])
+  if (!start || !selectedEnd) return null
+  const end = selectedEnd
   const now = new Date()
   if (end.getFullYear() === now.getFullYear()
     && end.getMonth() === now.getMonth()
     && end.getDate() === now.getDate()
     && end.getHours() === 23 && end.getMinutes() === 59 && end.getSeconds() === 59) {
-    return [start, now] as [Date, Date]
+    return [start, now]
   }
-  return [start, end] as [Date, Date]
+  return [start, end]
 }
 
 function onRepositoryTaskAdvancedFilterClosed() {
@@ -4213,7 +4226,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   />
                 </ElSelect>
                 <ElSelect
-                  v-model="repositoryTaskTimeMode"
+                  :model-value="repositoryTaskTimeMode"
                   :placeholder="t('ops.task.filterTime')"
                   @change="onRepositoryTaskTimeModeChange"
                 >
@@ -4365,7 +4378,6 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
             v-model="repositoryTaskAdvancedFilterDraft.dateRange"
             type="datetimerange"
             format="YYYY-MM-DD HH:mm:ss"
-            value-format="YYYY-MM-DDTHH:mm:ss"
             :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
             :shortcuts="repositoryTaskDateRangeShortcuts"
             :start-placeholder="t('ops.task.startTime')"

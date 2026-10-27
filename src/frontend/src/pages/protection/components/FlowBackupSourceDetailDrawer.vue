@@ -1787,6 +1787,7 @@ function onSourceTaskTimeModeChange(value: string) {
     return
   }
   lastSourceTaskQuickTimeMode.value = value as 'all' | '24h' | '7d' | '30d'
+  taskFilterTimeMode.value = lastSourceTaskQuickTimeMode.value
   taskFilterDateRange.value = null
 }
 
@@ -4541,7 +4542,7 @@ function onClosed() {
               />
             </ElSelect>
             <ElSelect
-              v-model="taskFilterTimeMode"
+              :model-value="taskFilterTimeMode"
               :placeholder="t('ops.task.filterTime')"
               style="width: 130px"
               popper-class="dp-source-task-select-popper"
@@ -4701,7 +4702,6 @@ function onClosed() {
           v-model="taskAdvancedFilterDraft.dateRange"
           type="datetimerange"
           format="YYYY-MM-DD HH:mm:ss"
-          value-format="YYYY-MM-DDTHH:mm:ss"
           :default-time="[new Date(2000, 0, 1, 0, 0, 0), new Date(2000, 0, 1, 23, 59, 59)]"
           :shortcuts="sourceTaskDateRangeShortcuts"
           :start-placeholder="t('ops.task.startTime')"
@@ -6645,6 +6645,7 @@ function onClosed() {
 }
 
 .dp-source-task-toolbar {
+  padding-top: 10px;
   margin-bottom: 10px;
 }
 

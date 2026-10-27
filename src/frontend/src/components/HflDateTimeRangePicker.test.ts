@@ -17,6 +17,38 @@ const ElDatePickerStub = defineComponent({
 })
 
 describe('HflDateTimeRangePicker accessibility', () => {
+  it('restores applied dates after reopening and discards uncommitted input', async () => {
+    const props = {
+      label: 'Advanced filter time range',
+      clearText: 'Clear',
+      applyText: 'Apply',
+      start: '2026-10-20T09:00:00',
+      end: '2026-10-21T18:30:00',
+    }
+    const wrapper = mount(HflDateTimeRangePicker, {
+      props,
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    expect(wrapper.findAll('input.el-range-input').map((input) => (input.element as HTMLInputElement).value))
+      .toEqual(['2026-10-20 09:00:00', '2026-10-21 18:30:00'])
+    await wrapper.get('input.el-range-input').setValue('2026-10-22 09:00:00')
+    wrapper.unmount()
+
+    const reopened = mount(HflDateTimeRangePicker, {
+      props,
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    expect(reopened.findAll('input.el-range-input').map((input) => (input.element as HTMLInputElement).value))
+      .toEqual(['2026-10-20 09:00:00', '2026-10-21 18:30:00'])
+    await reopened.setProps({ start: '', end: '' })
+    await flushPromises()
+    expect(reopened.findAll('input.el-range-input').map((input) => (input.element as HTMLInputElement).value))
+      .toEqual(['', ''])
+    reopened.unmount()
+  })
+
   it('uses the Element Plus value contract for range shortcuts', () => {
     const wrapper = mount(HflDateTimeRangePicker, {
       props: {
