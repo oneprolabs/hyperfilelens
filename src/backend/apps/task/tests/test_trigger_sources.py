@@ -3,6 +3,7 @@ from importlib import import_module
 from django.apps import apps
 from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.iam.models import Organization
@@ -250,3 +251,75 @@ class TaskTriggerSourceTests(TestCase):
             )
         self.assertEqual(retry.replaces_task_id, original.id)
         self.assertIsNone(unlinked.replaces_task_id)
+
+    def test_data_migration_bounds_queries_for_long_chains_and_batches_updates(self):
+        migration = import_module(
+            "apps.task.migrations.0016_normalize_retry_trigger_sources"
+        )
+        for count in (105, 1105):
+            with self.subTest(count=count):
+                original = self.operation(source="hook")
+                retries = Task.objects.bulk_create([
+                    Task(
+                        organization_id=self.org.id,
+                        task_type=original.task_type, display_name="Legacy recovery",
+                        status=Task.Status.FAILED, trigger_type="retry",
+                    )
+                    for _ in range(count)
+                ])
+                for previous, current in zip([original] + retries, retries):
+                    current.replaces_task_id = previous.id
+                Task.objects.bulk_update(retries, ["replaces_task"], batch_size=500)
+                # Imported chains need not have parents with smaller IDs.
+                root = self.operation(source="api")
+                reversed_chain = [self.operation(source="retry") for _ in range(3)]
+                for child, parent in zip(reversed_chain, reversed_chain[1:] + [root]):
+                    Task.objects.filter(pk=child.pk).update(replaces_task_id=parent.pk)
+                with connection.schema_editor(atomic=False) as editor:
+                    with CaptureQueriesContext(connection) as queries:
+                        migration.normalize_retry_sources(apps, editor)
+                self.assertLessEqual(len(queries), 8)
+                updates = [
+                    query["sql"] for query in queries
+                    if query["sql"].lstrip().upper().startswith("UPDATE")
+                ]
+                self.assertEqual(len(updates), (count + 499) // 500 + 1)
+                self.assertEqual(Task.objects.filter(
+                    pk__in=[row.pk for row in retries], trigger_type="hook",
+                ).count(), count)
+                self.assertEqual(Task.objects.filter(
+                    pk__in=[row.pk for row in reversed_chain], trigger_type="api",
+                ).count(), 3)
+                with connection.schema_editor(atomic=False) as editor:
+                    with self.assertNumQueries(1):
+                        migration.normalize_retry_sources(apps, editor)
+
+    def test_data_migration_terminates_cycles_and_respects_org_and_type_boundaries(self):
+        cycle_start = self.operation(source="retry")
+        cycle_end = self.operation(source="retry", parent=cycle_start)
+        Task.objects.filter(pk=cycle_start.pk).update(replaces_task=cycle_end)
+
+        foreign_root = self.operation(source="api")
+        Task.objects.filter(pk=foreign_root.pk).update(organization_id=self.org.id + 1000)
+        foreign_child = self.operation(
+            source="retry", parent=foreign_root, kind="cleanup.repository",
+        )
+        different_type = Task.objects.create(
+            organization_id=self.org.id, task_type=Task.Type.BACKUP,
+            display_name="Foreign type", trigger_type="hook",
+        )
+        type_child = self.operation(source="retry", parent=different_type)
+        null_root = self.operation(source="hook")
+        null_child = self.operation(source="retry", parent=null_root)
+        Task.objects.filter(pk__in=[null_root.pk, null_child.pk]).update(organization_id=None)
+        migration = import_module(
+            "apps.task.migrations.0016_normalize_retry_trigger_sources"
+        )
+        with connection.schema_editor(atomic=False) as editor:
+            migration.normalize_retry_sources(apps, editor)
+        for task, expected in (
+            (cycle_start, "system"), (cycle_end, "system"),
+            (foreign_child, "manual"), (type_child, "system"), (null_child, "hook"),
+        ):
+            task.refresh_from_db()
+            self.assertEqual(task.trigger_type, expected)

@@ -81,6 +81,10 @@ function mountDrawer(extraProps: { fetchTask?: typeof getTask } = {}) {
   })
 }
 
+function historyEntry(uuid: string, status = 'failed') {
+  return { task_uuid: uuid, status, started_at: start, finished_at: start, created_at: start }
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date(start))
@@ -95,6 +99,139 @@ afterEach(() => {
 })
 
 describe('TaskDetailDrawer live duration', () => {
+  it('keeps loaded history and its cursor while polling updates execution outcomes', async () => {
+    const latest: TaskRow = {
+      ...running, task_type: 'repository_operation',
+      execution_history: [historyEntry('middle'), historyEntry('running-1', 'running')],
+      execution_history_next_cursor: 10,
+    }
+    const fetchTask = vi.fn<typeof getTask>()
+      .mockResolvedValueOnce(latest)
+      .mockResolvedValueOnce({
+        ...latest, execution_history: [historyEntry('oldest'), historyEntry('middle')],
+        execution_history_next_cursor: 5,
+      })
+      .mockResolvedValueOnce({
+        ...latest, status: 'success',
+        execution_history: [historyEntry('middle'), historyEntry('running-1', 'success')],
+      })
+      .mockResolvedValueOnce({
+        ...latest, execution_history: [historyEntry('ancient')],
+        execution_history_next_cursor: null,
+      })
+    const wrapper = mountDrawer({ fetchTask })
+    await flushPromises()
+    const section = wrapper.get('.hfl-task-drawer__execution-history')
+    await section.find('button').trigger('click')
+    await flushPromises()
+    expect(section.findAll('li')).toHaveLength(3)
+    await vi.advanceTimersByTimeAsync(120_000)
+    await flushPromises()
+    expect(fetchTask).toHaveBeenCalledTimes(3)
+    expect(section.findAll('li')).toHaveLength(3)
+    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+      .toEqual(['failed', 'failed', 'success'])
+    await section.find('button').trigger('click')
+    await flushPromises()
+    expect(fetchTask).toHaveBeenLastCalledWith('running-1', undefined, 5)
+    expect(section.findAll('li')).toHaveLength(4)
+    wrapper.unmount()
+  })
+
+  it('accepts an older page across a same-task status refresh without reverting fresh outcomes', async () => {
+    const latest: TaskRow = {
+      ...running, task_type: 'repository_operation',
+      execution_history: [historyEntry('middle'), historyEntry('running-1', 'running')],
+      execution_history_next_cursor: 10,
+    }
+    let resolvePage!: (page: TaskRow) => void
+    const fetchTask = vi.fn<typeof getTask>()
+      .mockResolvedValueOnce(latest)
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePage = resolve }))
+      .mockResolvedValueOnce({
+        ...latest, status: 'success',
+        execution_history: [historyEntry('middle'), historyEntry('running-1', 'success')],
+      })
+    const wrapper = mountDrawer({ fetchTask })
+    await flushPromises()
+    const section = wrapper.get('.hfl-task-drawer__execution-history')
+    await section.find('button').trigger('click')
+    await vi.advanceTimersByTimeAsync(120_000)
+    await flushPromises()
+    resolvePage({
+      ...latest,
+      execution_history: [historyEntry('oldest'), historyEntry('running-1', 'running')],
+      execution_history_next_cursor: null,
+    })
+    await flushPromises()
+    expect(section.findAll('li')).toHaveLength(3)
+    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+      .toEqual(['failed', 'failed', 'success'])
+    wrapper.unmount()
+  })
+
+  it('preserves older records through manual refresh and repository cancellation polling', async () => {
+    const latest: TaskRow = {
+      ...running, task_type: 'repository_operation', status: 'pending',
+      repository_cancellation: { supported: true, requested_at: start },
+      execution_history: [historyEntry('middle'), historyEntry('running-1', 'pending')],
+      execution_history_next_cursor: 10,
+    }
+    const fetchTask = vi.fn<typeof getTask>()
+      .mockResolvedValueOnce(latest)
+      .mockResolvedValueOnce({
+        ...latest, execution_history: [historyEntry('oldest')], execution_history_next_cursor: null,
+      })
+      .mockResolvedValueOnce(latest)
+      .mockResolvedValueOnce({
+        ...latest, status: 'cancelled',
+        execution_history: [], execution_history_next_cursor: null,
+      })
+    const wrapper = mountDrawer({ fetchTask })
+    await flushPromises()
+    const section = wrapper.get('.hfl-task-drawer__execution-history')
+    await section.find('button').trigger('click')
+    await flushPromises()
+    await wrapper.get('button.hfl-drawer-header-action').trigger('click')
+    await flushPromises()
+    expect(section.findAll('li')).toHaveLength(3)
+    await vi.advanceTimersByTimeAsync(2000)
+    await flushPromises()
+    expect(fetchTask).toHaveBeenCalledTimes(4)
+    expect(section.findAll('li')).toHaveLength(3)
+    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+      .toEqual(['failed', 'failed', 'cancelled'])
+    expect(section.findAll('button').some(button => button.text() === 'Earlier records')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('resets history on close and ignores a late page after reopening the same task', async () => {
+    const latest: TaskRow = {
+      ...running, task_type: 'repository_operation', status: 'success',
+      execution_history: [historyEntry('middle'), historyEntry('running-1')],
+      execution_history_next_cursor: 10,
+    }
+    let resolvePage!: (page: TaskRow) => void
+    const fetchTask = vi.fn<typeof getTask>()
+      .mockResolvedValueOnce(latest)
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePage = resolve }))
+      .mockResolvedValueOnce(latest)
+    const wrapper = mountDrawer({ fetchTask })
+    await flushPromises()
+    await wrapper.get('.hfl-task-drawer__execution-history button').trigger('click')
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    resolvePage({
+      ...latest, execution_history: [historyEntry('oldest')], execution_history_next_cursor: null,
+    })
+    await flushPromises()
+    const section = wrapper.get('.hfl-task-drawer__execution-history')
+    expect(section.findAll('li')).toHaveLength(2)
+    expect(section.findAll('button').some(button => button.text() === 'Earlier records')).toBe(true)
+    wrapper.unmount()
+  })
+
   it('loads older records through the injected detail API without changing the active task', async () => {
     const entry = (uuid: string) => ({
       task_uuid: uuid, status: 'failed', started_at: start, finished_at: start, created_at: start,

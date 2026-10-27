@@ -128,6 +128,11 @@ let detailRequestId = 0
 const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
 const historyLoading = ref(false)
+const executionHistory = ref<NonNullable<TaskRow['execution_history']>>([])
+const historyNextCursor = ref<number | null>(null)
+let historyTaskUuid: string | null = null
+let historyRequestId = 0
+let historyInitialized = false
 const detailLoadError = ref('')
 const actionBusy = ref(false)
 const taskOwner = ref('')
@@ -424,6 +429,7 @@ const {
 } = useRepositoryTaskCancellation(activeTask, {
   fetchTask: (taskUuid, init) => loadTask(taskUuid, init),
   onUpdate: async (task) => {
+    syncExecutionHistory(task)
     activeTask.value = task
     emit('task-updated', task)
   },
@@ -821,17 +827,52 @@ async function copyTaskUuid() {
   }
 }
 
+function resetExecutionHistory(taskUuid: string | null = null) {
+  historyRequestId += 1
+  historyTaskUuid = taskUuid
+  historyInitialized = false
+  historyLoading.value = false
+  executionHistory.value = []
+  historyNextCursor.value = null
+}
+
+function syncExecutionHistory(task: TaskRow) {
+  if (historyTaskUuid !== task.task_uuid) resetExecutionHistory(task.task_uuid)
+  const incoming = task.execution_history || []
+  const updates = new Map(incoming.map(row => [row.task_uuid, row]))
+  const current = executionHistory.value.find(row => row.task_uuid === task.task_uuid)
+  // Action responses can omit history; still refresh the selected execution.
+  if (current && !updates.has(task.task_uuid)) {
+    updates.set(task.task_uuid, {
+      ...current, status: task.status,
+      started_at: task.started_at ?? current.started_at,
+      finished_at: task.finished_at ?? null,
+    })
+  }
+  const existing = new Set(executionHistory.value.map(row => row.task_uuid))
+  executionHistory.value = [
+    ...executionHistory.value.map(row => updates.get(row.task_uuid) || row),
+    ...incoming.filter(row => !existing.has(row.task_uuid)),
+  ]
+  // A status refresh updates known outcomes, not the user's paging position.
+  if (!historyInitialized) {
+    historyNextCursor.value = task.execution_history_next_cursor ?? null
+    historyInitialized = true
+  }
+}
+
 async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
   const requestId = ++detailRequestId
-  historyLoading.value = false
+  if (historyTaskUuid !== uuid) resetExecutionHistory(uuid)
   stopRepositoryCancellation()
   detailRefreshing.value = true
   detailLoadError.value = ''
   try {
     const task = await loadTask(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
+    syncExecutionHistory(task)
     activeTask.value = task
     resetDrawerScroll()
     taskOwner.value = t('ops.task.emptyMark')
@@ -877,6 +918,7 @@ async function refreshRunningTaskStatus() {
     const task = await loadTask(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid
       || activeTask.value?.task_uuid !== uuid || detailRefreshing.value || actionBusy.value) return
+    syncExecutionHistory(task)
     activeTask.value = task
     emit('task-updated', task)
     syncRepositoryCancellation(task)
@@ -957,6 +999,7 @@ async function cancelActiveTask() {
     } else {
       updated = await cancelTask(task.task_uuid, reason)
     }
+    syncExecutionHistory(updated)
     activeTask.value = updated
     emit('task-updated', updated)
     const events = await loadTaskEvents(updated.task_uuid, { page: 1, page_size: 300 })
@@ -978,25 +1021,26 @@ async function cancelActiveTask() {
 
 async function loadOlderExecutions() {
   const task = activeTask.value
-  const cursor = task?.execution_history_next_cursor
-  if (!task || cursor == null || historyLoading.value) return
-  const requestId = detailRequestId
+  const cursor = historyNextCursor.value
+  if (!task || cursor == null || historyLoading.value || !props.modelValue
+    || task.task_uuid !== historyTaskUuid || task.task_uuid !== props.taskUuid) return
+  const requestId = historyRequestId
   historyLoading.value = true
   try {
     const page = await loadTask(task.task_uuid, undefined, cursor)
-    if (requestId !== detailRequestId || activeTask.value !== task || !props.modelValue) return
-    const existing = new Set((task.execution_history || []).map(row => row.task_uuid))
-    task.execution_history = [
+    if (requestId !== historyRequestId || !props.modelValue) return
+    const existing = new Set(executionHistory.value.map(row => row.task_uuid))
+    executionHistory.value = [
       ...(page.execution_history || []).filter(row => !existing.has(row.task_uuid)),
-      ...(task.execution_history || []),
+      ...executionHistory.value,
     ]
-    task.execution_history_next_cursor = page.execution_history_next_cursor
+    historyNextCursor.value = page.execution_history_next_cursor ?? null
   } catch (error) {
-    if (requestId === detailRequestId && props.modelValue) {
+    if (requestId === historyRequestId && props.modelValue) {
       ElMessage.error(apiErrorMessageI18n(error, t))
     }
   } finally {
-    if (requestId === detailRequestId) historyLoading.value = false
+    if (requestId === historyRequestId) historyLoading.value = false
   }
 }
 
@@ -1007,6 +1051,7 @@ function refreshActiveTask() {
 
 function closeDetail() {
   detailRequestId += 1
+  resetExecutionHistory()
   stopLiveTaskTimers()
   stopRepositoryCancellation()
   activeTask.value = null
@@ -1022,6 +1067,7 @@ function closeDetail() {
 
 onBeforeUnmount(() => {
   detailRequestId += 1
+  historyRequestId += 1
   stopLiveTaskTimers()
   repositoryResourceController?.abort()
 })
@@ -1031,6 +1077,7 @@ watch(
   ([open, taskUuid]) => {
     if (!open) {
       detailRequestId += 1
+      resetExecutionHistory()
       stopLiveTaskTimers()
     }
     if (open && taskUuid) void loadTaskDetail(taskUuid)
@@ -1248,14 +1295,14 @@ watch(
       </section>
 
       <section
-        v-if="(activeTask.execution_history?.length || 0) > 1 || activeTask.execution_history_next_cursor != null"
+        v-if="executionHistory.length > 1 || historyNextCursor != null"
         class="hfl-task-drawer__execution-history"
       >
         <h3 class="hfl-task-drawer__hero-section-title">
           {{ t('ops.task.executionHistory') }}
         </h3>
         <ElButton
-          v-if="activeTask.execution_history_next_cursor != null"
+          v-if="historyNextCursor != null"
           link
           type="primary"
           :loading="historyLoading"
@@ -1266,7 +1313,7 @@ watch(
         </ElButton>
         <ul>
           <li
-            v-for="execution in activeTask.execution_history"
+            v-for="execution in executionHistory"
             :key="execution.task_uuid"
           >
             <ElButton
