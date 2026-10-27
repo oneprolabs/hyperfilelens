@@ -136,7 +136,13 @@ def move_platform_gateways(apps, schema_editor):
                 key=LEGACY_KEY,
             ).exists():
                 raise RuntimeError("A platform task requester is not a real organization.")
-            rows(NodeTask).filter(pk=task.pk).update(requesting_organization_id=requester)
+            task_updates = {"requesting_organization_id": requester}
+            if requester is None:
+                # Maintenance tasks have no business requester. Clear the
+                # tenant owner in the same UPDATE so the node-task check
+                # constraint is satisfied at every statement boundary.
+                task_updates["organization_id"] = None
+            rows(NodeTask).filter(pk=task.pk).update(**task_updates)
 
     tables = set(connection.introspection.table_names())
     quote = connection.ops.quote_name

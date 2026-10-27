@@ -153,6 +153,20 @@ class PlatformGatewayOwnershipMigrationTests(TransactionTestCase):
         self.assertIsNone(audit.organization_id)
         self.assertIsNone(event.organization_id)
 
+    def test_detaches_maintenance_task_before_clearing_its_requester(self):
+        NodeTask = self.old.get_model("node", "NodeTask")
+        maintenance = NodeTask.objects.create(
+            organization_id=self.legacy.pk, requesting_organization_id=self.legacy.pk,
+            node_id=self.gateway.pk, kind="agent.upgrade",
+            watchdog_deadline_at=timezone.now() + timedelta(hours=1),
+        )
+
+        apps = self.upgrade()
+
+        maintenance = apps.get_model("node", "NodeTask").objects.get(pk=maintenance.pk)
+        self.assertIsNone(maintenance.organization_id)
+        self.assertIsNone(maintenance.requesting_organization_id)
+
     def test_ambiguous_business_ownership_rolls_back_the_entire_data_migration(self):
         Source = self.old.get_model("lens_bridge", "LensKnowledgeSource")
         ambiguous = Source.objects.create(
