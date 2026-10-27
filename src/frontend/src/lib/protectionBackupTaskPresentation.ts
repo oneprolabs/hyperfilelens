@@ -12,6 +12,7 @@ const validationErrorLocaleKeys: Record<string, string> = {
   BACKUP_REPOSITORY_UNREACHABLE: 'protection.backupsPage.backupRepositoryUnreachable',
   BACKUP_REPOSITORY_CHECK_TIMEOUT: 'protection.backupsPage.backupRepositoryCheckTimeout',
   BACKUP_REPOSITORY_CHECK_UNAVAILABLE: 'protection.backupsPage.backupRepositoryCheckUnavailable',
+  'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE': 'errors.codes.subscriptionQuotaUsageUnavailable',
 }
 
 export function backupStartResultMessage(

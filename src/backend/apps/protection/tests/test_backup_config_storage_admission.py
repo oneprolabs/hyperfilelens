@@ -41,6 +41,7 @@ class BackupConfigStorageAdmissionMixin:
         super().setUp()
         test_settings = override_settings(
             HFL_QUOTA_ENFORCEMENT_ENABLED=True,
+            SECURE_SSL_REDIRECT=False,
             CHANNEL_LAYERS={
                 "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
             },

@@ -201,7 +201,7 @@
       "subscriptionQuotaExceededInstance": "La capacidad de instancia compartida está completa. Contacte con su administrador de la plataforma para aumentar el subsidio de implementación o la capacidad libre de otras organizaciones.",
       "subscriptionQuotaExceededInstanceMeter": "Se superó la capacidad compartida de {meter}. Contacte con el administrador de la plataforma para aumentar la asignación de la instancia o liberar capacidad de otras organizaciones.",
       "subscriptionQuotaExceededGateway": "La puerta de enlace de datos compartida actualmente tiene una capacidad insuficiente. Pruebe de nuevo más tarde o póngase en contacto con su administrador de la plataforma.",
-      "subscriptionQuotaUsageUnavailable": "La información sobre la capacidad no está disponible temporalmente. Inténtelo de nuevo en breve.",
+      "subscriptionQuotaUsageUnavailable": "La información sobre la capacidad no está disponible temporalmente. Espere a que se recupere la medición del uso y vuelva a intentar la copia de seguridad.",
       "backupAlreadyRunning": "Una copia de seguridad está empezando o funcionando para esta fuente. Detenga o espere a que termine antes de continuar.",
       "restoreAlreadyRunning": "Una tarea de restauración ya se está ejecutando para esta fuente.",
       "notificationFeishuRejected": "Feishu no aceptó el mensaje de prueba. Compruebe la configuración del robot."

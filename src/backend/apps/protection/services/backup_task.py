@@ -953,7 +953,7 @@ def start_backup_tasks(
                             and exc.code == "RESTORE.ALREADY_RUNNING"
                             else "failed"
                         ),
-                        **({"error_code": error_code or exc.code} if error_code or isinstance(exc, AppError) and exc.code == _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE else {}),
+                        **({"error_code": error_code or exc.code} if error_code or isinstance(exc, AppError) else {}),
                         "message": diagnostic if error_code else (_validation_message(exc) if isinstance(exc, ValidationError) else str(exc)),
                     }
                 )
@@ -1180,12 +1180,7 @@ def start_backup_tasks(
                             and exc.code == "RESTORE.ALREADY_RUNNING"
                             else "failed"
                         ),
-                        **(
-                            {"error_code": exc.code}
-                            if isinstance(exc, AppError)
-                            and exc.code == _REPOSITORY_QUOTA_EXCEEDED_ERROR_CODE
-                            else {}
-                        ),
+                        **({"error_code": exc.code} if isinstance(exc, AppError) else {}),
                         "message": (
                             _validation_message(exc)
                             if isinstance(exc, ValidationError)
