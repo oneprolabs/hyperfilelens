@@ -19,6 +19,7 @@ from apps.alert.constants import AlertStatus
 from apps.alert.selectors.interface import filter_records, records_for_org
 from apps.alert.selectors.stats import record_statistics
 from apps.alert.services.internal.lifecycle import resolve_alert
+from common.drf.search import parse_search_aliases
 
 
 class AlertRecordViewSet(viewsets.ReadOnlyModelViewSet):
@@ -43,6 +44,8 @@ class AlertRecordViewSet(viewsets.ReadOnlyModelViewSet):
             resource_type=params.get("resource_type", ""),
             resource_id=params.get("resource_id", ""),
             search=params.get("search", ""),
+            search_aliases=parse_search_aliases(params),
+            include_state_fields=params.get("search_context") == "global",
         )
         action_key = (
             self.action if self.action in ("acknowledge", "resolve") else "view"

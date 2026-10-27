@@ -15,6 +15,7 @@ import { copyTextToClipboard } from '../../lib/clipboard'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { alertStatusTagAttrs, lifecycleStatusTagAttrs, severityStatusTagAttrs } from '../../lib/statusTag'
 import { listChannels, listLogs, logStats, type NotificationLog } from '../../lib/notificationApi'
+import { operationalSearchAliases, taskAlertDisplay } from '../../lib/operationalEventDisplay'
 
 const { t, te } = useI18n()
 const opsMenus = useOpsMenus()
@@ -129,7 +130,8 @@ function logPolicyTypeValue(row: NotificationLog) {
 }
 
 function logAlertTitle(row: NotificationLog) {
-  return String(logAlert(row).title || t('common.empty'))
+  const alert = logAlert(row)
+  return taskAlertDisplay({ type: String(alert.type || ''), title: String(alert.title || '') }, t).title || t('common.empty')
 }
 
 function logChannelName(row: NotificationLog) {
@@ -181,6 +183,7 @@ async function fetchData() {
       page: pagination.page,
       page_size: pagination.pageSize,
       search: filters.search,
+      search_aliases: JSON.stringify(operationalSearchAliases(filters.search, t, 'alert')),
       channel_id: filters.channel_id,
       notification_type: filters.notification_type,
       status: filters.status,

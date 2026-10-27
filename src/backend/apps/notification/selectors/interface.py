@@ -97,6 +97,7 @@ def filter_logs(
     status: str = "",
     notification_type: str = "",
     search: str = "",
+    search_aliases: tuple[str, ...] = (),
     alert_type: str = "",
     severity: str = "",
     policy_id: str = "",
@@ -111,6 +112,7 @@ def filter_logs(
                 severity=severity,
                 policy_id=policy_id,
                 search=search,
+                search_aliases=search_aliases,
             )
         )
     return filter_logs_queryset(

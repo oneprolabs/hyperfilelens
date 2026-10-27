@@ -12,7 +12,7 @@ import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerW
 import { api, apiErrorMessage } from '../../lib/api'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { unwrapApiPayload } from '../../lib/parse'
-import { operationalEventDisplay } from '../../lib/operationalEventDisplay'
+import { operationalEventDisplay, operationalSearchAliases } from '../../lib/operationalEventDisplay'
 
 type EventCategory = 'protection' | 'infrastructure' | 'system'
 type EventSeverity = 'information' | 'warning' | 'critical'
@@ -119,6 +119,8 @@ async function loadEvents() {
       period: filters.period,
     })
     if (filters.search.trim()) query.set('search', filters.search.trim())
+    const aliases = operationalSearchAliases(filters.search, t, 'event')
+    if (aliases.length) query.set('search_aliases', JSON.stringify(aliases))
     if (filters.category) query.set('category', filters.category)
     if (filters.severity) query.set('severity', filters.severity)
     const data = unwrapApiPayload<EventResponse>(

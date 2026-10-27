@@ -6439,6 +6439,16 @@
     },
     "events": {
       "title": "事件",
+      "taskTerminal": {
+        "failed": "{type}失败：{name}",
+        "timeout": "{type}超时：{name}"
+      },
+      "taskAlert": "任务告警：{event}",
+      "resolvedTaskAlert": "已解决：{title}",
+      "taskDiagnostic": {
+        "unsupportedSource": "上传错误：不支持的备份源：{source}",
+        "taskStatus": "任务 {id}：{status}"
+      },
       "repositoryTask": {
         "failed": "存储仓库操作失败：{name}",
         "timeout": "存储仓库操作超时：{name}",

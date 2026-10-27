@@ -12,6 +12,7 @@ import {
   type UserNotification,
 } from '../lib/notificationApi'
 import { formatLocalDateTime } from '../lib/dateTime'
+import { taskAlertNotificationDisplay } from '../lib/operationalEventDisplay'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -154,8 +155,8 @@ watch(
                 type="button"
                 @click="openNotification(row)"
               >
-                <strong>{{ row.title }}</strong>
-                <span>{{ row.summary || '—' }}</span>
+                <strong>{{ taskAlertNotificationDisplay(row, t).title }}</strong>
+                <span>{{ taskAlertNotificationDisplay(row, t).summary || '—' }}</span>
               </button>
             </template>
           </el-table-column>

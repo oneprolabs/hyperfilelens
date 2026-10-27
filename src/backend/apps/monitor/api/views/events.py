@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -18,6 +17,7 @@ from apps.monitor.models import OperationalEvent
 from apps.monitor.services.event_targets import repository_event_target, source_event_target
 from apps.source.models import SourceResource
 from apps.storage.models import Repository
+from common.drf.search import parse_search_aliases, text_search_query
 
 
 PERIODS = {
@@ -89,6 +89,7 @@ class EventView(APIView):
         severity = str(request.query_params.get("severity") or "").strip()
         period = str(request.query_params.get("period") or "24h").strip()
         search = str(request.query_params.get("search") or "").strip()[:200]
+        search_aliases = parse_search_aliases(request.query_params)
 
         if category and category not in OperationalEvent.Category.values:
             raise ValidationError({"category": "invalid event category"})
@@ -119,9 +120,7 @@ class EventView(APIView):
             queryset = queryset.filter(severity=severity)
         if search:
             queryset = queryset.filter(
-                Q(title__icontains=search)
-                | Q(details__icontains=search)
-                | Q(resource_name__icontains=search)
+                text_search_query(search, ("title", "details", "resource_name"), search_aliases)
             )
 
         stats = {

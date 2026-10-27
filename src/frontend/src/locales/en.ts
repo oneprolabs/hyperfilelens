@@ -4375,6 +4375,16 @@ export const en = {
     },
     events: {
       title: 'Events',
+      taskTerminal: {
+        failed: '{type} failed: {name}',
+        timeout: '{type} timeout: {name}',
+      },
+      taskAlert: 'Task alert: {event}',
+      resolvedTaskAlert: 'Resolved: {title}',
+      taskDiagnostic: {
+        unsupportedSource: 'upload error: unsupported source: {source}',
+        taskStatus: 'Task {id}: {status}',
+      },
       repositoryTask: {
         failed: 'Repository operation failed: {name}',
         timeout: 'Repository operation timeout: {name}',

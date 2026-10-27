@@ -20,7 +20,7 @@ import { ElInputNumber, ElOption, ElSelect, ElTooltip } from 'element-plus'
 import ErrorState from '../components/errors/ErrorState.vue'
 import { planRepositoryCapacity } from '../lib/capacityPlanner'
 import { formatLocalDateTime } from '../lib/dateTime'
-import { operationalEventDisplay } from '../lib/operationalEventDisplay'
+import { operationalEventDisplay, taskAlertDisplay } from '../lib/operationalEventDisplay'
 import {
   loadDashboardOverview,
   type DashboardOverview,
@@ -38,6 +38,10 @@ const overview = ref<DashboardOverview | null>(null)
 const displayEvents = computed(() => (overview.value?.events || []).map((event) => {
   const display = operationalEventDisplay({ ...event, details: event.detail }, t)
   return { ...event, title: display.title, detail: display.details }
+}))
+const displayAlerts = computed(() => (overview.value?.activeAlerts || []).map((alert) => {
+  const display = taskAlertDisplay({ ...alert, message: alert.detail }, t)
+  return { ...alert, title: display.title, detail: display.message }
 }))
 let refreshGeneration = 0
 const taskStatisticsReady = computed(() => overview.value?.taskStatisticsState === 'ready')
@@ -940,7 +944,7 @@ onBeforeUnmount(() => {
                 class="attention-list scrollbar"
               >
                 <div
-                  v-for="item in overview.activeAlerts"
+                  v-for="item in displayAlerts"
                   :key="item.id"
                   class="attention-item"
                   :class="feedSeverityClass(item.severity)"

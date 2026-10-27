@@ -7,6 +7,7 @@ from django.db.models import Q, QuerySet
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.iam.models import Organization
 from apps.notification.selectors.interface import channel_summaries_for_ids
+from common.drf.search import text_search_query
 
 
 def policies_for_org(*, organization_id: int) -> QuerySet[AlertPolicy]:
@@ -78,6 +79,8 @@ def filter_records(
     resource_type: str = "",
     resource_id: str = "",
     search: str = "",
+    search_aliases: tuple[str, ...] = (),
+    include_state_fields: bool = False,
 ) -> QuerySet[AlertRecord]:
     if status == "all":
         status = ""
@@ -92,10 +95,11 @@ def filter_records(
     if resource_id:
         queryset = queryset.filter(resource_id=resource_id)
     if search:
+        fields = ("title", "message", "resource_name")
+        if include_state_fields:
+            fields += ("id", "status", "severity")
         queryset = queryset.filter(
-            Q(title__icontains=search)
-            | Q(message__icontains=search)
-            | Q(resource_name__icontains=search)
+            text_search_query(search, fields, search_aliases)
         )
     return queryset.order_by("-last_triggered_at", "-created_at")
 
@@ -133,6 +137,7 @@ def alert_record_ids_matching(
     severity: str = "",
     policy_id: str = "",
     search: str = "",
+    search_aliases: tuple[str, ...] = (),
 ) -> QuerySet:
     queryset = AlertRecord.objects.all()
     if alert_type:
@@ -143,9 +148,7 @@ def alert_record_ids_matching(
         queryset = queryset.filter(policy_id=policy_id)
     if search:
         queryset = queryset.filter(
-            Q(title__icontains=search)
-            | Q(message__icontains=search)
-            | Q(resource_name__icontains=search)
+            text_search_query(search, ("title", "message", "resource_name"), search_aliases)
         )
     return queryset.values_list("id", flat=True)
 

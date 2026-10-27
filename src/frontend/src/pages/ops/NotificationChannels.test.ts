@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createI18n } from 'vue-i18n'
@@ -24,8 +26,16 @@ vi.mock('../../lib/api', () => ({
 
 const channel = { id: 7, name: 'Alert Email', type: 'email', enabled: true, config: { to_emails: 'test@example.test' } }
 const wrappers: ReturnType<typeof mount>[] = []
+const i18n = createI18n({
+  legacy: false, locale: 'en', fallbackLocale: 'en', messages: {
+    en,
+    ...Object.fromEntries(['zh-hans', 'es'].map(locale => [locale, JSON.parse(readFileSync(
+      resolve(process.cwd(), `../../language-packs/packs/${locale}/frontend/messages.json`), 'utf8',
+    ))])),
+  },
+})
 const global = {
-  plugins: [ElementPlus, createI18n({ legacy: false, locale: 'en', messages: { en } })],
+  plugins: [ElementPlus, i18n],
   directives: { 'table-column-resize': {} },
   stubs: {
     ModulePage: { props: ['title'], template: '<main><h1>{{ title }}</h1><slot /></main>' },
@@ -54,6 +64,7 @@ async function settleCapabilities() {
 describe('Notification Channels capability initialization', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    i18n.global.locale.value = 'en'
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     vi.stubGlobal('matchMedia', (media: string) => ({
       media, matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -102,6 +113,30 @@ describe('Notification Channels capability initialization', () => {
     expect(mocks.api).toHaveBeenCalledWith('/api/v1/notifications/channels/7/details/')
     expect(wrapper.find('aside header').text()).toBe(channel.name)
     expect(wrapper.find('aside').text()).not.toContain('Request failed')
+  })
+
+  it('localizes recent delivery titles in the channel drawer without changing custom titles', async () => {
+    const original = mocks.api.getMockImplementation()!
+    mocks.api.mockImplementation((url: string, options?: { body?: string }) => url.includes('/details/')
+      ? Promise.resolve({ channel, associated_policies: [], stats: {}, notification_logs: [
+        { id: '1', status: 'success', alert: { type: 'task', title: 'Task alert: task_failed' } },
+        { id: '2', status: 'success', alert: { type: 'metric', title: 'Custom repository label' } },
+      ] })
+      : original(url, options))
+    const wrapper = render()
+    await settleCapabilities()
+    await wrapper.get('.hfl-table-name-link').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('.el-tabs__item').find(item => item.text() === i18n.global.t('ops.notification.recentDeliveries'))!.trigger('click')
+    for (const locale of ['en', 'zh-hans', 'es']) {
+      i18n.global.locale.value = locale
+      await flushPromises()
+      const { t } = i18n.global
+      expect(wrapper.findAll('.hfl-ops-channel-detail-drawer__event-title').map(item => item.text())).toEqual([
+        t('ops.events.taskAlert', { event: t('ops.alertsCenter.taskEvents.task_failed') }), 'Custom repository label',
+      ])
+    }
+    expect(mocks.api.mock.calls.filter(([url]) => url.includes('/details/'))).toHaveLength(1)
   })
 
   it('shows a list error instead of failing setup when the channel API fails', async () => {

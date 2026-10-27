@@ -83,6 +83,7 @@ export type DashboardEventItem = {
 
 export type DashboardAlertItem = {
   id: string
+  type?: string
   title: string
   detail: string
   severity: string
@@ -193,6 +194,7 @@ async function loadEventsPreview(): Promise<EventPreviewPage> {
 function dashboardAlertItem(record: AlertRecord): DashboardAlertItem {
   return {
     id: String(record.id),
+    type: record.type,
     title: record.title || 'Alert',
     detail: record.message || record.resourceName || record.resource_name || '',
     severity: record.severity || 'info',
