@@ -15,4 +15,8 @@ describe('navigation dropdown semantic colors', () => {
   it('clips the panel content to the rounded popover surface', () => {
     expect(styles).toMatch(/\.nav-dropdown-panel\s*{[^}]*border-radius:\s*inherit;[^}]*overflow:\s*hidden;/s)
   })
+
+  it('keeps long dropdown lists scrollable within their bounded height', () => {
+    expect(styles).toMatch(/\.nav-dropdown-panel__list\s*{[^}]*max-height:[^}]*overflow-y:\s*auto;/s)
+  })
 })
