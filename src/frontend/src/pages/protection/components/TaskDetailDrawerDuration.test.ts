@@ -4,6 +4,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import TaskStatusTag from '../../../components/TaskStatusTag.vue'
 import { fetchBackupTaskRuntime } from '../../../lib/protectionBackupTaskApi'
 import TaskDetailDrawer from './TaskDetailDrawer.vue'
 import { getTask, listTaskEvents, type TaskRow } from '../../../lib/taskApi'
@@ -19,7 +20,9 @@ vi.mock('../../../composables/useDrawerTableMaxHeight', () => ({
 }))
 
 const start = '2026-09-29T07:58:49.000Z'
-const running = {
+const running: TaskRow = {
+  id: 1,
+  organization_id: 1,
   task_uuid: 'running-1',
   status: 'running',
   started_at: start,
@@ -38,7 +41,7 @@ const running = {
   resources: [],
   steps: [],
   recent_events: [],
-} as TaskRow
+}
 
 const i18n = createI18n({
   legacy: false,
@@ -129,7 +132,7 @@ describe('TaskDetailDrawer live duration', () => {
     await flushPromises()
     expect(fetchTask).toHaveBeenCalledTimes(3)
     expect(section.findAll('li')).toHaveLength(3)
-    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+    expect(section.findAll('li').map(row => row.getComponent(TaskStatusTag).props('status')))
       .toEqual(['failed', 'failed', 'success'])
     await section.find('button').trigger('click')
     await flushPromises()
@@ -165,7 +168,7 @@ describe('TaskDetailDrawer live duration', () => {
     })
     await flushPromises()
     expect(section.findAll('li')).toHaveLength(3)
-    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+    expect(section.findAll('li').map(row => row.getComponent(TaskStatusTag).props('status')))
       .toEqual(['failed', 'failed', 'success'])
     wrapper.unmount()
   })
@@ -199,7 +202,7 @@ describe('TaskDetailDrawer live duration', () => {
     await flushPromises()
     expect(fetchTask).toHaveBeenCalledTimes(4)
     expect(section.findAll('li')).toHaveLength(3)
-    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+    expect(section.findAll('li').map(row => row.getComponent(TaskStatusTag).props('status')))
       .toEqual(['failed', 'failed', 'cancelled'])
     expect(section.findAll('button').some(button => button.text() === 'Earlier records')).toBe(false)
     wrapper.unmount()
@@ -255,7 +258,7 @@ describe('TaskDetailDrawer live duration', () => {
     expect(fetchTask).toHaveBeenLastCalledWith('running-1', undefined, 10)
     expect(getTask).not.toHaveBeenCalled()
     expect(section.findAll('li')).toHaveLength(3)
-    expect(section.findAll('li').map(row => row.findComponent({ name: 'TaskStatusTag' }).props('status')))
+    expect(section.findAll('li').map(row => row.getComponent(TaskStatusTag).props('status')))
       .toEqual(['failed', 'failed', 'failed'])
     expect(section.findAll('button').some(button => button.text() === 'Earlier records')).toBe(false)
     await section.find('li button').trigger('click')
@@ -314,7 +317,7 @@ describe('TaskDetailDrawer live duration', () => {
     const section = wrapper.get('.hfl-task-drawer__execution-history')
     expect(section.text()).toContain('Execution History')
     expect(section.findAll('li')).toHaveLength(2)
-    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+    expect(section.findAll('li').map(row => row.getComponent(TaskStatusTag).props('status')))
       .toEqual(['failed', 'success'])
     expect(wrapper.text()).not.toContain('Retries')
     expect(wrapper.text()).not.toContain('2 times')
