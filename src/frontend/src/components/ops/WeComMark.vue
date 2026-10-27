@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * WeCom (企业微信) mark — path from Ant Design Icons (`wechat-work` outlined), MIT.
+ * WeCom mark — path from Ant Design Icons (`wechat-work` outlined), MIT.
  * https://github.com/ant-design/ant-design-icons
  */
 withDefaults(

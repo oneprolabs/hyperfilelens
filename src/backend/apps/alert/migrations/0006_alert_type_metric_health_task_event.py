@@ -26,8 +26,8 @@ def _marked_rule(rule, legacy_type):
 
 
 def forwards(apps, schema_editor):
-    AlertPolicy = apps.get_model("alert", "AlertPolicy")
-    AlertRecord = apps.get_model("alert", "AlertRecord")
+    AlertPolicy = apps.get_model("alerts", "AlertPolicy")
+    AlertRecord = apps.get_model("alerts", "AlertRecord")
 
     for policy in AlertPolicy.objects.filter(type="availability").iterator():
         policy.type = "health"
@@ -86,8 +86,8 @@ def forwards(apps, schema_editor):
 
 
 def backwards(apps, schema_editor):
-    AlertPolicy = apps.get_model("alert", "AlertPolicy")
-    AlertRecord = apps.get_model("alert", "AlertRecord")
+    AlertPolicy = apps.get_model("alerts", "AlertPolicy")
+    AlertRecord = apps.get_model("alerts", "AlertRecord")
     migrated_system_policy_ids = [
         policy.pk
         for policy in AlertPolicy.objects.filter(
@@ -141,7 +141,7 @@ def backwards(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("alert", "0005_owner_scope"),
+        ("alerts", "0005_owner_scope"),
     ]
 
     operations = [
