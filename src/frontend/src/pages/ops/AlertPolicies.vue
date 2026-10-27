@@ -5,29 +5,34 @@ import { useResourceCapabilities } from '../../composables/useResourceCapabiliti
 import { useI18n } from 'vue-i18n'
 import {
   ChevronDown,
-  Check,
   CirclePlay,
   CircleStop,
   Copy,
-  Pencil,
   Plus,
   RefreshCw,
   Search,
   SquarePen,
   Trash2,
-  X,
 } from 'lucide-vue-next'
 import { ElAlert, ElMessage } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
+import HflStatusTag from '../../components/HflStatusTag.vue'
 import HflTablePanel from '../../components/HflTablePanel.vue'
 import AlertPolicyTypeLabel from '../../components/AlertPolicyTypeLabel.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useAlertPolicyLabels } from '../../composables/useAlertPolicyLabels'
-import { resolutionRows } from './alertResolutionPresentation'
+import { notificationTimingRows, resolutionRows } from './alertResolutionPresentation'
+import {
+  triggerDetailRows,
+  triggerSummaryParts,
+  type TriggerSummaryParts,
+} from './alertTriggerPresentation'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { copyTextToClipboard } from '../../lib/clipboard'
 import { formatLocalDateTime } from '../../lib/dateTime'
+import { DETAIL_EMPTY } from '../../lib/nodeInventoryDisplay'
 import { booleanStatusTag, severityStatusTagAttrs } from '../../lib/statusTag'
 import { apiErrorMessageI18n } from '../../lib/api'
 import {
@@ -38,7 +43,6 @@ import {
   getPolicy,
   listPolicies,
   policyStatistics,
-  updatePolicy,
   type AlertPolicy,
   type AlertPolicyResource,
 } from '../../lib/alertApi'
@@ -46,12 +50,20 @@ import DangerConfirmDialog, {
   type DangerConfirmItem,
 } from '../../components/DangerConfirmDialog.vue'
 
-type PolicyInlineField = 'name' | 'description' | 'severity' | 'enabled'
-
 const router = useRouter()
-const { t } = useI18n()
+const { t, te } = useI18n()
 const opsMenus = useOpsMenus()
-const { policyTypeLabel, resourceTypeLabel, policyTypeOptions } = useAlertPolicyLabels()
+const {
+  policyTypeLabel,
+  resourceTypeLabel,
+  policyTypeOptions,
+  metricLabel,
+  healthCheckLabel,
+  taskTypeLabel,
+  taskEventLabel,
+  eventCategoryLabel,
+  eventTypeLabel,
+} = useAlertPolicyLabels()
 const { drawerSize, bindDrawerResize } = useResponsiveDrawerWidth()
 const { schedule: scheduleFilterSearch, runNow: runFilterSearch } = useDebouncedAction(() => applyFilters())
 
@@ -60,9 +72,6 @@ const detailsLoading = ref(false)
 const detailsError = ref<string | null>(null)
 const showDetails = ref(false)
 const detailPolicy = ref<AlertPolicy | null>(null)
-const policyInlineEditing = ref<PolicyInlineField | null>(null)
-const policyInlineDraft = ref<string | boolean>('')
-const policyInlineSaving = ref(false)
 const batchActionLoading = ref(false)
 const moreActionsOpen = ref(false)
 const alertPoliciesTableRef = ref()
@@ -120,6 +129,12 @@ function channelLabel(policy: AlertPolicy) {
   return list.map((c) => c.name).join(', ')
 }
 
+function channelTypeLabel(type?: string | null) {
+  if (!type) return t('ops.alertsCenter.policies.notificationColumn')
+  const key = `ops.notification.channelType.${type}`
+  return te(key) ? t(key) : type
+}
+
 function detailChannels(policy: AlertPolicy | null) {
   return policy?.notificationChannels || policy?.notification_channels || []
 }
@@ -151,6 +166,36 @@ function monitoringResourcesLabel(policy: AlertPolicy | null) {
   return t('common.empty')
 }
 
+function targetSummaryLabel(policy: AlertPolicy) {
+  if (policy.scope !== 'selected') return t('ops.alertsCenter.policies.targetSummaryAll')
+  const resources = policyMonitoringResources(policy)
+  if (resources.length) {
+    if (resources.length <= 2) return resources.map(monitoringResourceLabel).join(', ')
+    return t('ops.alertsCenter.policies.targetSummarySelected', { n: resources.length })
+  }
+  const ids = detailResourceIds(policy)
+  if (ids.length) return t('ops.alertsCenter.policies.targetSummarySelected', { n: ids.length })
+  return t('ops.alertsCenter.policies.targetSummaryEmpty')
+}
+
+const triggerLabelFns = {
+  metricLabel,
+  healthCheckLabel,
+  taskTypeLabel,
+  taskEventLabel,
+  eventCategoryLabel,
+  eventTypeLabel,
+}
+
+function policyTriggerParts(policy: AlertPolicy): TriggerSummaryParts {
+  return triggerSummaryParts(
+    policy.type,
+    detailTriggerRule(policy),
+    t,
+    triggerLabelFns,
+  )
+}
+
 function detailResourceType(policy: AlertPolicy | null) {
   return policy?.resourceType || policy?.resource_type || null
 }
@@ -163,30 +208,30 @@ function detailRecoveryRule(policy: AlertPolicy | null) {
   return policy?.recoveryRule || policy?.recovery_rule || {}
 }
 
-const detailResolutionRows = computed(() => detailPolicy.value
-  ? resolutionRows(detailPolicy.value.type, detailTriggerRule(detailPolicy.value),
-    detailRecoveryRule(detailPolicy.value), t)
-  : [])
+const drawerTriggerRows = computed(() => (
+  detailPolicy.value
+    ? triggerDetailRows(detailPolicy.value.type, detailTriggerRule(detailPolicy.value), t, triggerLabelFns)
+    : []
+))
+
+const drawerResolutionRows = computed(() => (
+  detailPolicy.value
+    ? resolutionRows(
+      detailPolicy.value.type,
+      detailTriggerRule(detailPolicy.value),
+      detailRecoveryRule(detailPolicy.value),
+      t,
+      { metricLabel, includeNotify: false },
+    )
+    : []
+))
+
+const drawerNotifyRows = computed(() => (
+  detailPolicy.value ? notificationTimingRows(detailRecoveryRule(detailPolicy.value), t) : []
+))
 
 function alertPolicyNameMeta(policy: AlertPolicy) {
   return policy.description?.trim() || ''
-}
-
-function formatJson(value: unknown) {
-  if (!value || (typeof value === 'object' && Object.keys(value as Record<string, unknown>).length === 0)) return '—'
-  return JSON.stringify(value, null, 2)
-}
-
-function hasJsonValue(value: unknown) {
-  return Boolean(value && (typeof value !== 'object' || Object.keys(value as Record<string, unknown>).length > 0))
-}
-
-function policyInlineValue(policy: AlertPolicy, field: PolicyInlineField): string | boolean {
-  if (field === 'name') return policy.name || ''
-  if (field === 'description') return policy.description || ''
-  if (field === 'severity') return policy.severity || 'warning'
-  if (field === 'enabled') return Boolean(policy.enabled)
-  return ''
 }
 
 async function loadPolicies() {
@@ -247,7 +292,6 @@ async function openDetails(row: AlertPolicy) {
 function closeDetails() {
   showDetails.value = false
   detailsError.value = null
-  cancelPolicyInlineEdit()
 }
 
 async function retryLoadDetails() {
@@ -255,53 +299,14 @@ async function retryLoadDetails() {
   if (row) await openDetails(row)
 }
 
-function isPolicyInlineEditing(field: PolicyInlineField) {
-  return policyInlineEditing.value === field
-}
-
-function beginPolicyInlineEdit(field: PolicyInlineField) {
-  if (!detailPolicy.value || !policyWritable(detailPolicy.value) || policyInlineSaving.value) return
-  policyInlineEditing.value = field
-  policyInlineDraft.value = policyInlineValue(detailPolicy.value, field)
-}
-
-function cancelPolicyInlineEdit() {
-  policyInlineEditing.value = null
-  policyInlineDraft.value = ''
-}
-
-async function savePolicyInlineEdit() {
-  const row = detailPolicy.value
-  const field = policyInlineEditing.value
-  if (!row || !field || !policyWritable(row) || policyInlineSaving.value) return
-
-  const payload: Record<string, unknown> = {}
-  if (field === 'name') {
-    const name = String(policyInlineDraft.value).trim()
-    if (!name) {
-      ElMessage.warning({ message: t('ops.alerts.rules.validateNameRequired'), grouping: true })
-      return
-    }
-    payload.name = name
-  } else if (field === 'description') {
-    payload.description = String(policyInlineDraft.value).trim()
-  } else if (field === 'severity') {
-    payload.severity = String(policyInlineDraft.value)
-  } else if (field === 'enabled') {
-    payload.enabled = Boolean(policyInlineDraft.value)
-  }
-
-  policyInlineSaving.value = true
+async function copyPolicyId(id: string | number) {
   try {
-    detailPolicy.value = await updatePolicy(row.id, payload)
-    ElMessage.success({ message: t('ops.alerts.rules.msgUpdated'), grouping: true })
-    cancelPolicyInlineEdit()
-    await loadPolicies()
-  } finally {
-    policyInlineSaving.value = false
+    await copyTextToClipboard(String(id))
+    ElMessage.success({ message: t('common.copied'), grouping: true })
+  } catch {
+    ElMessage.error({ message: t('common.copyFailed'), grouping: true })
   }
 }
-
 
 async function copyPolicy(row: AlertPolicy) {
   await duplicatePolicy(row.id)
@@ -548,29 +553,15 @@ async function executePolicyDangerAction() {
   else ElMessage.warning({ message: t(partialKey, { ok, fail }), grouping: true })
 }
 
-function scopeTagType(scope: string): 'primary' | 'info' {
-  return scope === 'selected' ? 'primary' : 'info'
-}
-
-function scopeTagClass(scope: string) {
-  return scope === 'selected' ? 'hfl-tag--scope-selected' : undefined
-}
-
 function severityLabel(severity?: string | null) {
-  if (!severity) return t('common.empty')
+  if (!severity) return DETAIL_EMPTY
   const key = `ops.alertsCenter.common.${severity}`
   const translated = t(key)
   return translated !== key ? translated : severity
 }
 
-function scopeLabel(scope?: string | null) {
-  if (scope === 'all') return t('ops.alertsCenter.editor.scopeAll')
-  if (scope === 'selected') return t('ops.alertsCenter.editor.scopeSelected')
-  return scope || t('common.empty')
-}
-
 function formatDate(value?: string) {
-  return formatLocalDateTime(value, '—')
+  return formatLocalDateTime(value, DETAIL_EMPTY)
 }
 
 onMounted(loadPolicies)
@@ -759,8 +750,8 @@ watch(
           <el-select
             v-model="filters.enabled"
             clearable
-            style="width: 110px"
-            :placeholder="t('ops.alertsCenter.common.status')"
+            style="width: 150px"
+            :placeholder="t('ops.alertsCenter.common.allEnabled')"
           >
             <el-option
               value="true"
@@ -832,19 +823,11 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.alertsCenter.common.type')"
+              :label="t('ops.alertsCenter.policies.alertType')"
               width="130"
             >
               <template #default="{ row }">
                 <AlertPolicyTypeLabel :type="row.type" />
-              </template>
-            </el-table-column>
-            <el-table-column
-              :label="t('ops.alertsCenter.policies.targetColumn')"
-              width="130"
-            >
-              <template #default="{ row }">
-                <span :class="{ 'hfl-empty-mark': !(row.resourceType || row.resource_type) }">{{ resourceTypeLabel(row.resourceType || row.resource_type) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -861,33 +844,56 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.alertsCenter.policies.scope')"
+              :label="t('ops.alertsCenter.policies.targetColumn')"
               width="140"
             >
               <template #default="{ row }">
-                <el-tag
-                  :type="scopeTagType(row.scope)"
-                  :class="scopeTagClass(row.scope)"
-                  size="small"
-                >
-                  {{ scopeLabel(row.scope) }}
-                </el-tag>
+                <span :class="{ 'hfl-empty-mark': !(row.resourceType || row.resource_type) }">{{ resourceTypeLabel(row.resourceType || row.resource_type) }}</span>
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.alertsCenter.editor.fieldMonitoringResources')"
-              min-width="210"
+              :label="t('ops.alertsCenter.common.target')"
+              min-width="160"
             >
               <template #default="{ row }">
                 <span
                   v-table-overflow-title
                   class="block min-w-0 truncate"
-                >{{ monitoringResourcesLabel(row) }}</span>
+                >{{ targetSummaryLabel(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.alertsCenter.common.status')"
-              width="90"
+              :label="t('ops.alertsCenter.common.trigger')"
+              min-width="220"
+            >
+              <template #default="{ row }">
+                <div class="hfl-ops-cell-stack min-w-0">
+                  <div class="hfl-ops-cell-stack__title line-clamp-1">
+                    {{ policyTriggerParts(row).primary }}
+                  </div>
+                  <div
+                    v-if="policyTriggerParts(row).secondary"
+                    class="hfl-ops-cell-stack__meta line-clamp-1"
+                  >
+                    {{ policyTriggerParts(row).secondary }}
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.policies.notificationColumn')"
+              min-width="150"
+            >
+              <template #default="{ row }">
+                <span
+                  v-table-overflow-title
+                  class="block min-w-0 truncate"
+                >{{ channelLabel(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('ops.alertsCenter.editor.fieldEnabled')"
+              width="100"
             >
               <template #default="{ row }">
                 <el-tag
@@ -897,14 +903,6 @@ watch(
                 >
                   {{ row.enabled ? t('ops.alertsCenter.common.enabled') : t('ops.alertsCenter.common.disabled') }}
                 </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column
-              :label="t('ops.alertsCenter.policies.notificationColumn')"
-              min-width="160"
-            >
-              <template #default="{ row }">
-                <span>{{ channelLabel(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column
@@ -952,12 +950,13 @@ watch(
       class="hfl-detail-drawer hfl-alert-policy-detail-drawer"
       :size="drawerSize"
       direction="rtl"
+      destroy-on-close
       @opened="bindDrawerResize"
       @closed="closeDetails"
     >
       <template #header>
         <span class="hfl-detail-drawer__title">
-          {{ detailPolicy?.name || t('common.empty') }}
+          {{ detailPolicy?.name || DETAIL_EMPTY }}
         </span>
       </template>
 
@@ -996,183 +995,50 @@ watch(
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.id') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-mono">{{ detailPolicy.id }}</span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.name') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                  <template v-if="isPolicyInlineEditing('name')">
-                    <ElInput
-                      v-model="policyInlineDraft"
-                      size="small"
-                      class="hfl-detail-inline-edit__input"
-                      @keyup.enter="savePolicyInlineEdit"
-                    />
-                    <span class="hfl-detail-inline-edit__actions">
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.save')"
-                        :disabled="policyInlineSaving"
-                        @click="savePolicyInlineEdit"
-                      ><Check :size="14" /></ElButton>
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.cancel')"
-                        :disabled="policyInlineSaving"
-                        @click="cancelPolicyInlineEdit"
-                      ><X :size="14" /></ElButton>
-                    </span>
-                  </template>
-                  <template v-else>
-                    <span class="hfl-detail-row__text">{{ detailPolicy.name }}</span>
-                    <ElButton
-                      text
-                      circle
-                      size="small"
-                      class="hfl-detail-row__edit"
-                      :title="t('common.edit')"
-                      @click="beginPolicyInlineEdit('name')"
-                    >
-                      <Pencil :size="13" />
-                    </ElButton>
-                  </template>
+                <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
+                  <span class="hfl-detail-row__text">{{ detailPolicy.id }}</span>
+                  <el-button
+                    text
+                    circle
+                    size="small"
+                    class="hfl-detail-row__edit"
+                    :title="t('common.copy')"
+                    @click="copyPolicyId(detailPolicy.id)"
+                  >
+                    <Copy :size="13" />
+                  </el-button>
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.alertType') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="{ 'hfl-detail-row__empty': !detailPolicy.type }"
-                >{{ policyTypeLabel(detailPolicy.type) }}</span>
+                >
+                  <AlertPolicyTypeLabel :type="detailPolicy.type" />
+                </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.severity') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                  <template v-if="isPolicyInlineEditing('severity')">
-                    <ElSelect
-                      v-model="policyInlineDraft"
-                      size="small"
-                      class="hfl-detail-inline-edit__input"
-                    >
-                      <ElOption
-                        value="critical"
-                        :label="t('ops.alertsCenter.common.critical')"
-                      />
-                      <ElOption
-                        value="warning"
-                        :label="t('ops.alertsCenter.common.warning')"
-                      />
-                      <ElOption
-                        value="info"
-                        :label="t('ops.alertsCenter.common.info')"
-                      />
-                    </ElSelect>
-                    <span class="hfl-detail-inline-edit__actions">
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.save')"
-                        :disabled="policyInlineSaving"
-                        @click="savePolicyInlineEdit"
-                      ><Check :size="14" /></ElButton>
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.cancel')"
-                        :disabled="policyInlineSaving"
-                        @click="cancelPolicyInlineEdit"
-                      ><X :size="14" /></ElButton>
-                    </span>
-                  </template>
-                  <template v-else>
-                    <el-tag
-                      v-bind="severityStatusTagAttrs(detailPolicy.severity)"
-                      size="small"
-                    >
-                      {{ severityLabel(detailPolicy.severity) }}
-                    </el-tag>
-                    <ElButton
-                      text
-                      circle
-                      size="small"
-                      class="hfl-detail-row__edit"
-                      :title="t('common.edit')"
-                      @click="beginPolicyInlineEdit('severity')"
-                    >
-                      <Pencil :size="13" />
-                    </ElButton>
-                  </template>
-                </span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.status') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--editable">
-                  <template v-if="isPolicyInlineEditing('enabled')">
-                    <ElSwitch v-model="policyInlineDraft" />
-                    <span class="hfl-detail-inline-edit__actions">
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.save')"
-                        :disabled="policyInlineSaving"
-                        @click="savePolicyInlineEdit"
-                      ><Check :size="14" /></ElButton>
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.cancel')"
-                        :disabled="policyInlineSaving"
-                        @click="cancelPolicyInlineEdit"
-                      ><X :size="14" /></ElButton>
-                    </span>
-                  </template>
-                  <template v-else>
-                    <el-tag
-                      :type="booleanStatusTag(detailPolicy.enabled).type"
-                      :class="booleanStatusTag(detailPolicy.enabled).class"
-                      size="small"
-                    >
-                      {{ detailPolicy.enabled ? t('ops.alertsCenter.common.enabled') : t('ops.alertsCenter.common.disabled') }}
-                    </el-tag>
-                    <ElButton
-                      text
-                      circle
-                      size="small"
-                      class="hfl-detail-row__edit"
-                      :title="t('common.edit')"
-                      @click="beginPolicyInlineEdit('enabled')"
-                    >
-                      <Pencil :size="13" />
-                    </ElButton>
-                  </template>
-                </span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.scope') }}</span>
                 <span class="hfl-detail-row__value">
                   <el-tag
-                    :type="scopeTagType(detailPolicy.scope)"
-                    :class="scopeTagClass(detailPolicy.scope)"
+                    v-bind="severityStatusTagAttrs(detailPolicy.severity)"
                     size="small"
                   >
-                    {{ scopeLabel(detailPolicy.scope) }}
+                    {{ severityLabel(detailPolicy.severity) }}
                   </el-tag>
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': !detailResourceType(detailPolicy) }"
-                >{{ resourceTypeLabel(detailResourceType(detailPolicy)) }}</span>
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.editor.fieldEnabled') }}</span>
+                <span class="hfl-detail-row__value">
+                  <HflStatusTag
+                    :tone="detailPolicy.enabled ? 'success' : 'neutral'"
+                    :label="detailPolicy.enabled
+                      ? t('ops.alertsCenter.common.enabled')
+                      : t('ops.alertsCenter.common.disabled')"
+                  />
+                </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.updatedAt') }}</span>
@@ -1185,106 +1051,130 @@ watch(
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.description') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--break">
-                  <template v-if="isPolicyInlineEditing('description')">
-                    <ElInput
-                      v-model="policyInlineDraft"
-                      size="small"
-                      type="textarea"
-                      :rows="2"
-                      class="hfl-detail-inline-edit__input"
-                    />
-                    <span class="hfl-detail-inline-edit__actions">
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.save')"
-                        :disabled="policyInlineSaving"
-                        @click="savePolicyInlineEdit"
-                      ><Check :size="14" /></ElButton>
-                      <ElButton
-                        text
-                        circle
-                        size="small"
-                        :title="t('common.cancel')"
-                        :disabled="policyInlineSaving"
-                        @click="cancelPolicyInlineEdit"
-                      ><X :size="14" /></ElButton>
-                    </span>
-                  </template>
-                  <template v-else>
-                    <span
-                      class="hfl-detail-row__text"
-                      :class="{ 'hfl-empty-mark': !detailPolicy.description }"
-                    >{{ detailPolicy.description || t('common.empty') }}</span>
-                    <ElButton
-                      text
-                      circle
-                      size="small"
-                      class="hfl-detail-row__edit"
-                      :title="t('common.edit')"
-                      @click="beginPolicyInlineEdit('description')"
-                    >
-                      <Pencil :size="13" />
-                    </ElButton>
-                  </template>
-                </span>
+                <span
+                  class="hfl-detail-row__value hfl-detail-row__value--break"
+                  :class="{ 'hfl-detail-row__empty': !detailPolicy.description }"
+                >{{ detailPolicy.description || DETAIL_EMPTY }}</span>
               </div>
             </div>
           </section>
 
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
-              {{ t('ops.alertsCenter.common.resourcesAndChannels') }}
+              {{ t('ops.alertsCenter.editor.sectionTarget') }}
             </h4>
             <div class="hfl-detail-grid">
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.editor.fieldMonitoringResources') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--break">
-                  <span class="hfl-detail-row__text">
-                    {{ monitoringResourcesLabel(detailPolicy) }}
-                  </span>
-                </span>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
+                <span
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': !detailResourceType(detailPolicy) }"
+                >{{ resourceTypeLabel(detailResourceType(detailPolicy)) || DETAIL_EMPTY }}</span>
               </div>
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.notificationColumn') }}</span>
+              <div class="hfl-detail-row">
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.target') }}</span>
                 <span class="hfl-detail-row__value hfl-detail-row__value--break">
-                  <span class="hfl-detail-row__text">
-                    {{ detailChannels(detailPolicy).length ? detailChannels(detailPolicy).map((channel) => channel.name).join(', ') : t('ops.alertsCenter.common.noChannelSelected') }}
-                  </span>
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">
-              {{ t('ops.alertsCenter.common.ruleConfig') }}
-            </h4>
-            <div class="hfl-detail-grid">
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.triggerRule') }}</span>
-                <span class="hfl-detail-row__value hfl-alert-policy-detail-drawer__json-value">
-                  <pre
-                    v-if="hasJsonValue(detailTriggerRule(detailPolicy))"
-                    class="hfl-alert-policy-detail-drawer__json"
-                  >{{ formatJson(detailTriggerRule(detailPolicy)) }}</pre>
-                  <span
-                    v-else
-                    class="hfl-empty-mark"
-                  >{{ t('common.empty') }}</span>
+                  {{ targetSummaryLabel(detailPolicy) }}
                 </span>
               </div>
               <div
-                v-for="row in detailResolutionRows"
+                v-if="detailPolicy.scope === 'selected'"
+                class="hfl-detail-row hfl-detail-row--full"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.editor.fieldMonitoringResources') }}</span>
+                <span
+                  class="hfl-detail-row__value hfl-detail-row__value--break"
+                  :class="{ 'hfl-detail-row__empty': monitoringResourcesLabel(detailPolicy) === t('common.empty') }"
+                >
+                  {{ monitoringResourcesLabel(detailPolicy) }}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.common.trigger') }}
+            </h4>
+            <div
+              v-if="drawerTriggerRows.length"
+              class="hfl-detail-grid"
+            >
+              <div
+                v-for="row in drawerTriggerRows"
                 :key="row.label"
                 class="hfl-detail-row hfl-detail-row--full"
               >
                 <span class="hfl-detail-row__label">{{ row.label }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__text">
+                <span class="hfl-detail-row__value hfl-detail-row__value--break">
                   {{ row.value }}
                 </span>
+              </div>
+            </div>
+            <p
+              v-else
+              class="hfl-detail-row__empty"
+            >
+              {{ DETAIL_EMPTY }}
+            </p>
+          </section>
+
+          <section class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.common.recoveryRule') }}
+            </h4>
+            <div
+              v-if="drawerResolutionRows.length"
+              class="hfl-detail-grid"
+            >
+              <div
+                v-for="row in drawerResolutionRows"
+                :key="row.label"
+                class="hfl-detail-row hfl-detail-row--full"
+              >
+                <span class="hfl-detail-row__label">{{ row.label }}</span>
+                <span class="hfl-detail-row__value hfl-detail-row__value--break">
+                  {{ row.value }}
+                </span>
+              </div>
+            </div>
+            <p
+              v-else
+              class="hfl-detail-row__empty"
+            >
+              {{ DETAIL_EMPTY }}
+            </p>
+          </section>
+
+          <section class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.editor.sectionNotification') }}
+            </h4>
+            <div class="hfl-detail-grid">
+              <div
+                v-for="channel in detailChannels(detailPolicy)"
+                :key="channel.id"
+                class="hfl-detail-row hfl-detail-row--full"
+              >
+                <span class="hfl-detail-row__label">{{ channelTypeLabel(channel.type) }}</span>
+                <span class="hfl-detail-row__value hfl-detail-row__value--break">
+                  {{ channel.name }}
+                </span>
+              </div>
+              <div
+                v-if="!detailChannels(detailPolicy).length"
+                class="hfl-detail-row hfl-detail-row--full"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.notificationColumn') }}</span>
+                <span class="hfl-detail-row__value hfl-detail-row__empty">{{ DETAIL_EMPTY }}</span>
+              </div>
+              <div
+                v-for="row in drawerNotifyRows"
+                :key="row.label"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ row.label }}</span>
+                <span class="hfl-detail-row__value">{{ row.value }}</span>
               </div>
             </div>
           </section>
@@ -1345,26 +1235,5 @@ watch(
 
 .hfl-alert-policy-detail-drawer__error {
   color: var(--color-error);
-}
-
-.hfl-alert-policy-detail-drawer__json-value {
-  align-items: stretch;
-}
-
-.hfl-alert-policy-detail-drawer__json {
-  width: 100%;
-  max-height: 220px;
-  overflow: auto;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-grey-1);
-  color: var(--color-text-primary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 </style>

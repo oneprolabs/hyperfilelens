@@ -5,10 +5,9 @@ from django.db import models
 
 class AlertType(models.TextChoices):
     METRIC = "metric", "Metric Alert"
-    AVAILABILITY = "availability", "Availability Alert"
+    HEALTH = "health", "Health Alert"
     TASK = "task", "Task Alert"
     EVENT = "event", "Event Alert"
-    SYSTEM = "system", "System Alert"
 
 
 class AlertSeverity(models.TextChoices):
@@ -25,12 +24,12 @@ class AlertStatus(models.TextChoices):
 
 
 class ResourceType(models.TextChoices):
-    SYSTEM = "system", "System"
-    SYNC_PROXY = "sync_proxy", "Sync Proxy"
-    GATEWAY = "gateway", "Gateway"
-    AGENT_PROXY = "agent_proxy", "Agent Proxy"
-    BACKUP_REPOSITORY = "backup_repository", "Backup Repository"
+    SYSTEM = "system", "Control Plane"
+    AGENT_PROXY = "agent_proxy", "Source Host"
+    SYNC_PROXY = "sync_proxy", "Proxy Host"
+    GATEWAY = "gateway", "Data Gateway"
     SOURCE_RESOURCE = "source_resource", "Source Resource"
+    BACKUP_REPOSITORY = "backup_repository", "Backup Repository"
     TARGET_STORAGE = "target_storage", "Target Storage"
     TASK = "task", "Task"
     SYSTEM_SERVICE = "system_service", "System Service"
@@ -56,6 +55,9 @@ class NotificationLogType(models.TextChoices):
 METRICS_BY_RESOURCE_TYPE = {
     ResourceType.SYSTEM: [
         "cpu_usage",
+        "load_1m",
+        "load_5m",
+        "load_15m",
         "memory_usage",
         "swap_usage",
         "disk_usage",
@@ -63,9 +65,6 @@ METRICS_BY_RESOURCE_TYPE = {
         "disk_write_bytes",
         "network_rx",
         "network_tx",
-        "load_1m",
-        "load_5m",
-        "load_15m",
     ],
     ResourceType.SYNC_PROXY: [
         "cpu_usage",
@@ -93,7 +92,22 @@ METRICS_BY_RESOURCE_TYPE = {
     ResourceType.TARGET_STORAGE: ["capacity_usage", "used_size", "free_size"],
 }
 
-AVAILABILITY_CHECK_TYPES = ["heartbeat", "connection", "api_health"]
+# Org-level Health checks (tenant Alert Rules).
+HEALTH_CHECK_TYPES = ["heartbeat"]
+# Health evaluator targets node heartbeats only. Control Plane and service
+# resources do not expose a node heartbeat and must not produce no-op rules.
+HEALTH_RESOURCE_TYPES = [
+    ResourceType.AGENT_PROXY,
+    ResourceType.SYNC_PROXY,
+    ResourceType.GATEWAY,
+]
+# Only checks with an evaluator are exposed. Platform service probes are not
+# yet safe to configure as alerts because their evaluator has no durable
+# service-health source (and must not silently create rules that never fire).
+PLATFORM_HEALTH_CHECK_TYPES = ["heartbeat"]
+# Backward-compatible aliases for older imports / metadata clients.
+AVAILABILITY_CHECK_TYPES = list(HEALTH_CHECK_TYPES)
+SYSTEM_CHECK_TYPES = [c for c in PLATFORM_HEALTH_CHECK_TYPES if c != "heartbeat"]
 TASK_TYPES = ["backup", "restore", "repository_operation"]
 TASK_EVENT_TYPES = ["task_failed", "task_timeout", "retry_exceeded", "partial_success"]
 EVENT_CATEGORIES = ["user", "license", "repository", "configuration", "security"]
@@ -138,11 +152,3 @@ EVENT_TYPES = {
         "permission_changed",
     ],
 }
-SYSTEM_CHECK_TYPES = [
-    "api_service_down",
-    "database_unreachable",
-    "celery_worker_down",
-    "scheduler_down",
-    "disk_space_low",
-    "service_health",
-]

@@ -30,4 +30,13 @@ describe('responsive detail rows', () => {
     expect(mobileStyles).toContain('.detail-page-row--full {')
     expect(mobileStyles).toContain('grid-template-columns: minmax(112px, 34%) minmax(0, 1fr)')
   })
+
+  it('keeps a divider above a trailing full-width detail row', () => {
+    expect(styles).toContain(
+      '.hfl-detail-row:nth-last-child(2):nth-child(odd):has(+ .hfl-detail-row:nth-child(even):not(.hfl-detail-row--full))',
+    )
+    expect(styles).toContain(
+      '.hfl-detail-row:nth-child(odd):has(+ .hfl-detail-row--full):not(.hfl-detail-row--full)',
+    )
+  })
 })

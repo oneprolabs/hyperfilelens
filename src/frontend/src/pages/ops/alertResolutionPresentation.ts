@@ -2,8 +2,29 @@ import { hasNumericRecovery, inverseOperator, recoveryKind } from './alertPolicy
 
 type Rule = Record<string, unknown>
 type Translate = (key: string, values?: Record<string, string | number>) => string
+type LabelFn = (value?: string | null) => string
 
-export function resolutionRows(type: string, trigger: Rule, recovery: Rule, t: Translate) {
+export function notificationTimingRows(recovery: Rule, t: Translate) {
+  const key = (name: string) => `ops.alertsCenter.editor.${name}`
+  return [
+    {
+      label: t(key('fieldNotifyOnFiring')),
+      value: t(key(recovery.notify_on_firing === false ? 'no' : 'yes')),
+    },
+    {
+      label: t(key('fieldNotifyOnResolved')),
+      value: t(key(recovery.notify_on_resolved === false ? 'no' : 'yes')),
+    },
+  ]
+}
+
+export function resolutionRows(
+  type: string,
+  trigger: Rule,
+  recovery: Rule,
+  t: Translate,
+  labels?: { metricLabel?: LabelFn; includeNotify?: boolean },
+) {
   const key = (name: string) => `ops.alertsCenter.editor.${name}`
   const kind = recoveryKind(type, trigger)
   const enabled = recovery.enabled !== false
@@ -22,14 +43,14 @@ export function resolutionRows(type: string, trigger: Rule, recovery: Rule, t: T
     if (!hasNumericRecovery(recovery)) {
       rows.push({ label: t(key('fieldRecoveryCondition')), value: t(key('recoveryTriggerCleared')) })
     } else {
-      // Match the system evaluator's disk-space defaults, including its operator override.
-      const disk = type === 'system' && trigger.check_type === 'disk_space_low'
-      const operator = String(recovery.operator || inverseOperator(disk ? '>=' : trigger.operator))
-      const threshold = recovery.threshold ?? trigger.threshold ?? (disk ? 90 : 0)
+      const operator = String(recovery.operator || inverseOperator(trigger.operator))
+      const threshold = recovery.threshold ?? trigger.threshold ?? 0
+      const metricKey = String(trigger.metric_key || '')
+      const metric = labels?.metricLabel?.(metricKey) || metricKey || '—'
       rows.push({
         label: t(key('fieldRecoveryCondition')),
         value: t(key('resolutionConditionValue'), {
-          metric: String(disk ? 'disk_usage' : trigger.metric_key || '—'),
+          metric,
           operator, threshold: String(threshold), unit: String(trigger.unit || ''),
         }),
       }, {
@@ -40,11 +61,8 @@ export function resolutionRows(type: string, trigger: Rule, recovery: Rule, t: T
       })
     }
   }
-  for (const [label, field] of [
-    ['fieldNotifyOnFiring', 'notify_on_firing'],
-    ['fieldNotifyOnResolved', 'notify_on_resolved'],
-  ]) {
-    rows.push({ label: t(key(label!)), value: t(key(recovery[field!] === false ? 'no' : 'yes')) })
+  if (labels?.includeNotify !== false) {
+    rows.push(...notificationTimingRows(recovery, t))
   }
   return rows
 }

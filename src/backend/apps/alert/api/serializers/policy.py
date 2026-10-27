@@ -1,7 +1,10 @@
 from rest_framework import serializers
 
 from apps.alert.constants import (
+    HEALTH_CHECK_TYPES,
+    HEALTH_RESOURCE_TYPES,
     METRICS_BY_RESOURCE_TYPE,
+    PLATFORM_HEALTH_CHECK_TYPES,
     AlertType,
     PolicyScope,
     ResourceType,
@@ -163,7 +166,7 @@ class AlertPolicySerializer(serializers.ModelSerializer):
                 )
             })
 
-        if alert_type in (AlertType.METRIC, AlertType.SYSTEM):
+        if alert_type == AlertType.METRIC:
             allowed_metrics = METRICS_BY_RESOURCE_TYPE.get(resource_type, [])
             metric_key = trigger_rule.get("metric_key")
             if metric_key and metric_key not in allowed_metrics:
@@ -250,14 +253,61 @@ class AlertPolicySerializer(serializers.ModelSerializer):
                 "threshold",
                 "duration_seconds",
             ],
-            AlertType.AVAILABILITY: ["check_type", "timeout_seconds", "duration_seconds"],
+            AlertType.HEALTH: ["check_type", "duration_seconds"],
             AlertType.TASK: ["task_type", "event_type"],
             AlertType.EVENT: ["event_category", "event_types"],
-            AlertType.SYSTEM: ["check_type", "duration_seconds"],
         }
+        required = list(required_by_type.get(alert_type, []))
+        if alert_type == AlertType.HEALTH:
+            from common.resource_scope import ResourceScope
+
+            legacy_rule = trigger_rule.get("_hfl_legacy_trigger_rule")
+            legacy_system_health = bool(
+                instance is not None
+                and resource_type == ResourceType.SYSTEM
+                and trigger_rule.get("_hfl_legacy_alert_type") == "system"
+                and isinstance(legacy_rule, dict)
+                and trigger_rule.get("check_type") == legacy_rule.get("check_type")
+            )
+            if resource_type not in HEALTH_RESOURCE_TYPES and not legacy_system_health:
+                raise serializers.ValidationError(
+                    {
+                        "resource_type": (
+                            "Health alerts require a Source Host, Proxy Host, "
+                            "or Data Gateway target."
+                        )
+                    }
+                )
+            owner_scope = (
+                instance.owner_scope
+                if instance is not None
+                else self.context.get("owner_scope")
+            )
+            if owner_scope is None and self.context.get("organization") is not None:
+                owner_scope = ResourceScope.ORGANIZATION
+            allowed_checks = (
+                PLATFORM_HEALTH_CHECK_TYPES
+                if owner_scope == ResourceScope.PLATFORM
+                else HEALTH_CHECK_TYPES
+            )
+            check_type = str(trigger_rule.get("check_type") or "heartbeat")
+            if check_type not in allowed_checks and not legacy_system_health:
+                raise serializers.ValidationError(
+                    {
+                        "trigger_rule": (
+                            f"Health check '{check_type}' is not available "
+                            f"for {owner_scope or 'organization'} alert rules."
+                        )
+                    }
+                )
+        if (
+            alert_type == AlertType.HEALTH
+            and str(trigger_rule.get("check_type") or "heartbeat") == "heartbeat"
+        ):
+            required.append("timeout_seconds")
         missing = [
             key
-            for key in required_by_type.get(alert_type, [])
+            for key in required
             if trigger_rule.get(key) in (None, "", [])
         ]
         if missing:

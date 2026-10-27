@@ -612,11 +612,26 @@
 
 .hfl-detail-row:last-child,
 .detail-page-row:last-child,
-.repo-detail-row:last-child,
-.hfl-detail-row:nth-last-child(2):nth-child(odd),
-.detail-page-row:nth-last-child(2):nth-child(odd),
-.repo-detail-row:nth-last-child(2):nth-child(odd) {
+.repo-detail-row:last-child {
   border-bottom: 0;
+}
+
+/* Drop the left cell bottom border only for a final 2-column pair.
+   Keep it when the last row is full-width (e.g. Description after Duration). */
+.hfl-detail-row:nth-last-child(2):nth-child(odd):has(+ .hfl-detail-row:nth-child(even):not(.hfl-detail-row--full)),
+.detail-page-row:nth-last-child(2):nth-child(odd):has(+ .detail-page-row:nth-child(even):not(.detail-page-row--full)),
+.repo-detail-row:nth-last-child(2):nth-child(odd):has(+ .repo-detail-row:nth-child(even):not(.repo-detail-row--full)) {
+  border-bottom: 0;
+}
+
+/* Orphan left cell above a full-width row would only draw a half divider —
+   stretch it and match full-row label/value proportions. */
+.hfl-detail-row:nth-child(odd):has(+ .hfl-detail-row--full):not(.hfl-detail-row--full),
+.detail-page-row:nth-child(odd):has(+ .detail-page-row--full):not(.detail-page-row--full),
+.repo-detail-row:nth-child(odd):has(+ .repo-detail-row--full):not(.repo-detail-row--full) {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(112px, 17%) minmax(0, 1fr);
+  border-left: 0;
 }
 
 .hfl-detail-row:nth-child(2n),
@@ -633,6 +648,12 @@
 .detail-page-row--full {
   grid-column: 1 / -1;
   grid-template-columns: minmax(112px, 17%) minmax(0, 1fr);
+}
+
+.hfl-detail-row--full > .hfl-detail-row__value:only-child,
+.detail-page-row--full > .detail-page-row__value:only-child,
+.repo-detail-row--full > .repo-detail-row__value:only-child {
+  grid-column: 1 / -1;
 }
 
 .detail-page-row--full:nth-child(2n) {

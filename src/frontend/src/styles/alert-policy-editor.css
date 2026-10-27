@@ -6,6 +6,57 @@
   flex: 0 0 auto;
 }
 
+/* Keep the five-section summary within the viewport; scroll the body when it overflows. */
+@media (min-width: 1024px) {
+  .alert-policy-editor-sidebar.add-form-preview-sidebar {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: 100%;
+  }
+
+  .alert-policy-editor-sidebar .add-form-preview-card {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    /* Prefer layout height; fall back so footer/header never clip the card. */
+    max-height: min(
+      100%,
+      calc(
+        var(--app-viewport-height, 100dvh)
+        - var(--topnav-height, var(--app-header-height, 56px))
+        - 28px
+        - 88px
+        - var(--app-safe-bottom, 0px)
+      )
+    );
+    overflow: hidden;
+  }
+
+  .alert-policy-editor-sidebar .add-form-preview-header {
+    flex-shrink: 0;
+  }
+
+  .alert-policy-editor-sidebar .add-form-preview-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .alert-policy-editor-sidebar .add-form-preview-section {
+    height: auto;
+  }
+}
+
+.alert-policy-editor-threshold-unit {
+  flex: 0 0 96px;
+  width: 96px;
+}
+
 .alert-policy-editor-resource-select .el-select__selection .el-tag__content {
   max-width: 220px;
   overflow: hidden;
@@ -65,13 +116,10 @@
   white-space: nowrap;
 }
 
-.alert-policy-editor-resource-select-popper {
-  min-width: 280px;
-  max-width: min(520px, calc(100vw - 32px));
-}
-
-.el-select__popper.alert-policy-editor-resource-select-popper {
-  min-width: 0;
+/* Match dropdown width to the Resources select (fit-input-width); do not cap below the field. */
+.el-select__popper.alert-policy-editor-resource-select-popper,
+.alert-policy-editor-resource-select-popper.el-popper {
+  box-sizing: border-box;
   max-width: none;
 }
 

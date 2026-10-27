@@ -60,6 +60,14 @@ const pageTitle = computed(() =>
     ? t('ops.notification.modalTitleEdit')
     : t('ops.notification.modalTitleCreate'),
 )
+const pageSubtitle = computed(() =>
+  editingId.value
+    ? t('ops.notification.modalSubtitleEdit')
+    : t('ops.notification.modalSubtitleCreate'),
+)
+const submitLabel = computed(() =>
+  editingId.value ? t('common.save') : t('common.add'),
+)
 const testButtonLabel = computed(() => t(
   form.type === 'email'
     ? 'ops.notification.testEmailDraft'
@@ -319,7 +327,7 @@ const previewTargetRows = computed(() => {
     return [
       { label: t('ops.notification.formWebhookUrl'), value: form.dingtalk.webhook_url, mono: true },
       {
-        label: t('ops.notification.formSecret'),
+        label: t('ops.notification.formSigningSecret'),
         value: maskPreviewSecret(form.dingtalk.secret, form.dingtalk.secret_configured),
         mono: true,
       },
@@ -596,7 +604,7 @@ watch(() => form.type, () => {
             {{ pageTitle }}
           </h1>
           <p class="fullscreen-form-header__desc">
-            {{ t('ops.notification.modalSubtitle') }}
+            {{ pageSubtitle }}
           </p>
         </div>
       </div>
@@ -657,11 +665,7 @@ watch(() => form.type, () => {
                     :label="t('ops.notification.formEnabled')"
                     class="fullscreen-form-status-item"
                   >
-                    <el-switch
-                      v-model="form.enabled"
-                      :active-text="t('ops.notification.statusEnabled')"
-                      :inactive-text="t('ops.notification.statusDisabled')"
-                    />
+                    <el-switch v-model="form.enabled" />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.notification.tipEnabled') }}
                     </p>
@@ -838,12 +842,17 @@ watch(() => form.type, () => {
                       :label="t('ops.notification.webhookTimeout')"
                       class="fullscreen-form-item--in-card"
                     >
-                      <el-input-number
-                        v-model="form.webhook.timeout"
-                        class="w-full"
-                        :min="1"
-                        :max="120"
-                      />
+                      <div class="flex w-full items-center gap-2">
+                        <el-input-number
+                          v-model="form.webhook.timeout"
+                          class="flex-1"
+                          :min="1"
+                          :max="120"
+                        />
+                        <span class="fullscreen-form-field__unit">
+                          {{ t('ops.notification.webhookTimeoutUnit') }}
+                        </span>
+                      </div>
                       <p class="fullscreen-form-field__hint">
                         {{ t('ops.notification.tipWebhookTimeout') }}
                       </p>
@@ -927,14 +936,14 @@ watch(() => form.type, () => {
                   >
                     <el-input
                       v-model="form.dingtalk.webhook_url"
-                      :placeholder="t('ops.notification.phWebhookUrl')"
+                      :placeholder="t('ops.notification.phDingtalkWebhookUrl')"
                     />
                     <p class="fullscreen-form-field__hint">
-                      {{ t('ops.notification.tipWebhookUrl') }}
+                      {{ t('ops.notification.tipDingtalkWebhookUrl') }}
                     </p>
                   </el-form-item>
                   <el-form-item
-                    :label="t('ops.notification.formSecret')"
+                    :label="t('ops.notification.formSigningSecret')"
                     class="fullscreen-form-item--in-card"
                   >
                     <template v-if="!editingId || form.dingtalk.secret_editing">
@@ -1014,11 +1023,7 @@ watch(() => form.type, () => {
                     :label="t('ops.notification.formAtAll')"
                     class="fullscreen-form-status-item"
                   >
-                    <el-switch
-                      v-model="form.dingtalk.is_at_all"
-                      :active-text="t('ops.notification.statusEnabled')"
-                      :inactive-text="t('ops.notification.statusDisabled')"
-                    />
+                    <el-switch v-model="form.dingtalk.is_at_all" />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.notification.tipAtAll') }}
                     </p>
@@ -1090,10 +1095,10 @@ watch(() => form.type, () => {
                   >
                     <el-input
                       v-model="form.wecom.webhook_url"
-                      :placeholder="t('ops.notification.phWebhookUrl')"
+                      :placeholder="t('ops.notification.phWecomWebhookUrl')"
                     />
                     <p class="fullscreen-form-field__hint">
-                      {{ t('ops.notification.tipWebhookUrl') }}
+                      {{ t('ops.notification.tipWecomWebhookUrl') }}
                     </p>
                   </el-form-item>
                   <div class="fullscreen-form-grid">
@@ -1127,11 +1132,7 @@ watch(() => form.type, () => {
                     :label="t('ops.notification.formAtAll')"
                     class="fullscreen-form-status-item"
                   >
-                    <el-switch
-                      v-model="form.wecom.is_at_all"
-                      :active-text="t('ops.notification.statusEnabled')"
-                      :inactive-text="t('ops.notification.statusDisabled')"
-                    />
+                    <el-switch v-model="form.wecom.is_at_all" />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.notification.tipAtAll') }}
                     </p>
@@ -1141,15 +1142,15 @@ watch(() => form.type, () => {
             </div>
           </el-form>
 
-          <div class="fullscreen-form-footer fullscreen-form-action-footer fullscreen-form-footer--split">
-            <ElButton
-              :loading="testing"
-              :disabled="testing || saving || form.type === 'sms'"
-              @click="testFromEditor"
-            >
-              {{ testButtonLabel }}
-            </ElButton>
-            <div class="flex gap-2">
+          <div class="fullscreen-form-footer fullscreen-form-action-footer">
+            <div class="fullscreen-form-footer__actions">
+              <ElButton
+                :loading="testing"
+                :disabled="testing || saving || form.type === 'sms'"
+                @click="testFromEditor"
+              >
+                {{ testButtonLabel }}
+              </ElButton>
               <ElButton @click="handleBack">
                 {{ t('common.cancel') }}
               </ElButton>
@@ -1159,7 +1160,7 @@ watch(() => form.type, () => {
                 :disabled="saving || testing"
                 @click="saveChannel"
               >
-                {{ t('common.save') }}
+                {{ submitLabel }}
               </ElButton>
             </div>
           </div>

@@ -1,9 +1,11 @@
 export type RecoveryKind = 'numeric' | 'heartbeat' | 'manual'
 
 export function recoveryKind(type: string, trigger: Record<string, unknown>): RecoveryKind {
-  if (type === 'metric' || (type === 'system'
-    && (trigger.check_type === 'disk_space_low' || !!trigger.metric_key))) return 'numeric'
-  if (type === 'availability' && trigger.check_type === 'heartbeat') return 'heartbeat'
+  if (type === 'metric' || type === 'system') return 'numeric'
+  if (
+    (type === 'health' || type === 'availability')
+    && trigger.check_type === 'heartbeat'
+  ) return 'heartbeat'
   return 'manual'
 }
 

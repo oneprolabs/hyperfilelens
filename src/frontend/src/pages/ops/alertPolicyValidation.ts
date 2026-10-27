@@ -15,7 +15,7 @@ export const triggerValidationSpecs: Record<string, TriggerValidationSpec[]> = {
     { path: 'triggerRule.duration_seconds', field: 'duration_seconds', labelKey: 'ops.alertsCenter.editor.fieldDuration', kind: 'number' },
     { path: 'triggerRule.evaluation_interval_seconds', field: 'evaluation_interval_seconds', labelKey: 'ops.alertsCenter.editor.fieldEvaluationInterval', kind: 'number' },
   ],
-  availability: [
+  health: [
     { path: 'triggerRule.check_type', field: 'check_type', labelKey: 'ops.alertsCenter.editor.checkType', kind: 'string' },
     { path: 'triggerRule.timeout_seconds', field: 'timeout_seconds', labelKey: 'ops.alertsCenter.editor.fieldAvailabilityTimeout', kind: 'number' },
     { path: 'triggerRule.duration_seconds', field: 'duration_seconds', labelKey: 'ops.alertsCenter.editor.fieldDuration', kind: 'number' },
@@ -27,10 +27,6 @@ export const triggerValidationSpecs: Record<string, TriggerValidationSpec[]> = {
   event: [
     { path: 'triggerRule.event_category', field: 'event_category', labelKey: 'ops.alertsCenter.editor.eventCategory', kind: 'string' },
     { path: 'triggerRule.event_types', field: 'event_types', labelKey: 'ops.alertsCenter.editor.eventTypes', kind: 'array' },
-  ],
-  system: [
-    { path: 'triggerRule.check_type', field: 'check_type', labelKey: 'ops.alertsCenter.editor.checkType', kind: 'string' },
-    { path: 'triggerRule.duration_seconds', field: 'duration_seconds', labelKey: 'ops.alertsCenter.editor.fieldDuration', kind: 'number' },
   ],
 }
 

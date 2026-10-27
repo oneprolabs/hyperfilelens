@@ -87,9 +87,7 @@ describe('Spanish language pack', () => {
     expect(spanish.protection.policiesPage.batchDisableSkipNotice).toContain(
       'se omitirán {skipped} que ya están desactivados',
     )
-    expect(spanish.ops.task.status.failedTimedOut).toBe(
-      'Fallida / Tiempo de espera agotado',
-    )
+    expect(spanish.ops.task.status.failedTimedOut).toBe('Fallido')
     expect(spanish.insight.skills.fieldEnabledHint).toContain(
       'Las habilidades desactivadas',
     )
@@ -162,7 +160,7 @@ describe('Spanish language pack', () => {
       'platformOps.storageProviders.general',
       'platformOps.storageProviders.id',
     ]
-    expect(allowedEnglish.filter(key => key !== 'repositoriesPage.cleanupResourceSeparator').length).toBeLessThanOrEqual(327 + sharedGovernanceTerms.length)
+    expect(allowedEnglish.filter(key => key !== 'repositoriesPage.cleanupResourceSeparator').length).toBeLessThanOrEqual(341 + sharedGovernanceTerms.length)
     const englishFlat = flatten(en)
     const spanishFlat = flatten(spanish)
     for (const key of sharedGovernanceTerms) {

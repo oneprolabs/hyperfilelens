@@ -36,9 +36,12 @@ def _channel_ids_for_alert(alert: AlertRecord) -> list[int]:
 
 
 def _payload_for_alert(alert: AlertRecord, *, resolved: bool) -> dict:
+    policy = _policy_for_alert(alert)
     return {
         "alert_id": str(alert.id),
         "policy_id": str(alert.policy_id) if alert.policy_id else None,
+        "policy_name": policy.name if policy else "",
+        "policy_type": policy.type if policy else (alert.type or ""),
         "severity": alert.severity,
         "status": alert.status,
         "title": alert.title,

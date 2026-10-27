@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { CheckCircle2, RefreshCw, Search, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, Copy, RefreshCw, Search, XCircle } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { ElMessage } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
 import HflTablePanel from '../../components/HflTablePanel.vue'
@@ -10,14 +11,15 @@ import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { useAlertPolicyLabels } from '../../composables/useAlertPolicyLabels'
+import { copyTextToClipboard } from '../../lib/clipboard'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { alertStatusTagAttrs, lifecycleStatusTagAttrs, severityStatusTagAttrs } from '../../lib/statusTag'
 import { listChannels, listLogs, logStats, type NotificationLog } from '../../lib/notificationApi'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const opsMenus = useOpsMenus()
 const { drawerSize: detailDrawerSize } = useResponsiveDrawerWidth()
-const { policyTypeLabel, resourceTypeLabel, policyTypeOptions } = useAlertPolicyLabels()
+const { resourceTypeLabel, policyTypeOptions } = useAlertPolicyLabels()
 const { schedule: scheduleFilterSearch, runNow: runFilterSearch } = useDebouncedAction(() => applyFilters())
 
 const logs = ref<NotificationLog[]>([])
@@ -56,11 +58,6 @@ function responsePreview(row: NotificationLog) {
   return row.errorMessage || row.error_message || '—'
 }
 
-function displayValue(value: unknown) {
-  if (value === null || value === undefined || value === '') return t('common.empty')
-  return String(value)
-}
-
 function notificationTypeLabel(type?: string | null) {
   if (type === 'firing') return t('ops.notification.logTypeFiring')
   if (type === 'resolved') return t('ops.notification.logTypeResolved')
@@ -78,6 +75,20 @@ function severityLabel(severity?: string | null) {
   return translated !== key ? translated : severity
 }
 
+function statusDisplayValue(status?: string | null) {
+  const normalized = String(status || '').toLowerCase()
+  if (normalized === 'sent' || normalized === 'success') return t('ops.notification.statusSuccess')
+  if (normalized === 'failed') return t('ops.notification.statusFailed')
+  if (normalized === 'pending') return t('ops.notification.statusPending')
+  return status || t('common.empty')
+}
+
+function channelTypeLabel(type?: string | null) {
+  if (!type) return t('common.empty')
+  const key = `ops.notification.channelType.${type}`
+  return te(key) ? t(key) : type
+}
+
 function logAlert(row: NotificationLog) {
   return (row.alert || {}) as Record<string, unknown>
 }
@@ -87,34 +98,67 @@ function logPolicy(row: NotificationLog) {
 }
 
 function logPolicyName(row: NotificationLog) {
-  return String(logPolicy(row).name || t('common.empty'))
+  return String(logPolicy(row).name || '').trim()
+}
+
+function logResourceName(row: NotificationLog) {
+  return String(logAlert(row).resource_name || '').trim()
+}
+
+function logResourceType(row: NotificationLog) {
+  return String(logAlert(row).resource_type || '').trim()
 }
 
 function logResourceSummary(row: NotificationLog) {
-  const alert = logAlert(row)
-  const name = String(alert.resource_name || '')
-  const type = resourceTypeLabel(String(alert.resource_type || ''))
-  if (name && type !== t('common.empty')) return `${name} · ${type}`
+  const name = logResourceName(row)
+  const type = resourceTypeLabel(logResourceType(row) || null)
+  if (name && type !== t('common.empty') && type !== t('ops.task.emptyMark')) {
+    return `${name} · ${type}`
+  }
   return name || type
 }
 
 function logSeverity(row: NotificationLog) {
   const alert = logAlert(row)
   const policy = logPolicy(row)
-  return String(alert.severity || policy.severity || '')
-}
-
-function logPolicyType(row: NotificationLog) {
-  const policy = logPolicy(row)
-  return policyTypeLabel(String(policy.type || ''))
+  return String(alert.severity || policy.severity || '').trim()
 }
 
 function logPolicyTypeValue(row: NotificationLog) {
-  return String(logPolicy(row).type || logAlert(row).type || '')
+  return String(logPolicy(row).type || logAlert(row).type || '').trim()
 }
 
 function logAlertTitle(row: NotificationLog) {
-  return String(logAlert(row).title || '—')
+  return String(logAlert(row).title || t('common.empty'))
+}
+
+function logChannelName(row: NotificationLog) {
+  return String(row.channel?.name || '').trim()
+}
+
+function logChannelType(row: NotificationLog) {
+  return String(row.channel?.type || '').trim()
+}
+
+function hasAlertInfo(row: NotificationLog) {
+  return Boolean(logSeverity(row) || logResourceType(row) || logResourceName(row))
+}
+
+function hasPolicyInfo(row: NotificationLog) {
+  return Boolean(logPolicyName(row) || logPolicyTypeValue(row))
+}
+
+function hasChannelInfo(row: NotificationLog) {
+  return Boolean(logChannelName(row) || logChannelType(row))
+}
+
+async function copyDeliveryId(id: number) {
+  try {
+    await copyTextToClipboard(String(id))
+    ElMessage.success({ message: t('common.copied'), grouping: true })
+  } catch {
+    ElMessage.error({ message: t('common.copyFailed'), grouping: true })
+  }
 }
 
 function closeDetail() {
@@ -368,9 +412,9 @@ watch(
               <template #default="{ row }">
                 <div
                   class="hfl-ops-cell-stack__title"
-                  :class="{ 'hfl-empty-mark': logPolicyName(row) === t('common.empty') }"
+                  :class="{ 'hfl-empty-mark': !logPolicyName(row) }"
                 >
-                  {{ logPolicyName(row) }}
+                  {{ logPolicyName(row) || t('common.empty') }}
                 </div>
                 <div class="hfl-ops-cell-stack__meta">
                   <AlertPolicyTypeLabel :type="logPolicyTypeValue(row)" />
@@ -440,7 +484,7 @@ watch(
                     v-else-if="row.status === 'failed'"
                     class="hfl-ops-result-tag__icon"
                   />
-                  {{ displayValue(row.status) }}
+                  {{ statusDisplayValue(row.status) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -518,12 +562,24 @@ watch(
         <div class="hfl-detail-sections">
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
-              {{ t('ops.notification.logDetail') }}
+              {{ t('ops.notification.basicInfo') }}
             </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.colId') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-mono">{{ selected.id }}</span>
+                <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
+                  <span class="hfl-detail-row__text">{{ selected.id }}</span>
+                  <el-button
+                    text
+                    circle
+                    size="small"
+                    class="hfl-detail-row__edit"
+                    :title="t('common.copy')"
+                    @click="copyDeliveryId(selected.id)"
+                  >
+                    <Copy :size="13" />
+                  </el-button>
+                </span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsNotificationType') }}</span>
@@ -548,7 +604,7 @@ watch(
                       v-else-if="selected.status === 'failed'"
                       class="hfl-ops-result-tag__icon"
                     />
-                    {{ displayValue(selected.status) }}
+                    {{ statusDisplayValue(selected.status) }}
                   </el-tag>
                 </span>
               </div>
@@ -563,49 +619,26 @@ watch(
               </div>
               <div class="hfl-detail-row hfl-detail-row--full">
                 <span class="hfl-detail-row__label">{{ t('ops.notification.logsResult') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--break">
-                  <span :class="selected.errorMessage || selected.error_message ? 'hfl-detail-row__text' : 'hfl-empty-mark'">
-                    {{ selected.errorMessage || selected.error_message || t('common.empty') }}
-                  </span>
-                </span>
+                <span
+                  class="hfl-detail-row__value hfl-detail-row__value--break"
+                  :class="{ 'hfl-detail-row__empty': !(selected.errorMessage || selected.error_message) }"
+                >{{ selected.errorMessage || selected.error_message || t('common.empty') }}</span>
               </div>
             </div>
           </section>
 
-          <section class="hfl-detail-section">
+          <section
+            v-if="hasAlertInfo(selected)"
+            class="hfl-detail-section"
+          >
             <h4 class="hfl-detail-section__title">
-              {{ t('ops.alertsCenter.common.resourcesAndChannels') }}
+              {{ t('ops.notification.logsAlert') }}
             </h4>
             <div class="hfl-detail-grid">
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.notification.logsChannel') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': !selected.channel?.name }"
-                >{{ displayValue(selected.channel?.name) }}</span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.notification.colType') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': !selected.channel?.type }"
-                >{{ displayValue(selected.channel?.type) }}</span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.notification.logsPolicy') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': logPolicyName(selected) === t('common.empty') }"
-                >{{ logPolicyName(selected) }}</span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': logPolicyType(selected) === t('common.empty') }"
-                >{{ logPolicyType(selected) }}</span>
-              </div>
-              <div class="hfl-detail-row">
+              <div
+                v-if="logSeverity(selected)"
+                class="hfl-detail-row"
+              >
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.severity') }}</span>
                 <span class="hfl-detail-row__value">
                   <el-tag
@@ -616,20 +649,75 @@ watch(
                   </el-tag>
                 </span>
               </div>
-              <div class="hfl-detail-row">
+              <div
+                v-if="logResourceType(selected)"
+                class="hfl-detail-row"
+              >
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': logResourceSummary(selected) === t('common.empty') }"
-                >{{ logResourceSummary(selected) }}</span>
-              </div>
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">{{ t('ops.notification.logsAlert') }}</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--break">
-                  <span :class="logAlertTitle(selected) !== '—' ? 'hfl-detail-row__text' : 'hfl-empty-mark'">
-                    {{ logAlertTitle(selected) }}
-                  </span>
+                <span class="hfl-detail-row__value">
+                  {{ resourceTypeLabel(logResourceType(selected)) }}
                 </span>
+              </div>
+              <div
+                v-if="logResourceName(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.resource') }}</span>
+                <span class="hfl-detail-row__value hfl-table-cell-mono">
+                  {{ logResourceName(selected) }}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section
+            v-if="hasPolicyInfo(selected)"
+            class="hfl-detail-section"
+          >
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.notification.logsPolicy') }}
+            </h4>
+            <div class="hfl-detail-grid">
+              <div
+                v-if="logPolicyName(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.name') }}</span>
+                <span class="hfl-detail-row__value">{{ logPolicyName(selected) }}</span>
+              </div>
+              <div
+                v-if="logPolicyTypeValue(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.alertType') }}</span>
+                <span class="hfl-detail-row__value">
+                  <AlertPolicyTypeLabel :type="logPolicyTypeValue(selected)" />
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section
+            v-if="hasChannelInfo(selected)"
+            class="hfl-detail-section"
+          >
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.notification.logsChannel') }}
+            </h4>
+            <div class="hfl-detail-grid">
+              <div
+                v-if="logChannelName(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.name') }}</span>
+                <span class="hfl-detail-row__value">{{ logChannelName(selected) }}</span>
+              </div>
+              <div
+                v-if="logChannelType(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.notification.colType') }}</span>
+                <span class="hfl-detail-row__value">{{ channelTypeLabel(logChannelType(selected)) }}</span>
               </div>
             </div>
           </section>

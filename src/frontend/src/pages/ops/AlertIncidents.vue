@@ -2,15 +2,17 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, RefreshCw, Search, X } from 'lucide-vue-next'
+import { Check, ChevronDown, Copy, RefreshCw, Search, X } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
 import HflTablePanel from '../../components/HflTablePanel.vue'
 import AlertPolicyTypeLabel from '../../components/AlertPolicyTypeLabel.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
+import { useAlertPolicyLabels } from '../../composables/useAlertPolicyLabels'
 import { useDebouncedAction } from '../../composables/useDebouncedAction'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
+import { copyTextToClipboard } from '../../lib/clipboard'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { apiErrorMessage } from '../../lib/api'
 import { alertStatusTagAttrs, severityStatusTagAttrs } from '../../lib/statusTag'
@@ -22,10 +24,11 @@ import {
   type AlertRecord,
 } from '../../lib/alertApi'
 
-const { t, te } = useI18n()
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const opsMenus = useOpsMenus()
+const { policyTypeOptions, resourceTypeLabel } = useAlertPolicyLabels()
 const { drawerSize: detailDrawerSize } = useResponsiveDrawerWidth()
 const { schedule: scheduleFilterSearch, runNow: runFilterSearch } = useDebouncedAction(() => applyFilters())
 
@@ -64,24 +67,36 @@ const batchResolveDisabled = computed(() => (
   batchActionLoading.value || !selectedAlerts.value.some((row) => row.status !== 'resolved')
 ))
 
-function formatDate(value?: string) {
-  return formatLocalDateTime(value, '—')
+function formatDate(value?: string | null) {
+  return formatLocalDateTime(value, t('common.empty'))
 }
 
 function duration(alert: AlertRecord) {
   const sec = alert.durationSeconds ?? alert.duration_seconds
-  if (sec == null) return '—'
+  if (sec == null) return t('common.empty')
   const minutes = Math.floor(sec / 60)
   const seconds = sec % 60
   return `${minutes}m ${seconds}s`
 }
 
+function alertResourceName(alert: AlertRecord) {
+  return String(alert.resourceName || alert.resource_name || '').trim()
+}
+
+function alertResourceType(alert: AlertRecord) {
+  return String(alert.resourceType || alert.resource_type || '').trim()
+}
+
+function alertResourceId(alert: AlertRecord) {
+  return String(alert.resourceId || alert.resource_id || '').trim()
+}
+
 function resourceLabel(alert: AlertRecord) {
-  return alert.resourceName || alert.resource_name || alert.resourceType || alert.resource_type || '—'
+  return alertResourceName(alert) || alertResourceType(alert) || t('common.empty')
 }
 
 function hasResourceLabel(alert: AlertRecord) {
-  return Boolean(alert.resourceName || alert.resource_name || alert.resourceType || alert.resource_type)
+  return Boolean(alertResourceName(alert) || alertResourceType(alert))
 }
 
 function alertTitleMeta(alert: AlertRecord) {
@@ -95,18 +110,6 @@ function severityLabel(severity?: string | null) {
   return translated !== key ? translated : severity
 }
 
-function typeLabel(type?: string | null) {
-  if (!type) return '—'
-  const key = `ops.alertsCenter.policyTypes.${type}`
-  return te(key) ? t(key) : type
-}
-
-function resourceTypeLabel(type?: string | null) {
-  if (!type) return t('common.empty')
-  const key = `ops.alertsCenter.resourceTypes.${type}`
-  return te(key) ? t(key) : type
-}
-
 function alertNumericValue(value?: number | null) {
   return value === null || value === undefined ? t('common.empty') : String(value)
 }
@@ -116,6 +119,43 @@ function statusLabel(status: string) {
   if (status === 'acknowledged') return t('ops.alertsCenter.active.acknowledged')
   if (status === 'resolved') return t('ops.alerts.status.resolved')
   return status
+}
+
+function triggeredAt(alert: AlertRecord) {
+  return alert.firstTriggeredAt || alert.first_triggered_at || alert.createdAt || alert.created_at || null
+}
+
+function lastTriggeredAt(alert: AlertRecord) {
+  return alert.lastTriggeredAt || alert.last_triggered_at || null
+}
+
+function showLastTriggered(alert: AlertRecord) {
+  const last = lastTriggeredAt(alert)
+  if (!last) return false
+  const first = triggeredAt(alert)
+  return !first || last !== first
+}
+
+function hasTargetSection(alert: AlertRecord) {
+  return Boolean(alertResourceType(alert) || alertResourceName(alert) || alertResourceId(alert))
+}
+
+function hasMetricValues(alert: AlertRecord) {
+  return (alert.currentValue ?? alert.current_value) != null
+    || (alert.thresholdValue ?? alert.threshold_value) != null
+}
+
+function alertMessage(alert: AlertRecord) {
+  return String(alert.message || '').trim()
+}
+
+async function copyIncidentId(id: string) {
+  try {
+    await copyTextToClipboard(id)
+    ElMessage.success({ message: t('common.copied'), grouping: true })
+  } catch {
+    ElMessage.error({ message: t('common.copyFailed'), grouping: true })
+  }
 }
 
 async function fetchAlerts() {
@@ -405,24 +445,10 @@ watch(
             :placeholder="t('ops.alertsCenter.common.allTypes')"
           >
             <el-option
-              value="metric"
-              :label="t('ops.alertsCenter.policyTypes.metric')"
-            />
-            <el-option
-              value="availability"
-              :label="t('ops.alertsCenter.policyTypes.availability')"
-            />
-            <el-option
-              value="task"
-              :label="t('ops.alertsCenter.policyTypes.task')"
-            />
-            <el-option
-              value="event"
-              :label="t('ops.alertsCenter.policyTypes.event')"
-            />
-            <el-option
-              value="system"
-              :label="t('ops.alertsCenter.policyTypes.system')"
+              v-for="opt in policyTypeOptions"
+              :key="opt.value"
+              :value="opt.value"
+              :label="opt.label"
             />
           </el-select>
           <el-select
@@ -534,7 +560,7 @@ watch(
               </template>
             </el-table-column>
             <el-table-column
-              :label="t('ops.alertsCenter.common.type')"
+              :label="t('ops.alertsCenter.policies.alertType')"
               width="130"
             >
               <template #default="{ row }">
@@ -632,14 +658,19 @@ watch(
             </h4>
             <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.status') }}</span>
-                <span class="hfl-detail-row__value">
-                  <el-tag
-                    v-bind="alertStatusTagAttrs(selected.status)"
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.id') }}</span>
+                <span class="hfl-detail-row__value hfl-detail-row__value--editable hfl-detail-row__value--mono">
+                  <span class="hfl-detail-row__text">{{ selected.id }}</span>
+                  <el-button
+                    text
+                    circle
                     size="small"
+                    class="hfl-detail-row__edit"
+                    :title="t('common.copy')"
+                    @click="copyIncidentId(selected.id)"
                   >
-                    {{ statusLabel(selected.status) }}
-                  </el-tag>
+                    <Copy :size="13" />
+                  </el-button>
                 </span>
               </div>
               <div class="hfl-detail-row">
@@ -654,100 +685,137 @@ watch(
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.type') }}</span>
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.alertType') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="{ 'hfl-detail-row__empty': !selected.type }"
-                >{{ typeLabel(selected.type) }}</span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.id') }}</span>
-                <span class="hfl-detail-row__value hfl-table-cell-mono">{{ selected.id }}</span>
-              </div>
-              <div class="hfl-detail-row hfl-detail-row--full">
-                <span class="hfl-detail-row__label">Message</span>
-                <span class="hfl-detail-row__value hfl-detail-row__value--break">
-                  <span :class="selected.message ? 'hfl-detail-row__text' : 'hfl-empty-mark'">
-                    {{ selected.message || t('common.empty') }}
-                  </span>
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <section class="hfl-detail-section">
-            <h4 class="hfl-detail-section__title">
-              {{ t('ops.alertsCenter.common.resource') }}
-            </h4>
-            <div class="hfl-detail-grid">
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': !(selected.resourceType || selected.resource_type) }"
-                >{{ resourceTypeLabel(selected.resourceType || selected.resource_type) }}</span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.resource') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="hasResourceLabel(selected) ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
                 >
-                  {{ resourceLabel(selected) }}
+                  <AlertPolicyTypeLabel
+                    v-if="selected.type"
+                    :type="selected.type"
+                  />
+                  <template v-else>{{ t('common.empty') }}</template>
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.task.resourceId') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="selected.resourceId || selected.resource_id ? 'hfl-table-cell-mono' : 'hfl-empty-mark'"
-                >
-                  {{ selected.resourceId || selected.resource_id || t('common.empty') }}
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.status') }}</span>
+                <span class="hfl-detail-row__value">
+                  <el-tag
+                    v-bind="alertStatusTagAttrs(selected.status)"
+                    size="small"
+                  >
+                    {{ statusLabel(selected.status) }}
+                  </el-tag>
                 </span>
-              </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.duration') }}</span>
-                <span
-                  class="hfl-detail-row__value"
-                  :class="{ 'hfl-detail-row__empty': (selected.durationSeconds ?? selected.duration_seconds) == null }"
-                >{{ duration(selected) }}</span>
               </div>
               <div class="hfl-detail-row">
                 <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.active.firstTriggered') }}</span>
                 <span
                   class="hfl-detail-row__value hfl-table-cell-time"
-                  :class="{ 'hfl-detail-row__empty': !(selected.firstTriggeredAt || selected.first_triggered_at) }"
+                  :class="{ 'hfl-detail-row__empty': !triggeredAt(selected) }"
                 >
-                  {{ formatDate(selected.firstTriggeredAt || selected.first_triggered_at) }}
+                  {{ formatDate(triggeredAt(selected)) }}
                 </span>
               </div>
-              <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.updatedAt') }}</span>
+              <div
+                v-if="showLastTriggered(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('platformOps.monitoring.lastTriggered') }}</span>
+                <span class="hfl-detail-row__value hfl-table-cell-time">
+                  {{ formatDate(lastTriggeredAt(selected)) }}
+                </span>
+              </div>
+              <div class="hfl-detail-row hfl-detail-row--full">
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.duration') }}</span>
                 <span
-                  class="hfl-detail-row__value hfl-table-cell-time"
-                  :class="{ 'hfl-detail-row__empty': !(selected.lastTriggeredAt || selected.last_triggered_at || selected.createdAt || selected.created_at) }"
-                >
-                  {{ formatDate(selected.lastTriggeredAt || selected.last_triggered_at || selected.createdAt || selected.created_at) }}
+                  class="hfl-detail-row__value"
+                  :class="{ 'hfl-detail-row__empty': (selected.durationSeconds ?? selected.duration_seconds) == null }"
+                >{{ duration(selected) }}</span>
+              </div>
+            </div>
+          </section>
+
+          <section
+            v-if="alertMessage(selected)"
+            class="hfl-detail-section"
+          >
+            <h4 class="hfl-detail-section__title">
+              {{ t('platformOps.monitoring.description') }}
+            </h4>
+            <div class="hfl-detail-grid">
+              <div class="hfl-detail-row hfl-detail-row--full">
+                <span class="hfl-detail-row__value hfl-detail-row__value--break">
+                  {{ alertMessage(selected) }}
                 </span>
               </div>
+            </div>
+          </section>
+
+          <section
+            v-if="hasTargetSection(selected)"
+            class="hfl-detail-section"
+          >
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.editor.sectionTarget') }}
+            </h4>
+            <div class="hfl-detail-grid">
+              <div
+                v-if="alertResourceType(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.policies.targetColumn') }}</span>
+                <span class="hfl-detail-row__value">
+                  {{ resourceTypeLabel(alertResourceType(selected)) }}
+                </span>
+              </div>
+              <div
+                v-if="alertResourceName(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.resource') }}</span>
+                <span class="hfl-detail-row__value hfl-table-cell-mono">
+                  {{ alertResourceName(selected) }}
+                </span>
+              </div>
+              <div
+                v-if="alertResourceId(selected)"
+                class="hfl-detail-row"
+              >
+                <span class="hfl-detail-row__label">{{ t('ops.task.resourceId') }}</span>
+                <span class="hfl-detail-row__value hfl-table-cell-mono">
+                  {{ alertResourceId(selected) }}
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section
+            v-if="hasMetricValues(selected)"
+            class="hfl-detail-section"
+          >
+            <h4 class="hfl-detail-section__title">
+              {{ t('ops.alertsCenter.editor.fieldMetric') }}
+            </h4>
+            <div class="hfl-detail-grid">
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">Current</span>
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.common.current') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="{ 'hfl-detail-row__empty': (selected.currentValue ?? selected.current_value) == null }"
                 >
                   {{ alertNumericValue(selected.currentValue ?? selected.current_value) }}
-                  <template v-if="selected.unit"> {{ selected.unit }}</template>
+                  <template v-if="selected.unit && (selected.currentValue ?? selected.current_value) != null"> {{ selected.unit }}</template>
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">Threshold</span>
+                <span class="hfl-detail-row__label">{{ t('ops.alertsCenter.editor.fieldThreshold') }}</span>
                 <span
                   class="hfl-detail-row__value"
                   :class="{ 'hfl-detail-row__empty': (selected.thresholdValue ?? selected.threshold_value) == null }"
                 >
                   {{ alertNumericValue(selected.thresholdValue ?? selected.threshold_value) }}
-                  <template v-if="selected.unit"> {{ selected.unit }}</template>
+                  <template v-if="selected.unit && (selected.thresholdValue ?? selected.threshold_value) != null"> {{ selected.unit }}</template>
                 </span>
               </div>
             </div>
