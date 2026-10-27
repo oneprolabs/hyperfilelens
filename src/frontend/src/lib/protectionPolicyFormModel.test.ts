@@ -50,6 +50,13 @@ function policyWithSchedule(schedule: BackupPolicy['schedule']): BackupPolicy {
 }
 
 describe('protection policy schedule mapping', () => {
+  it('defaults a new policy to the browser timezone and preserves it on save', () => {
+    const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const form = createEmptyPolicyForm()
+    expect(form.scheduleTimezone).toBe(browserTimezone)
+    expect(policyFormToWritePayload(form).schedule.timezone).toBe(browserTimezone)
+  })
+
   it('uses the nearest enabled retention tier for independent retention descriptions', () => {
     const form = createEmptyPolicyForm()
 

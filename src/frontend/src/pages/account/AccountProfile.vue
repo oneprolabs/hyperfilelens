@@ -26,7 +26,6 @@ type AccountUserDetails = {
   registeredAt?: string | null
   security_audit?: SecurityAudit | null
   securityAudit?: SecurityAudit | null
-  timezone?: string | null
 }
 
 const { t } = useI18n()
@@ -94,8 +93,6 @@ const lastLoginLocationRaw = ref('')
 const LOCAL_NETWORK_LOCATION_CODES = new Set(['local_network', 'Local network'])
 
 const lastLoginLocation = computed(() => formatLoginLocation(lastLoginLocationRaw.value))
-
-const userTimezone = computed(() => user.value?.timezone || 'Asia/Shanghai')
 
 const passwordStrength = computed(() => {
   const pwd = newPassword.value
@@ -204,9 +201,9 @@ function pickRegisteredAt(data: AccountUserDetails) {
   return data.registered_at ?? data.registeredAt
 }
 
-function formatDateTime(value?: string | null, timeZone?: string) {
+function formatDateTime(value?: string | null) {
   if (!value) return ''
-  return formatAppDateTime(value, '', { timeZone: timeZone || userTimezone.value })
+  return formatAppDateTime(value, '')
 }
 
 function displayValue(value?: string | null) {
@@ -239,10 +236,9 @@ async function loadAccountDetails() {
     if (requestId !== accountDetailsRequest) return
     hasUsablePassword.value = data.has_usable_password ?? null
     passwordResetAvailable.value = data.password_reset_available === true
-    const tz = data.timezone || userTimezone.value
-    registeredAt.value = displayValue(formatDateTime(pickRegisteredAt(data), tz))
+    registeredAt.value = displayValue(formatDateTime(pickRegisteredAt(data)))
     const audit = pickAudit(data)
-    lastLoginAt.value = displayValue(formatDateTime(pickAuditValue(audit, 'last_login_at', 'lastLoginAt'), tz))
+    lastLoginAt.value = displayValue(formatDateTime(pickAuditValue(audit, 'last_login_at', 'lastLoginAt')))
     lastLoginIp.value = displayValue(pickAuditValue(audit, 'last_login_ip', 'lastLoginIp'))
     lastLoginLocationRaw.value = pickAuditValue(audit, 'last_login_location', 'lastLoginLocation')
   } catch {
