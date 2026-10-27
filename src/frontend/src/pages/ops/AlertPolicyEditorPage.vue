@@ -6,7 +6,12 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ArrowLeft, BellRing, CircleAlert, Info, RefreshCw, TriangleAlert } from 'lucide-vue-next'
-import { useAlertPolicyLabels } from '../../composables/useAlertPolicyLabels'
+import {
+  DEFAULT_ALERT_POLICY_TYPE,
+  defaultResourceTypeFor,
+  isAllowedAlertResourceType,
+  useAlertPolicyLabels,
+} from '../../composables/useAlertPolicyLabels'
 import {
   createPolicy,
   fetchMetadata,
@@ -14,11 +19,20 @@ import {
   getPolicy,
   updatePolicy,
 } from '../../lib/alertApi'
+import {
+  defaultUnitForMetric,
+  isByteMetric,
+  metricsForResourceType,
+  normalizeMetricCatalog,
+  orderMetricKeys,
+  unitsForMetric,
+} from '../../lib/alertMetricCatalog'
 import { listChannels } from '../../lib/notificationApi'
 import { apiErrorMessageI18n } from '../../lib/api'
 import { toApiError } from '../../lib/errors'
 import {
   createPlatformAlertPolicy,
+  fetchPlatformAlertMetadataMetrics,
   fetchPlatformAlertMetadataResources,
   fetchPlatformAlertPolicy,
   listPlatformNotificationChannelOptions,
@@ -31,6 +45,7 @@ import {
   triggerValidationSpecs,
 } from './alertPolicyValidation'
 import { hasNumericRecovery, inverseOperator, recoveryKind, switchRecovery, switchTrigger } from './alertPolicyRecovery'
+import { triggerSummary } from './alertTriggerPresentation'
 
 export type AlertPolicyFormState = {
   name: string
@@ -50,7 +65,7 @@ function defaultForm(): AlertPolicyFormState {
   return {
     name: '',
     description: '',
-    type: 'metric',
+    type: DEFAULT_ALERT_POLICY_TYPE,
     severity: 'warning',
     enabled: true,
     resourceType: 'system',
@@ -84,11 +99,110 @@ function defaultForm(): AlertPolicyFormState {
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const { policyTypeLabel, policyTypeOptions, policyTypeDescription, resourceTypeOptions, resourceTypeLabel, resourceTypeDescription } = useAlertPolicyLabels()
 const PREVIEW_EMPTY_VALUE = '—'
 
 /** Admin Console Alerting reuses this editor for platform-owned alert rules. */
 const isPlatformOps = computed(() => route.path.startsWith('/platform-ops/'))
+const {
+  policyTypeLabel,
+  policyTypeOptions,
+  policyTypeDescription,
+  resourceTypeLabel,
+  resourceTypeDescription,
+  resourceTypeOptionsFor,
+  metricLabel,
+  healthCheckLabel,
+  taskTypeLabel,
+  taskEventLabel,
+  eventCategoryLabel,
+  eventTypeLabel,
+} = useAlertPolicyLabels({
+  platform: isPlatformOps,
+})
+const metricOptions = computed(() =>
+  metricKeys.value.map((value) => ({
+    value,
+    label: metricLabel(value),
+  })),
+)
+const healthCheckOptions = computed(() =>
+  healthCheckTypes.value.map((value) => ({
+    value,
+    label: healthCheckLabel(value),
+  })),
+)
+const taskTypeOptions = computed(() =>
+  taskTypes.value.map((value) => ({
+    value,
+    label: taskTypeLabel(value),
+  })),
+)
+const taskEventOptions = computed(() =>
+  taskEventTypes.value.map((value) => ({
+    value,
+    label: taskEventLabel(value),
+  })),
+)
+const eventCategoryOptions = computed(() =>
+  eventCategories.value.map((value) => ({
+    value,
+    label: eventCategoryLabel(value),
+  })),
+)
+const platformEventOptions = computed(() =>
+  (eventTypesByCategory.value[eventCategory.value] || []).map((value) => ({
+    value,
+    label: eventTypeLabel(value),
+  })),
+)
+function metricUnitDisplay(unit?: string | null): string {
+  if (unit === '%') return t('ops.alertsCenter.editor.unitPercent')
+  if (unit === 'B') return t('ops.alertsCenter.editor.unitBytes')
+  if (unit === 'MiB') return t('ops.alertsCenter.editor.unitMib')
+  if (unit === 'GiB') return t('ops.alertsCenter.editor.unitGib')
+  if (unit === 'TiB') return t('ops.alertsCenter.editor.unitTib')
+  if (!unit) return t('ops.alertsCenter.editor.unitNone')
+  return unit
+}
+
+const metricUnitChoices = computed(() =>
+  unitsForMetric(String(metricKey.value || '')).map((value) => ({
+    value,
+    label: metricUnitDisplay(value),
+  })),
+)
+const metricUnitSelectable = computed(() =>
+  isByteMetric(String(metricKey.value || '')),
+)
+const showMetricUnitField = computed(() => {
+  if (form.type !== 'metric') return false
+  // Load average / file count have no unit—hide the field instead of showing "None".
+  return metricUnitSelectable.value || !!defaultUnitForMetric(String(metricKey.value || ''))
+})
+const metricUnitLabel = computed(() =>
+  metricUnitDisplay(String(metricUnit.value ?? defaultUnitForMetric(String(metricKey.value || '')))),
+)
+
+function syncMetricUnit(metric = String(metricKey.value || '')) {
+  const allowed = unitsForMetric(metric)
+  if (!allowed.includes(String(metricUnit.value ?? ''))) {
+    metricUnit.value = defaultUnitForMetric(metric)
+  }
+}
+/** Per Alert Type: only applicable Resource Types, in canonical product order. */
+const selectableResourceTypeOptions = computed(() => {
+  const options = resourceTypeOptionsFor(form.type)
+  if (
+    form.resourceType
+    && !options.some((opt) => opt.value === form.resourceType)
+  ) {
+    return [
+      ...options,
+      { value: form.resourceType, label: resourceTypeLabel(form.resourceType) },
+    ]
+  }
+  return options
+})
 const listPath = computed(() => (
   isPlatformOps.value
     ? '/platform-ops/alert-center/policies'
@@ -141,7 +255,7 @@ const metricCatalogHint = computed(() => {
   if (!metricKeys.value.includes(String(metricKey.value))) return t('ops.alertsCenter.editor.metricSelectAvailable')
   return ''
 })
-const metadataKinds = ['task-types', 'event-types', 'availability-check-types', 'system-check-types'] as const
+const metadataKinds = ['task-types', 'event-types', 'health-check-types'] as const
 type MetadataKind = typeof metadataKinds[number]
 const metadataState = reactive(Object.fromEntries(metadataKinds.map(kind => [
   kind, { status: 'loading' as 'loading' | 'ready' | 'error' | 'empty', request: 0 },
@@ -149,8 +263,7 @@ const metadataState = reactive(Object.fromEntries(metadataKinds.map(kind => [
 const requiredMetadataKinds = computed<MetadataKind[]>(() => {
   if (form.type === 'task') return ['task-types', 'event-types']
   if (form.type === 'event') return ['event-types']
-  if (form.type === 'availability') return ['availability-check-types']
-  if (form.type === 'system') return ['system-check-types']
+  if (form.type === 'health' || form.type === 'availability') return ['health-check-types']
   return []
 })
 function metadataStatus(kind: MetadataKind) {
@@ -165,13 +278,17 @@ const metadataSelectionValid = computed(() => {
   const rule = form.triggerRule
   if (form.type === 'task') return taskTypes.value.includes(String(rule.task_type))
     && taskEventTypes.value.includes(String(rule.event_type))
-  if (form.type === 'availability') return availabilityCheckTypes.value.includes(String(rule.check_type))
-  if (form.type === 'system') return systemCheckTypes.value.includes(String(rule.check_type))
+  if (form.type === 'health' || form.type === 'availability') {
+    return healthCheckTypes.value.includes(String(rule.check_type))
+  }
   if (form.type === 'event') {
     const selected = rule.event_types
     const allowed = eventTypesByCategory.value[String(rule.event_category)] || []
-    return eventCategories.value.includes(String(rule.event_category))
-      && Array.isArray(selected) && selected.length > 0 && selected.every(item => allowed.includes(item))
+    // Empty selection is a normal create-time state; form rules validate on save.
+    // Only reject values that are outside the loaded catalog.
+    if (!eventCategories.value.includes(String(rule.event_category))) return false
+    if (!Array.isArray(selected) || selected.length === 0) return true
+    return selected.every(item => allowed.includes(String(item)))
   }
   return true
 })
@@ -182,7 +299,7 @@ const metadataConfigurationBlocked = computed(() =>
 function metadataLabel(kind: MetadataKind) {
   const labels = {
     'task-types': 'taskType', 'event-types': form.type === 'task' ? 'eventType' : 'eventCategory',
-    'availability-check-types': 'checkType', 'system-check-types': 'checkType',
+    'health-check-types': 'checkType',
   }
   return t(`ops.alertsCenter.editor.${labels[kind]}`)
 }
@@ -193,8 +310,7 @@ function metadataMessage(kind: MetadataKind) {
 }
 const taskTypes = ref<string[]>([])
 const taskEventTypes = ref<string[]>([])
-const availabilityCheckTypes = ref<string[]>([])
-const systemCheckTypes = ref<string[]>([])
+const healthCheckTypes = ref<string[]>([])
 const eventCategories = ref<string[]>([])
 const eventTypesByCategory = ref<Record<string, string[]>>({})
 
@@ -204,6 +320,14 @@ const pageTitle = computed(() =>
   editingId.value
     ? t('ops.alertsCenter.policies.editTitle')
     : t('ops.alertsCenter.common.createAlertPolicy'),
+)
+const pageSubtitle = computed(() =>
+  editingId.value
+    ? t('ops.alertsCenter.policies.editSubtitle')
+    : t('ops.alertsCenter.policies.createSubtitle'),
+)
+const submitLabel = computed(() =>
+  editingId.value ? t('common.save') : t('common.add'),
 )
 
 const durationOptions = computed(() => [
@@ -215,15 +339,20 @@ const durationOptions = computed(() => [
   { value: 1800, label: t('ops.alertsCenter.editor.duration30m') },
 ])
 
-const scopeOptions = computed(() => [
-  { value: 'all', label: t('ops.alertsCenter.editor.scopeAll') },
-  { value: 'selected', label: t('ops.alertsCenter.editor.scopeSelected') },
-])
-
-const yesNoOptions = computed(() => [
-  { value: true, label: t('ops.alertsCenter.editor.yes') },
-  { value: false, label: t('ops.alertsCenter.editor.no') },
-])
+/** Control Plane and Event rules have no selectable instance list—Scope stays All. */
+const scopeSupportsSelection = computed(() =>
+  form.type !== 'event' && form.resourceType !== 'system',
+)
+const scopeOptions = computed(() => {
+  const options = [
+    { value: 'all', label: t('ops.alertsCenter.editor.scopeAll') },
+    { value: 'selected', label: t('ops.alertsCenter.editor.scopeSelected') },
+  ]
+  return scopeSupportsSelection.value ? options : options.filter((opt) => opt.value === 'all')
+})
+const showMonitoringResources = computed(() =>
+  form.scope === 'selected' && scopeSupportsSelection.value,
+)
 
 function triggerField<K extends string>(key: K, fallback: unknown = '') {
   return computed({
@@ -254,11 +383,9 @@ const taskType = triggerField('task_type', 'backup')
 const taskEventType = triggerField('event_type', 'task_failed')
 
 const checkType = triggerField('check_type', 'heartbeat')
-const availabilityTimeout = triggerField('timeout_seconds', 300)
-const availabilityDuration = triggerField('duration_seconds', 300)
-
-const systemCheckType = triggerField('check_type', 'service_health')
-const systemDuration = triggerField('duration_seconds', 300)
+const healthTimeout = triggerField('timeout_seconds', 300)
+const healthDuration = triggerField('duration_seconds', 300)
+const healthHeartbeat = computed(() => String(form.triggerRule.check_type || 'heartbeat') === 'heartbeat')
 
 const eventCategory = triggerField('event_category', 'configuration')
 const eventTypes = triggerField('event_types', [] as string[])
@@ -266,13 +393,13 @@ const eventTypes = triggerField('event_types', [] as string[])
 const recoveryEnabled = recoveryField('enabled', true)
 const recoveryOperator = computed({
   get: () => String(form.recoveryRule.operator || inverseOperator(
-    form.type === 'system' && form.triggerRule.check_type === 'disk_space_low' ? '>=' : form.triggerRule.operator,
+    form.triggerRule.operator,
   )),
   set: (value: string) => { form.recoveryRule.operator = value },
 })
 const recoveryThreshold = computed({
   get: () => Number(form.recoveryRule.threshold ?? form.triggerRule.threshold
-    ?? (form.type === 'system' && form.triggerRule.check_type === 'disk_space_low' ? 90 : 0)),
+    ?? 0),
   set: (value: number) => { form.recoveryRule.threshold = value },
 })
 const recoveryDuration = recoveryField('duration_seconds', 0)
@@ -300,12 +427,30 @@ function handleMergeEnabledChange(enabled: boolean) {
   })
 }
 
+function formatSecondsLabel(seconds: number) {
+  if (seconds % 3600 === 0) {
+    const hours = seconds / 3600
+    return hours === 1
+      ? t('ops.alertsCenter.editor.durationHour')
+      : t('ops.alertsCenter.editor.durationHours', { n: hours })
+  }
+  if (seconds % 60 === 0) {
+    const minutes = seconds / 60
+    return minutes === 1
+      ? t('ops.alertsCenter.editor.durationMinute')
+      : t('ops.alertsCenter.editor.durationMinutes', { n: minutes })
+  }
+  return seconds === 1
+    ? t('ops.alertsCenter.editor.durationSecond')
+    : t('ops.alertsCenter.editor.durationSecondsCount', { n: seconds })
+}
+
 function durationLabel(seconds?: unknown) {
   const value = Number(seconds)
   const match = durationOptions.value.find((item) => item.value === value)
   if (match) return match.label
   if (!Number.isFinite(value) || value <= 0) return '—'
-  return t('ops.alertsCenter.editor.previewForDuration', { duration: `${value}s` })
+  return formatSecondsLabel(value)
 }
 
 function boolLabel(value: unknown) {
@@ -355,9 +500,7 @@ const previewChannels = computed(() => {
 })
 
 const hasPreviewChannels = computed(() => previewChannels.value !== PREVIEW_EMPTY_VALUE)
-const monitoringResourcesRequired = computed(() =>
-  form.scope === 'selected' && form.type !== 'event' && form.resourceType !== 'system',
-)
+const monitoringResourcesRequired = computed(() => showMonitoringResources.value)
 const previewMonitoringResources = computed(() => {
   if (!monitoringResourcesRequired.value) return PREVIEW_EMPTY_VALUE
   const names = resourceOptions.value
@@ -416,26 +559,19 @@ const formRules = computed<FormRules>(() => ({
   ])),
 }))
 
-const previewTriggerText = computed(() => {
-  const rule = form.triggerRule
-  if (form.type === 'metric') {
-    return `${rule.metric_key || '—'} ${rule.operator || '>='} ${rule.threshold ?? '—'}${rule.unit || ''} ${durationLabel(rule.duration_seconds)}`
-  }
-  if (form.type === 'task') {
-    return `${rule.task_type || '—'} / ${rule.event_type || '—'}`
-  }
-  if (form.type === 'availability') {
-    return `${rule.check_type || 'heartbeat'} · ${durationLabel(rule.duration_seconds)}`
-  }
-  if (form.type === 'system') {
-    return `${rule.check_type || 'service_health'} · ${durationLabel(rule.duration_seconds)}`
-  }
-  if (form.type === 'event') {
-    const types = Array.isArray(rule.event_types) ? rule.event_types.join(', ') : '—'
-    return `${rule.event_category || '—'} · ${types}`
-  }
-  return '—'
-})
+const previewTriggerText = computed(() => triggerSummary(
+  form.type,
+  form.triggerRule,
+  t,
+  {
+    metricLabel,
+    healthCheckLabel,
+    taskTypeLabel,
+    taskEventLabel,
+    eventCategoryLabel,
+    eventTypeLabel,
+  },
+))
 
 const previewRecoveryText = computed(() => {
   const rule = form.recoveryRule
@@ -448,16 +584,37 @@ const previewRecoveryText = computed(() => {
   if (legacyNumericRecovery.value) return t('ops.alertsCenter.editor.recoveryTriggerCleared')
   const duration = Number(rule.duration_seconds || 0) === 0
     ? t('ops.alertsCenter.editor.recoveryImmediate') : durationLabel(rule.duration_seconds)
-  return `${recoveryOperator.value} ${recoveryThreshold.value} ${duration}`
+  const unit = String(form.triggerRule.unit || '')
+  const metric = metricLabel(String(form.triggerRule.metric_key || ''))
+  return `${metric} ${recoveryOperator.value} ${recoveryThreshold.value}${unit} ${duration}`
 })
 
-const previewBasicRows = computed(() => {
+const previewBasicsRows = computed(() => [
+  { label: t('ops.alertsCenter.policies.alertType'), value: policyTypeLabel(form.type) },
+  {
+    label: t('ops.alertsCenter.common.severity'),
+    value: severityLabel(form.severity),
+    severity: form.severity,
+    tone: severityTone(form.severity),
+  },
+  {
+    label: t('ops.alertsCenter.editor.fieldEnabled'),
+    value: form.enabled
+      ? t('ops.alertsCenter.editor.valueEnabled')
+      : t('ops.alertsCenter.editor.valueDisabled'),
+    tone: form.enabled ? 'success' : 'muted',
+  },
+])
+
+const previewTargetRows = computed(() => {
   const rows = [
-    { label: t('ops.alertsCenter.common.type'), value: policyTypeLabel(form.type) },
-    { label: t('ops.alertsCenter.common.severity'), value: severityLabel(form.severity), severity: form.severity, tone: severityTone(form.severity) },
     {
-      label: t('ops.alertsCenter.editor.previewTarget'),
-      value: `${resourceTypeLabel(form.resourceType)} / ${scopeLabel(form.scope)}`,
+      label: t('ops.alertsCenter.policies.targetColumn'),
+      value: resourceTypeLabel(form.resourceType),
+    },
+    {
+      label: t('ops.alertsCenter.policies.scope'),
+      value: scopeLabel(form.scope),
     },
   ]
   if (monitoringResourcesRequired.value) {
@@ -473,17 +630,53 @@ const previewBasicRows = computed(() => {
   return rows
 })
 
-const previewRuleRows = computed(() => [
+const previewTriggerRows = computed(() => [
   { label: t('ops.alertsCenter.editor.previewTrigger'), value: previewTriggerText.value },
+])
+
+const previewResolutionRows = computed(() => [
   {
     label: t('ops.alertsCenter.editor.previewAutoRecovery'),
-    value: legacyTaskRecovery.value ? t('ops.alertsCenter.editor.recoveryLegacyLabel') : displayedAutoRecovery.value
-      ? t('ops.alertsCenter.editor.valueEnabled')
-      : t('ops.alertsCenter.editor.valueDisabled'),
+    value: legacyTaskRecovery.value
+      ? t('ops.alertsCenter.editor.recoveryLegacyLabel')
+      : displayedAutoRecovery.value
+        ? t('ops.alertsCenter.editor.valueEnabled')
+        : t('ops.alertsCenter.editor.valueDisabled'),
     tone: displayedAutoRecovery.value && !legacyTaskRecovery.value ? 'success' : 'muted',
   },
-  { label: t('ops.alertsCenter.editor.previewRecovery'), value: form.recoveryRule.enabled === false
-    ? t('ops.alertsCenter.editor.recoveryManual') : previewRecoveryText.value },
+  {
+    label: t('ops.alertsCenter.editor.previewRecovery'),
+    value: form.recoveryRule.enabled === false
+      ? t('ops.alertsCenter.editor.recoveryManual')
+      : previewRecoveryText.value,
+  },
+])
+
+const previewNotificationRows = computed(() => [
+  {
+    label: t('ops.alertsCenter.policies.notificationChannels'),
+    value: previewChannels.value,
+    badge: true,
+    empty: !hasPreviewChannels.value,
+  },
+  {
+    label: t('ops.alertsCenter.editor.previewNotifyTimingLabel'),
+    value: t('ops.alertsCenter.editor.previewNotifyTiming', {
+      firing: boolLabel(form.recoveryRule.notify_on_firing),
+      resolved: boolLabel(form.recoveryRule.notify_on_resolved),
+    }),
+  },
+  {
+    label: t('ops.alertsCenter.editor.fieldRepeatInterval'),
+    value: silenceLabel(form.triggerRule.repeat_interval_seconds),
+  },
+  {
+    label: t('ops.alertsCenter.editor.fieldMergeNotification'),
+    value: form.triggerRule.merge_enabled
+      ? t('ops.alertsCenter.editor.valueEnabled')
+      : t('ops.alertsCenter.editor.valueDisabled'),
+    tone: form.triggerRule.merge_enabled ? 'success' : 'muted',
+  },
 ])
 
 async function loadChannels() {
@@ -579,6 +772,18 @@ function applyBackendTriggerErrors(error: unknown) {
   })
 }
 
+function markTriggerFieldError(spec: { path: string; field: string; labelKey: string }) {
+  void nextTick(() => {
+    const field = formRef.value?.getField(spec.path)
+    if (!field) return
+    field.validateState = 'error'
+    field.validateMessage = t('ops.alertsCenter.editor.validateTriggerRequired', {
+      field: t(spec.labelKey),
+    })
+  })
+  locateRequiredField(spec.field)
+}
+
 async function validateRequiredFields() {
   if (metricConfigurationBlocked.value) {
     locateRequiredField('metric_key')
@@ -588,23 +793,30 @@ async function validateRequiredFields() {
     locateRequiredField(form.type === 'task' ? 'task_type' : 'event_category')
     return false
   }
+  let formValid = true
   try {
     await formRef.value?.validate()
-    return true
   } catch {
-    if (!form.name.trim()) {
-      locateRequiredField('name')
-    } else if (monitoringResourcesRequired.value && form.resourceIds.length === 0) {
-      locateRequiredField('resources')
-    } else {
-      const missingTrigger = currentTriggerSpecs().find((spec) => {
-        const key = spec.path.slice('triggerRule.'.length)
-        return !isValidTriggerValue(form.triggerRule[key], spec.kind)
-      })
-      if (missingTrigger) locateRequiredField(missingTrigger.field)
-    }
+    formValid = false
+  }
+  if (!form.name.trim()) {
+    locateRequiredField('name')
     return false
   }
+  if (monitoringResourcesRequired.value && form.resourceIds.length === 0) {
+    locateRequiredField('resources')
+    return false
+  }
+  // Element Plus can treat [] as present for required rules; enforce trigger specs explicitly.
+  const missingTrigger = currentTriggerSpecs().find((spec) => {
+    const key = spec.path.slice('triggerRule.'.length)
+    return !isValidTriggerValue(form.triggerRule[key], spec.kind)
+  })
+  if (missingTrigger) {
+    markTriggerFieldError(missingTrigger)
+    return false
+  }
+  return formValid
 }
 
 async function savePolicy() {
@@ -654,7 +866,10 @@ async function loadMetadataKind(kind: MetadataKind) {
   const request = ++state.request
   state.status = 'loading'
   try {
-    const raw = await fetchMetadata(kind)
+    const raw = await fetchMetadata(
+      kind,
+      kind === 'health-check-types' && isPlatformOps.value ? { scope: 'platform' } : undefined,
+    )
     if (request !== state.request) return
     if (kind === 'event-types') {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid event catalog')
@@ -671,8 +886,7 @@ async function loadMetadataKind(kind: MetadataKind) {
     } else {
       if (!stringList(raw)) throw new Error('Invalid rule catalog')
       if (kind === 'task-types') taskTypes.value = raw
-      else if (kind === 'availability-check-types') availabilityCheckTypes.value = raw
-      else systemCheckTypes.value = raw
+      else if (kind === 'health-check-types') healthCheckTypes.value = raw
       state.status = raw.length ? 'ready' : 'empty'
     }
   } catch {
@@ -688,27 +902,41 @@ async function loadMetricKeys(resetInvalid = false) {
   const requestId = ++metricRequestId
   metricCatalogLoaded.value = false
   metricKeysError.value = false
-  if (form.type !== 'metric' && form.type !== 'system') {
+  if (form.type !== 'metric') {
     metricKeys.value = []
     metricKeysLoading.value = false
     return
   }
   metricKeysLoading.value = true
   metricKeys.value = []
-  try {
-    const raw = await fetchMetadata('metrics', { resource_type: form.resourceType })
-    if (requestId !== metricRequestId) return
-    if (!Array.isArray(raw) || !raw.every((value) => typeof value === 'string')) {
-      throw new Error('Invalid metric catalog')
-    }
-    metricKeys.value = raw as string[]
-    if (resetInvalid && form.type === 'metric' && !metricKeys.value.includes(String(metricKey.value))) {
+  const applyKeys = (keys: string[]) => {
+    metricKeys.value = orderMetricKeys(form.resourceType, keys)
+    if (resetInvalid && !metricKeys.value.includes(String(metricKey.value))) {
       metricKey.value = metricKeys.value[0] || ''
     }
+  }
+  try {
+    const raw = isPlatformOps.value
+      ? await fetchPlatformAlertMetadataMetrics(form.resourceType)
+      : await fetchMetadata('metrics', { resource_type: form.resourceType })
+    if (requestId !== metricRequestId) return
+    const keys = normalizeMetricCatalog(raw) ?? metricsForResourceType(form.resourceType)
+    if (!keys.length && !metricsForResourceType(form.resourceType).length) {
+      applyKeys([])
+      return
+    }
+    applyKeys(keys.length ? keys : metricsForResourceType(form.resourceType))
   } catch {
     if (requestId !== metricRequestId) return
-    metricKeys.value = []
-    metricKeysError.value = true
+    // Static catalog fallback: Admin Console / missing org must still be editable.
+    const fallback = metricsForResourceType(form.resourceType)
+    if (fallback.length) {
+      applyKeys(fallback)
+      metricKeysError.value = false
+    } else {
+      metricKeys.value = []
+      metricKeysError.value = true
+    }
   } finally {
     if (requestId === metricRequestId) {
       metricKeysLoading.value = false
@@ -718,7 +946,7 @@ async function loadMetricKeys(resetInvalid = false) {
 }
 
 async function loadResources() {
-  if (form.scope !== 'selected' || form.type === 'event' || !form.resourceType) {
+  if (!showMonitoringResources.value || !form.resourceType) {
     resourceOptions.value = []
     return
   }
@@ -749,16 +977,10 @@ function defaultTriggerRule(type: string): Record<string, unknown> {
       event_type: 'task_failed',
     }
   }
-  if (type === 'availability') {
+  if (type === 'health' || type === 'availability') {
     return {
       check_type: 'heartbeat',
       timeout_seconds: 300,
-      duration_seconds: 300,
-    }
-  }
-  if (type === 'system') {
-    return {
-      check_type: 'service_health',
       duration_seconds: 300,
     }
   }
@@ -781,13 +1003,20 @@ watch(
   (type, prev) => {
     if (type === prev || hydratingPolicy.value) return
     applyDefaultTriggerRule(type)
+    if (!isAllowedAlertResourceType(type, form.resourceType, isPlatformOps.value)) {
+      form.resourceType = defaultResourceTypeFor(type, isPlatformOps.value)
+    }
     void loadMetricKeys()
     if (!monitoringResourcesRequired.value) {
       formRef.value?.clearValidate('resourceIds')
     }
-    void nextTick(() => formRef.value?.clearValidate(
-      (triggerValidationSpecs[prev] || []).map((spec) => spec.path),
-    ))
+    void nextTick(() => {
+      const paths = [
+        ...(triggerValidationSpecs[prev] || []).map((spec) => spec.path),
+        ...currentTriggerSpecs().map((spec) => spec.path),
+      ]
+      formRef.value?.clearValidate(paths)
+    })
   },
 )
 
@@ -801,11 +1030,14 @@ watch(
 )
 
 watch(
-  () => [form.resourceType, form.scope] as const,
+  () => [form.resourceType, form.scope, form.type] as const,
   ([resourceType], previous) => {
     const resourceTypeChanged = resourceType !== previous?.[0]
     if (!hydratingPolicy.value) {
       form.resourceIds = []
+      if (!scopeSupportsSelection.value && form.scope !== 'all') {
+        form.scope = 'all'
+      }
     }
     void loadMetricKeys(resourceTypeChanged && !hydratingPolicy.value)
     void loadResources()
@@ -814,6 +1046,18 @@ watch(
     }
   },
 )
+
+watch(
+  () => String(metricKey.value || ''),
+  (key) => {
+    if (hydratingPolicy.value || form.type !== 'metric') return
+    syncMetricUnit(key)
+  },
+)
+
+watch(hydratingPolicy, (loading) => {
+  if (!loading && form.type === 'metric') syncMetricUnit()
+})
 
 watch(
   () => eventCategory.value,
@@ -870,7 +1114,7 @@ onBeforeUnmount(() => {
             {{ pageTitle }}
           </h1>
           <p class="fullscreen-form-header__desc">
-            {{ t('ops.alertsCenter.policies.createSubtitle') }}
+            {{ pageSubtitle }}
           </p>
         </div>
       </div>
@@ -884,6 +1128,7 @@ onBeforeUnmount(() => {
             ref="formRef"
             :model="form"
             :rules="formRules"
+            :validate-on-rule-change="false"
             class="fullscreen-form-el-form alert-policy-editor-form"
             label-position="top"
             require-asterisk-position="right"
@@ -894,9 +1139,6 @@ onBeforeUnmount(() => {
                   <span class="fullscreen-form-section__indicator" />
                   {{ t('ops.alertsCenter.editor.sectionBasic') }}
                 </h3>
-                <p class="fullscreen-form-section__subtitle">
-                  {{ t('ops.alertsCenter.editor.sectionBasicDesc') }}
-                </p>
                 <div class="fullscreen-form-grid">
                   <el-form-item
                     :label="t('ops.alertsCenter.common.name')"
@@ -957,14 +1199,13 @@ onBeforeUnmount(() => {
                     </p>
                   </el-form-item>
                   <el-form-item
-                    :label="t('ops.alertsCenter.common.status')"
+                    :label="t('ops.alertsCenter.editor.fieldEnabled')"
                     class="fullscreen-form-status-item"
                   >
-                    <el-switch
-                      v-model="form.enabled"
-                      :active-text="t('ops.alertsCenter.common.enabled')"
-                      :inactive-text="t('ops.alertsCenter.common.disabled')"
-                    />
+                    <el-switch v-model="form.enabled" />
+                    <p class="fullscreen-form-field__hint">
+                      {{ t('ops.alertsCenter.editor.fieldEnabledHint') }}
+                    </p>
                   </el-form-item>
                 </div>
                 <el-form-item
@@ -975,7 +1216,7 @@ onBeforeUnmount(() => {
                     v-model="form.description"
                     type="textarea"
                     :rows="3"
-                    :placeholder="t('ops.alertsCenter.policies.description')"
+                    :placeholder="t('ops.alertsCenter.policies.descriptionPlaceholder')"
                   />
                   <p class="fullscreen-form-field__hint">
                     {{ t('ops.alertsCenter.editor.fieldDescriptionHint') }}
@@ -988,9 +1229,6 @@ onBeforeUnmount(() => {
                   <span class="fullscreen-form-section__indicator" />
                   {{ t('ops.alertsCenter.editor.sectionTarget') }}
                 </h3>
-                <p class="fullscreen-form-section__subtitle">
-                  {{ t('ops.alertsCenter.editor.sectionTargetDesc') }}
-                </p>
                 <div class="fullscreen-form-grid">
                   <el-form-item
                     :label="t('ops.alertsCenter.policies.targetColumn')"
@@ -1001,27 +1239,17 @@ onBeforeUnmount(() => {
                       class="w-full"
                     >
                       <el-option
-                        v-for="opt in resourceTypeOptions"
+                        v-for="opt in selectableResourceTypeOptions"
                         :key="opt.value"
                         :value="opt.value"
                         :label="opt.label"
-                        :disabled="form.type === 'metric' && ['task', 'system_service'].includes(opt.value)"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldResourceTypeHint') }}
-                    </p>
-                    <p
-                      v-if="form.type === 'metric'"
-                      class="fullscreen-form-field__hint"
-                    >
-                      {{ t('ops.alertsCenter.editor.metricResourceHint') }}
-                    </p>
-                    <p
-                      v-if="resourceTypeDescription(form.resourceType)"
-                      class="fullscreen-form-field__hint"
-                    >
-                      {{ resourceTypeDescription(form.resourceType) }}
+                      {{
+                        resourceTypeDescription(form.resourceType)
+                          || t('ops.alertsCenter.editor.fieldResourceTypeHint')
+                      }}
                     </p>
                   </el-form-item>
                   <el-form-item
@@ -1031,6 +1259,7 @@ onBeforeUnmount(() => {
                     <el-select
                       v-model="form.scope"
                       class="w-full"
+                      :disabled="!scopeSupportsSelection"
                     >
                       <el-option
                         v-for="opt in scopeOptions"
@@ -1040,12 +1269,16 @@ onBeforeUnmount(() => {
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldScopeHint') }}
+                      {{
+                        scopeSupportsSelection
+                          ? t('ops.alertsCenter.editor.fieldScopeHint')
+                          : t('ops.alertsCenter.editor.fieldScopeFixedHint')
+                      }}
                     </p>
                   </el-form-item>
                 </div>
                 <el-form-item
-                  v-if="form.scope === 'selected' && form.type !== 'event'"
+                  v-if="showMonitoringResources"
                   :label="t('ops.alertsCenter.editor.fieldMonitoringResources')"
                   prop="resourceIds"
                   class="fullscreen-form-item--in-card mt-2"
@@ -1063,7 +1296,7 @@ onBeforeUnmount(() => {
                       popper-class="alert-policy-editor-resource-select-popper"
                       class="fullscreen-form-control-main alert-policy-editor-resource-select"
                       :loading="resourcesLoading"
-                      :placeholder="t('ops.alertsCenter.editor.fieldMonitoringResources')"
+                      :placeholder="t('ops.alertsCenter.editor.phMonitoringResources')"
                     >
                       <el-option
                         v-for="resource in resourceOptions"
@@ -1097,9 +1330,6 @@ onBeforeUnmount(() => {
                   <span class="fullscreen-form-section__indicator" />
                   {{ t('ops.alertsCenter.editor.sectionTrigger') }}
                 </h3>
-                <p class="fullscreen-form-section__subtitle">
-                  {{ t('ops.alertsCenter.editor.sectionTriggerDesc') }}
-                </p>
 
                 <div
                   v-if="form.type === 'metric'"
@@ -1116,13 +1346,14 @@ onBeforeUnmount(() => {
                       filterable
                       :loading="metricKeysLoading"
                       :disabled="!metricCatalogLoaded || metricKeysLoading || metricKeysError || !metricKeys.length"
+                      :placeholder="t('ops.alertsCenter.editor.phMetric')"
                       :no-data-text="metricCatalogHint"
                     >
                       <el-option
-                        v-for="key in metricKeys"
-                        :key="key"
-                        :value="key"
-                        :label="key"
+                        v-for="opt in metricOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
@@ -1150,6 +1381,7 @@ onBeforeUnmount(() => {
                     <el-select
                       v-model="metricOperator"
                       class="w-full"
+                      :placeholder="t('ops.alertsCenter.editor.phOperator')"
                     >
                       <el-option
                         v-for="op in operatorOptions"
@@ -1167,19 +1399,37 @@ onBeforeUnmount(() => {
                     prop="triggerRule.threshold"
                     data-alert-policy-field="threshold"
                   >
-                    <el-input-number
-                      v-model="metricThreshold"
-                      class="w-full"
-                      :min="0"
-                    />
+                    <div class="flex w-full items-center gap-2">
+                      <el-input-number
+                        v-model="metricThreshold"
+                        class="flex-1"
+                        :min="0"
+                      />
+                      <el-select
+                        v-if="metricUnitSelectable"
+                        v-model="metricUnit"
+                        class="alert-policy-editor-threshold-unit"
+                      >
+                        <el-option
+                          v-for="opt in metricUnitChoices"
+                          :key="opt.value || 'none'"
+                          :value="opt.value"
+                          :label="opt.label"
+                        />
+                      </el-select>
+                      <span
+                        v-else-if="showMetricUnitField"
+                        class="fullscreen-form-field__unit"
+                      >
+                        {{ metricUnitLabel }}
+                      </span>
+                    </div>
                     <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldThresholdHint') }}
-                    </p>
-                  </el-form-item>
-                  <el-form-item :label="t('ops.alertsCenter.editor.fieldUnit')">
-                    <el-input v-model="metricUnit" />
-                    <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldUnitHint') }}
+                      {{
+                        metricUnitSelectable
+                          ? t('ops.alertsCenter.editor.fieldThresholdUnitHint')
+                          : t('ops.alertsCenter.editor.fieldThresholdHint')
+                      }}
                     </p>
                   </el-form-item>
                   <el-form-item
@@ -1190,6 +1440,7 @@ onBeforeUnmount(() => {
                     <el-select
                       v-model="metricDuration"
                       class="w-full"
+                      :placeholder="t('ops.alertsCenter.editor.phDuration')"
                     >
                       <el-option
                         v-for="opt in durationOptions"
@@ -1210,6 +1461,7 @@ onBeforeUnmount(() => {
                     <el-select
                       v-model="metricInterval"
                       class="w-full"
+                      :placeholder="t('ops.alertsCenter.editor.phCheckInterval')"
                     >
                       <el-option
                         v-for="opt in durationOptions"
@@ -1238,12 +1490,13 @@ onBeforeUnmount(() => {
                       class="w-full"
                       :loading="metadataState['task-types'].status === 'loading'"
                       :disabled="metadataState['task-types'].status !== 'ready'"
+                      :placeholder="t('ops.alertsCenter.editor.phTaskType')"
                     >
                       <el-option
-                        v-for="item in taskTypes"
-                        :key="item"
-                        :value="item"
-                        :label="item"
+                        v-for="opt in taskTypeOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
@@ -1260,12 +1513,13 @@ onBeforeUnmount(() => {
                       class="w-full"
                       :loading="metadataState['event-types'].status === 'loading'"
                       :disabled="metadataState['event-types'].status !== 'ready'"
+                      :placeholder="t('ops.alertsCenter.editor.phEventType')"
                     >
                       <el-option
-                        v-for="item in taskEventTypes"
-                        :key="item"
-                        :value="item"
-                        :label="item"
+                        v-for="opt in taskEventOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
@@ -1275,7 +1529,7 @@ onBeforeUnmount(() => {
                 </div>
 
                 <div
-                  v-else-if="form.type === 'availability'"
+                  v-else-if="form.type === 'health' || form.type === 'availability'"
                   class="fullscreen-form-grid"
                 >
                   <el-form-item
@@ -1286,14 +1540,15 @@ onBeforeUnmount(() => {
                     <el-select
                       v-model="checkType"
                       class="w-full"
-                      :loading="metadataState['availability-check-types'].status === 'loading'"
-                      :disabled="metadataState['availability-check-types'].status !== 'ready'"
+                      :loading="metadataState['health-check-types'].status === 'loading'"
+                      :disabled="metadataState['health-check-types'].status !== 'ready'"
+                      :placeholder="t('ops.alertsCenter.editor.phCheckType')"
                     >
                       <el-option
-                        v-for="item in availabilityCheckTypes"
-                        :key="item"
-                        :value="item"
-                        :label="item"
+                        v-for="opt in healthCheckOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
@@ -1306,12 +1561,13 @@ onBeforeUnmount(() => {
                     data-alert-policy-field="duration_seconds"
                   >
                     <el-select
-                      v-model="availabilityDuration"
+                      v-model="healthDuration"
                       class="w-full"
+                      :placeholder="t('ops.alertsCenter.editor.phDuration')"
                     >
                       <el-option
                         v-for="opt in durationOptions"
-                        :key="`avail-${opt.value}`"
+                        :key="`health-${opt.value}`"
                         :value="opt.value"
                         :label="opt.label"
                       />
@@ -1321,65 +1577,23 @@ onBeforeUnmount(() => {
                     </p>
                   </el-form-item>
                   <el-form-item
+                    v-if="healthHeartbeat"
                     :label="t('ops.alertsCenter.editor.fieldAvailabilityTimeout')"
                     prop="triggerRule.timeout_seconds"
                     data-alert-policy-field="timeout_seconds"
                   >
-                    <el-input-number
-                      v-model="availabilityTimeout"
-                      class="w-full"
-                      :min="0"
-                    />
+                    <div class="flex w-full items-center gap-2">
+                      <el-input-number
+                        v-model="healthTimeout"
+                        class="flex-1"
+                        :min="0"
+                      />
+                      <span class="fullscreen-form-field__unit">
+                        {{ t('ops.alertsCenter.editor.unitSeconds') }}
+                      </span>
+                    </div>
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldAvailabilityTimeoutHint') }}
-                    </p>
-                  </el-form-item>
-                </div>
-
-                <div
-                  v-else-if="form.type === 'system'"
-                  class="fullscreen-form-grid"
-                >
-                  <el-form-item
-                    :label="t('ops.alertsCenter.editor.checkType')"
-                    prop="triggerRule.check_type"
-                    data-alert-policy-field="check_type"
-                  >
-                    <el-select
-                      v-model="systemCheckType"
-                      class="w-full"
-                      :loading="metadataState['system-check-types'].status === 'loading'"
-                      :disabled="metadataState['system-check-types'].status !== 'ready'"
-                    >
-                      <el-option
-                        v-for="item in systemCheckTypes"
-                        :key="item"
-                        :value="item"
-                        :label="item"
-                      />
-                    </el-select>
-                    <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.checkTypeHint') }}
-                    </p>
-                  </el-form-item>
-                  <el-form-item
-                    :label="t('ops.alertsCenter.editor.fieldDuration')"
-                    prop="triggerRule.duration_seconds"
-                    data-alert-policy-field="duration_seconds"
-                  >
-                    <el-select
-                      v-model="systemDuration"
-                      class="w-full"
-                    >
-                      <el-option
-                        v-for="opt in durationOptions"
-                        :key="`sys-${opt.value}`"
-                        :value="opt.value"
-                        :label="opt.label"
-                      />
-                    </el-select>
-                    <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldDurationHint') }}
                     </p>
                   </el-form-item>
                 </div>
@@ -1398,12 +1612,13 @@ onBeforeUnmount(() => {
                       class="w-full"
                       :loading="metadataState['event-types'].status === 'loading'"
                       :disabled="metadataState['event-types'].status !== 'ready'"
+                      :placeholder="t('ops.alertsCenter.editor.phEventCategory')"
                     >
                       <el-option
-                        v-for="item in eventCategories"
-                        :key="item"
-                        :value="item"
-                        :label="item"
+                        v-for="opt in eventCategoryOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
@@ -1425,13 +1640,14 @@ onBeforeUnmount(() => {
                       collapse-tags-tooltip
                       :max-collapse-tags="1"
                       :tag-tooltip="{ popperClass: 'alert-policy-editor-event-types-tooltip', placement: 'bottom' }"
+                      :placeholder="t('ops.alertsCenter.editor.phEventTypes')"
                       class="w-full alert-policy-editor-event-types"
                     >
                       <el-option
-                        v-for="item in eventTypesByCategory[eventCategory] || []"
-                        :key="item"
-                        :value="item"
-                        :label="item"
+                        v-for="opt in platformEventOptions"
+                        :key="opt.value"
+                        :value="opt.value"
+                        :label="opt.label"
                       />
                     </el-select>
                     <p class="fullscreen-form-field__hint">
@@ -1473,12 +1689,6 @@ onBeforeUnmount(() => {
                   <span class="fullscreen-form-section__indicator" />
                   {{ t('ops.alertsCenter.editor.sectionRecovery') }}
                 </h3>
-                <p
-                  v-if="currentRecoveryKind !== 'manual'"
-                  class="fullscreen-form-section__subtitle"
-                >
-                  {{ t('ops.alertsCenter.editor.sectionRecoveryDesc') }}
-                </p>
                 <template v-if="currentRecoveryKind === 'manual'">
                   <p class="fullscreen-form-field__label">
                     {{ t(legacyTaskRecovery
@@ -1500,21 +1710,16 @@ onBeforeUnmount(() => {
                 </template>
                 <el-form-item
                   v-else
+                  :label="t('ops.alertsCenter.editor.fieldRecoveryEnabled')"
                   class="fullscreen-form-status-item"
                 >
-                  <el-switch
-                    v-model="recoveryEnabled"
-                    :active-text="t('ops.alertsCenter.editor.fieldRecoveryEnabled')"
-                  />
+                  <el-switch v-model="recoveryEnabled" />
+                  <p class="fullscreen-form-field__hint">
+                    {{ currentRecoveryKind === 'heartbeat'
+                      ? t('ops.alertsCenter.editor.recoveryHeartbeatHint')
+                      : t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}
+                  </p>
                 </el-form-item>
-                <p
-                  v-if="currentRecoveryKind !== 'manual'"
-                  class="fullscreen-form-field__hint"
-                >
-                  {{ currentRecoveryKind === 'heartbeat'
-                    ? t('ops.alertsCenter.editor.recoveryHeartbeat')
-                    : t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}
-                </p>
                 <template v-if="recoveryEnabled && legacyNumericRecovery">
                   <p class="fullscreen-form-field__hint">
                     {{ t('ops.alertsCenter.editor.recoveryTriggerCleared') }}
@@ -1531,6 +1736,7 @@ onBeforeUnmount(() => {
                     <el-select
                       v-model="recoveryOperator"
                       class="w-full"
+                      :placeholder="t('ops.alertsCenter.editor.phOperator')"
                     >
                       <el-option
                         v-for="op in operatorOptions"
@@ -1544,19 +1750,44 @@ onBeforeUnmount(() => {
                     </p>
                   </el-form-item>
                   <el-form-item :label="t('ops.alertsCenter.editor.fieldThreshold')">
-                    <el-input-number
-                      v-model="recoveryThreshold"
-                      class="w-full"
-                      :min="0"
-                    />
+                    <div class="flex w-full items-center gap-2">
+                      <el-input-number
+                        v-model="recoveryThreshold"
+                        class="flex-1"
+                        :min="0"
+                      />
+                      <el-select
+                        v-if="metricUnitSelectable"
+                        v-model="metricUnit"
+                        class="alert-policy-editor-threshold-unit"
+                      >
+                        <el-option
+                          v-for="opt in metricUnitChoices"
+                          :key="`recovery-unit-${opt.value || 'none'}`"
+                          :value="opt.value"
+                          :label="opt.label"
+                        />
+                      </el-select>
+                      <span
+                        v-else-if="showMetricUnitField"
+                        class="fullscreen-form-field__unit"
+                      >
+                        {{ metricUnitLabel }}
+                      </span>
+                    </div>
                     <p class="fullscreen-form-field__hint">
-                      {{ t('ops.alertsCenter.editor.fieldRecoveryThresholdHint') }}
+                      {{
+                        metricUnitSelectable
+                          ? t('ops.alertsCenter.editor.fieldRecoveryThresholdUnitHint')
+                          : t('ops.alertsCenter.editor.fieldRecoveryThresholdHint')
+                      }}
                     </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.alertsCenter.editor.fieldRecoveryDuration')">
+                  <el-form-item :label="t('ops.alertsCenter.editor.fieldDuration')">
                     <el-select
                       v-model="recoveryDuration"
                       class="w-full"
+                      :placeholder="t('ops.alertsCenter.editor.phDuration')"
                     >
                       <el-option
                         :value="0"
@@ -1574,9 +1805,6 @@ onBeforeUnmount(() => {
                     </p>
                   </el-form-item>
                 </div>
-                <p class="fullscreen-form-field__hint">
-                  {{ t('ops.alertsCenter.editor.recoveryManualMeaning') }}
-                </p>
               </section>
 
               <section class="fullscreen-form-card fullscreen-form-section">
@@ -1584,9 +1812,6 @@ onBeforeUnmount(() => {
                   <span class="fullscreen-form-section__indicator" />
                   {{ t('ops.alertsCenter.editor.sectionNotification') }}
                 </h3>
-                <p class="fullscreen-form-section__subtitle">
-                  {{ t('ops.alertsCenter.editor.sectionNotificationDesc') }}
-                </p>
                 <div class="fullscreen-form-grid">
                   <el-form-item :label="t('ops.alertsCenter.policies.notificationChannels')">
                     <el-select
@@ -1594,6 +1819,7 @@ onBeforeUnmount(() => {
                       multiple
                       class="w-full"
                       filterable
+                      :placeholder="t('ops.alertsCenter.policies.notificationChannelsPlaceholder')"
                     >
                       <el-option
                         v-for="ch in channels"
@@ -1606,45 +1832,36 @@ onBeforeUnmount(() => {
                       {{ t('ops.alertsCenter.editor.fieldNotificationChannelsHint') }}
                     </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.alertsCenter.editor.fieldNotifyOnFiring')">
-                    <el-select
-                      v-model="notifyOnFiring"
-                      class="w-full"
-                    >
-                      <el-option
-                        v-for="opt in yesNoOptions"
-                        :key="`firing-${opt.label}`"
-                        :value="opt.value"
-                        :label="opt.label"
-                      />
-                    </el-select>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldNotifyOnFiring')"
+                    class="fullscreen-form-status-item"
+                  >
+                    <el-switch v-model="notifyOnFiring" />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldNotifyOnFiringHint') }}
                     </p>
                   </el-form-item>
-                  <el-form-item :label="t('ops.alertsCenter.editor.fieldNotifyOnResolved')">
-                    <el-select
-                      v-model="notifyOnResolved"
-                      class="w-full"
-                    >
-                      <el-option
-                        v-for="opt in yesNoOptions"
-                        :key="`resolved-${opt.label}`"
-                        :value="opt.value"
-                        :label="opt.label"
-                      />
-                    </el-select>
+                  <el-form-item
+                    :label="t('ops.alertsCenter.editor.fieldNotifyOnResolved')"
+                    class="fullscreen-form-status-item"
+                  >
+                    <el-switch v-model="notifyOnResolved" />
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldNotifyOnResolvedHint') }}
                     </p>
                   </el-form-item>
                   <el-form-item :label="t('ops.alertsCenter.editor.fieldRepeatInterval')">
-                    <el-input-number
-                      v-model="repeatIntervalSeconds"
-                      class="w-full"
-                      :min="0"
-                      :step="60"
-                    />
+                    <div class="flex w-full items-center gap-2">
+                      <el-input-number
+                        v-model="repeatIntervalSeconds"
+                        class="flex-1"
+                        :min="0"
+                        :step="60"
+                      />
+                      <span class="fullscreen-form-field__unit">
+                        {{ t('ops.alertsCenter.editor.unitSeconds') }}
+                      </span>
+                    </div>
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldRepeatIntervalHint') }}
                     </p>
@@ -1655,8 +1872,6 @@ onBeforeUnmount(() => {
                   >
                     <el-switch
                       v-model="mergeEnabled"
-                      :active-text="t('ops.alertsCenter.common.enabled')"
-                      :inactive-text="t('ops.alertsCenter.common.disabled')"
                       @change="handleMergeEnabledChange"
                     />
                     <p class="fullscreen-form-field__hint">
@@ -1679,12 +1894,17 @@ onBeforeUnmount(() => {
                     v-if="mergeEnabled"
                     :label="t('ops.alertsCenter.editor.fieldMergeWindow')"
                   >
-                    <el-input-number
-                      v-model="mergeWindowSeconds"
-                      class="w-full"
-                      :min="60"
-                      :step="60"
-                    />
+                    <div class="flex w-full items-center gap-2">
+                      <el-input-number
+                        v-model="mergeWindowSeconds"
+                        class="flex-1"
+                        :min="60"
+                        :step="60"
+                      />
+                      <span class="fullscreen-form-field__unit">
+                        {{ t('ops.alertsCenter.editor.unitSeconds') }}
+                      </span>
+                    </div>
                     <p class="fullscreen-form-field__hint">
                       {{ t('ops.alertsCenter.editor.fieldMergeWindowHint') }}
                     </p>
@@ -1704,7 +1924,7 @@ onBeforeUnmount(() => {
               :disabled="saving || metricConfigurationBlocked || metadataConfigurationBlocked"
               @click="savePolicy"
             >
-              {{ t('common.save') }}
+              {{ submitLabel }}
             </ElButton>
           </div>
         </div>
@@ -1732,10 +1952,10 @@ onBeforeUnmount(() => {
             <div class="add-form-preview-body">
               <div class="add-form-preview-section">
                 <h5 class="add-form-preview-section__title">
-                  {{ t('ops.alertsCenter.editor.previewTitle') }}
+                  {{ t('ops.alertsCenter.editor.sectionBasic') }}
                 </h5>
                 <div
-                  v-for="row in previewBasicRows"
+                  v-for="row in previewBasicsRows"
                   :key="row.label"
                   class="add-form-preview-row"
                 >
@@ -1760,10 +1980,48 @@ onBeforeUnmount(() => {
 
               <div class="add-form-preview-section">
                 <h5 class="add-form-preview-section__title">
+                  {{ t('ops.alertsCenter.editor.sectionTarget') }}
+                </h5>
+                <div
+                  v-for="row in previewTargetRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
+                  <span class="add-form-preview-row__label">{{ row.label }}</span>
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': row.value === '—' }"
+                  >
+                    {{ row.value }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="add-form-preview-section">
+                <h5 class="add-form-preview-section__title">
                   {{ t('ops.alertsCenter.editor.sectionTrigger') }}
                 </h5>
                 <div
-                  v-for="row in previewRuleRows"
+                  v-for="row in previewTriggerRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
+                  <span class="add-form-preview-row__label">{{ row.label }}</span>
+                  <span
+                    class="add-form-preview-row__value"
+                    :class="{ 'add-form-preview-row__value--empty': row.value === '—' }"
+                  >
+                    {{ row.value }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="add-form-preview-section">
+                <h5 class="add-form-preview-section__title">
+                  {{ t('ops.alertsCenter.editor.sectionRecovery') }}
+                </h5>
+                <div
+                  v-for="row in previewResolutionRows"
                   :key="row.label"
                   class="add-form-preview-row"
                 >
@@ -1785,48 +2043,25 @@ onBeforeUnmount(() => {
                 <h5 class="add-form-preview-section__title">
                   {{ t('ops.alertsCenter.editor.sectionNotification') }}
                 </h5>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('ops.alertsCenter.editor.previewNotification') }}</span>
+                <div
+                  v-for="row in previewNotificationRows"
+                  :key="row.label"
+                  class="add-form-preview-row"
+                >
+                  <span class="add-form-preview-row__label">{{ row.label }}</span>
                   <span
-                    class="add-form-preview-row__value add-form-preview-row__value--badge"
-                    :class="{ 'add-form-preview-row__value--empty': !hasPreviewChannels }"
+                    class="add-form-preview-row__value"
+                    :class="[
+                      row.badge ? 'add-form-preview-row__value--badge' : '',
+                      row.empty || row.value === '—' ? 'add-form-preview-row__value--empty' : '',
+                      row.tone ? `add-form-preview-row__value--${row.tone}` : '',
+                    ]"
                   >
                     <span
-                      v-if="hasPreviewChannels"
+                      v-if="row.badge && !row.empty"
                       class="add-form-preview-row__dot add-form-preview-row__dot--primary"
                     />
-                    {{ previewChannels }}
-                  </span>
-                </div>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('ops.alertsCenter.common.status') }}</span>
-                  <span
-                    class="add-form-preview-row__value"
-                    :class="form.enabled ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'"
-                  >
-                    {{ form.enabled ? t('ops.alertsCenter.editor.valueEnabled') : t('ops.alertsCenter.editor.valueDisabled') }}
-                  </span>
-                </div>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('ops.alertsCenter.editor.previewNotifyTimingLabel') }}</span>
-                  <span class="add-form-preview-row__value">
-                    {{ t('ops.alertsCenter.editor.previewNotifyTiming', {
-                      firing: boolLabel(form.recoveryRule.notify_on_firing),
-                      resolved: boolLabel(form.recoveryRule.notify_on_resolved),
-                    }) }}
-                  </span>
-                </div>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('ops.alertsCenter.editor.fieldRepeatInterval') }}</span>
-                  <span class="add-form-preview-row__value">{{ silenceLabel(form.triggerRule.repeat_interval_seconds) }}</span>
-                </div>
-                <div class="add-form-preview-row">
-                  <span class="add-form-preview-row__label">{{ t('ops.alertsCenter.editor.fieldMergeNotification') }}</span>
-                  <span
-                    class="add-form-preview-row__value"
-                    :class="form.triggerRule.merge_enabled ? 'add-form-preview-row__value--success' : 'add-form-preview-row__value--muted'"
-                  >
-                    {{ form.triggerRule.merge_enabled ? t('ops.alertsCenter.editor.valueEnabled') : t('ops.alertsCenter.editor.valueDisabled') }}
+                    {{ row.value }}
                   </span>
                 </div>
               </div>

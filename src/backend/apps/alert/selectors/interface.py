@@ -66,7 +66,7 @@ def filter_policies(
         queryset = queryset.filter(resource_type=resource_type)
     if enabled in {"true", "false"}:
         queryset = queryset.filter(enabled=(enabled == "true"))
-    return queryset.order_by("-created_at")
+    return queryset.order_by("-updated_at", "-created_at")
 
 
 def filter_records(

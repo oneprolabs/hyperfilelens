@@ -1,12 +1,14 @@
 import type { Component } from 'vue'
-import { Activity, BellRing, ClipboardList, Monitor, ShieldCheck } from 'lucide-vue-next'
+import { Activity, HeartPulse, ListTodo, Logs } from 'lucide-vue-next'
 
 const alertPolicyTypeIcons = {
   metric: Activity,
-  task: ClipboardList,
-  event: BellRing,
-  system: Monitor,
-  availability: ShieldCheck,
+  task: ListTodo,
+  event: Logs,
+  health: HeartPulse,
+  // Legacy values still used in older list rows until refresh.
+  availability: HeartPulse,
+  system: Activity,
 } as const
 
 export function getAlertPolicyTypeIcon(type?: string | null): Component | null {

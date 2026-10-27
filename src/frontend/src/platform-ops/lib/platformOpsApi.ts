@@ -242,6 +242,9 @@ export type PlatformNotificationChannel = {
   target?: string
   config?: Record<string, unknown>
   delivery_count?: number
+  policies_count?: number
+  last_delivery_status?: string | null
+  last_delivery_at?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -313,6 +316,13 @@ export async function deletePlatformAlertPolicy(policyId: string) {
 export async function fetchPlatformAlertMetadataResources(resourceType: string) {
   const data = await get<{ results: Array<{ id: string; name: string; status?: string }> }>(
     `/api/v1/platform-ops/platform/alert-policies/metadata/resources?resource_type=${encodeURIComponent(resourceType)}`,
+  )
+  return data.results || []
+}
+
+export async function fetchPlatformAlertMetadataMetrics(resourceType: string) {
+  const data = await get<{ results: string[] }>(
+    `/api/v1/platform-ops/platform/alert-policies/metadata/metrics?resource_type=${encodeURIComponent(resourceType)}`,
   )
   return data.results || []
 }

@@ -62,6 +62,7 @@ class EmailChannel(BaseChannel):
                 password=cfg.get("smtp_password") or None,
                 use_tls=cfg.get("use_tls", True),
                 use_ssl=cfg.get("use_ssl", False),
+                timeout=float(cfg.get("timeout_seconds") or 30),
             )
         else:
             connection, platform_cfg = _connection_from_platform_email()

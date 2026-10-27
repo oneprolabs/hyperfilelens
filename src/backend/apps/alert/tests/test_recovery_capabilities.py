@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.alert.api.serializers.policy import AlertPolicySerializer
 from apps.alert.constants import AlertStatus, AlertType, ResourceType
 from apps.alert.models import AlertPolicy, AlertRecord
-from apps.alert.services.internal.evaluation import _evaluate_availability_policy
+from apps.alert.services.internal.evaluation import _evaluate_health_policy
 from apps.alert.services.internal.lifecycle import resolve_alert
 from apps.alert.services.internal.recovery import supports_numeric_recovery
 from apps.alert.services.internal.task_events import recover_task_alerts
@@ -25,7 +25,7 @@ class RecoveryCapabilityTests(TestCase):
         self.policy = AlertPolicy.objects.create(
             organization=self.org,
             name="Heartbeat",
-            type=AlertType.AVAILABILITY,
+            type=AlertType.HEALTH,
             resource_type=ResourceType.SYNC_PROXY,
             scope="selected",
             trigger_rule={"check_type": "heartbeat", "timeout_seconds": 300, "duration_seconds": 0},
@@ -61,12 +61,12 @@ class RecoveryCapabilityTests(TestCase):
     def test_capability_depends_on_system_check(self):
         for alert_type, rule, expected in [
             (AlertType.METRIC, {}, True),
-            (AlertType.SYSTEM, {"check_type": "disk_space_low"}, True),
-            (AlertType.SYSTEM, {"check_type": "service_health", "metric_key": "cpu_usage"}, True),
-            (AlertType.SYSTEM, {"check_type": "service_health"}, False),
+            (AlertType.METRIC, {"check_type": "disk_space_low", "metric_key": "disk_usage"}, True),
+            (AlertType.METRIC, {"metric_key": "cpu_usage"}, True),
+            (AlertType.HEALTH, {"check_type": "service_health"}, False),
             (AlertType.TASK, {}, False),
             (AlertType.EVENT, {}, False),
-            (AlertType.AVAILABILITY, {"check_type": "heartbeat"}, False),
+            (AlertType.HEALTH, {"check_type": "heartbeat"}, False),
         ]:
             with self.subTest(alert_type=alert_type, rule=rule):
                 self.assertEqual(supports_numeric_recovery(alert_type, rule), expected)
@@ -76,8 +76,8 @@ class RecoveryCapabilityTests(TestCase):
         historical = self.record()
         legacy = self.record(key="default", status=AlertStatus.ACKNOWLEDGED)
         unrelated = self.record(key="cpu_usage")
-        _evaluate_availability_policy(self.policy)
-        _evaluate_availability_policy(self.policy)
+        _evaluate_health_policy(self.policy)
+        _evaluate_health_policy(self.policy)
         for record in (historical, legacy):
             record.refresh_from_db()
             self.assertEqual(record.status, AlertStatus.RESOLVED)
@@ -89,7 +89,7 @@ class RecoveryCapabilityTests(TestCase):
         self.policy.recovery_rule = {"enabled": False, "notify_on_resolved": False}
         self.policy.save()
         alert = self.record()
-        _evaluate_availability_policy(self.policy)
+        _evaluate_health_policy(self.policy)
         alert.refresh_from_db()
         self.assertEqual(alert.status, AlertStatus.FIRING)
         resolve_alert(alert)
@@ -100,7 +100,7 @@ class RecoveryCapabilityTests(TestCase):
         alert = self.record()
         self.node.last_seen_at = timezone.now() - timedelta(hours=1)
         self.node.save()
-        _evaluate_availability_policy(self.policy)
+        _evaluate_health_policy(self.policy)
         alert.refresh_from_db()
         self.assertEqual(alert.status, AlertStatus.FIRING)
 
@@ -108,7 +108,7 @@ class RecoveryCapabilityTests(TestCase):
         alert = self.record()
         self.node.last_seen_at = None
         self.node.save()
-        _evaluate_availability_policy(self.policy)
+        _evaluate_health_policy(self.policy)
         alert.refresh_from_db()
         self.assertEqual(alert.status, AlertStatus.FIRING)
 
@@ -121,7 +121,7 @@ class RecoveryCapabilityTests(TestCase):
             self.record(resource_id=str(self.node.id + 1)),
             self.record(policy_id=None),
         ]
-        _evaluate_availability_policy(self.policy)
+        _evaluate_health_policy(self.policy)
         for alert in alerts:
             alert.refresh_from_db()
             self.assertEqual(alert.status, AlertStatus.FIRING)
@@ -162,17 +162,32 @@ class RecoveryCapabilityTests(TestCase):
         for alert_type, trigger in [
             (AlertType.TASK, {"task_type": "backup", "event_type": "task_failed"}),
             (AlertType.EVENT, {"event_category": "configuration", "event_types": ["alert_policy_changed"]}),
-            (AlertType.AVAILABILITY, {"check_type": "heartbeat", "timeout_seconds": 300, "duration_seconds": 0}),
-            (AlertType.SYSTEM, {"check_type": "service_health", "duration_seconds": 0}),
+            (AlertType.HEALTH, {"check_type": "heartbeat", "timeout_seconds": 300, "duration_seconds": 0}),
         ]:
             recovery = {"enabled": True, "operator": "legacy", "threshold": "unused", "duration_seconds": "unused"}
             serializer = AlertPolicySerializer(data={
-                "name": "Legacy", "severity": "warning", "type": alert_type, "resource_type": "system", "scope": "all",
+                "name": "Legacy", "severity": "warning", "type": alert_type, "resource_type": "sync_proxy", "scope": "all",
                 "trigger_rule": trigger, "recovery_rule": recovery,
             })
             with self.subTest(alert_type=alert_type):
                 self.assertTrue(serializer.is_valid(), serializer.errors)
                 self.assertEqual(serializer.validated_data["recovery_rule"], recovery)
+
+    def test_health_policy_requires_a_node_resource(self):
+        serializer = AlertPolicySerializer(data={
+            "name": "Control plane health",
+            "severity": "warning",
+            "type": AlertType.HEALTH,
+            "resource_type": ResourceType.SYSTEM,
+            "scope": "all",
+            "trigger_rule": {
+                "check_type": "heartbeat",
+                "timeout_seconds": 300,
+                "duration_seconds": 0,
+            },
+        })
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("resource_type", serializer.errors)
 
     def test_numeric_recovery_still_validates_new_settings(self):
         serializer = AlertPolicySerializer(data={
@@ -261,7 +276,7 @@ class RecoveryCapabilityTests(TestCase):
     def test_deleted_node_does_not_auto_resolve(self):
         alert = self.record()
         self.node.delete()
-        _evaluate_availability_policy(self.policy)
+        _evaluate_health_policy(self.policy)
         alert.refresh_from_db()
         self.assertEqual(alert.status, AlertStatus.FIRING)
 

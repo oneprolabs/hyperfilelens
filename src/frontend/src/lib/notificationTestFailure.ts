@@ -1,5 +1,6 @@
 import { apiErrorMessageI18n } from './api'
 import { toErrorDetails, type ErrorDetailsPayload } from './errors/details'
+import { ERROR_CODE_I18N_KEYS } from './errors/registry'
 
 type Translate = (key: string) => string
 
@@ -91,7 +92,23 @@ export function notificationTestFailureDetails(
     })
   }
 
-  const fallbackError = record(error)?.error
+  const object = record(error)
+  const code = object?.code ?? object?.errorCode ?? object?.error_code
+  if (typeof code === 'string') {
+    const i18nKey = ERROR_CODE_I18N_KEYS[code]
+    if (i18nKey) {
+      const summary = t(i18nKey)
+      return toErrorDetails(error, {
+        title,
+        summary,
+        issue: summary,
+        errorCode: code,
+        rawDetail: object?.error ?? object?.detail ?? error,
+      })
+    }
+  }
+
+  const fallbackError = object?.message ?? object?.error
   const summary = typeof fallbackError === 'string' && fallbackError.trim()
     ? fallbackError
     : apiErrorMessageI18n(error, t, title)

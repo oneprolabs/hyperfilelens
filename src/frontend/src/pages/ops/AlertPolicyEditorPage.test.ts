@@ -25,6 +25,7 @@ vi.mock('../../lib/notificationApi', () => ({ listChannels: mocks.listChannels }
 vi.mock('../../lib/api', () => ({ apiErrorMessageI18n: () => 'Request failed' }))
 vi.mock('../../platform-ops/lib/platformOpsApi', () => ({
   createPlatformAlertPolicy: vi.fn(),
+  fetchPlatformAlertMetadataMetrics: vi.fn(),
   fetchPlatformAlertMetadataResources: vi.fn(),
   fetchPlatformAlertPolicy: vi.fn(),
   listPlatformNotificationChannelOptions: vi.fn(),
@@ -50,6 +51,7 @@ async function render(locale = 'en') {
     form: AlertPolicyFormState
     policyPayload: () => Record<string, unknown>
     savePolicy: () => Promise<void>
+    selectableResourceTypeOptions: Array<{ value: string; label: string }>
   }
   return { wrapper, state }
 }
@@ -78,8 +80,7 @@ describe('alert policy recovery editor', () => {
         ? { categories: ['configuration', 'user'], types: { user: ['login_failed'] },
           task_event_types: ['task_failed', 'task_timeout'] }
         : kind === 'task-types' ? ['backup', 'restore', 'repository_operation']
-          : kind === 'availability-check-types' ? ['heartbeat']
-            : kind === 'system-check-types' ? ['service_health', 'disk_space_low']
+          : kind === 'health-check-types' ? ['heartbeat', 'service_health']
         : kind === 'metrics' && !['task', 'system_service'].includes(params?.resource_type || '')
           ? ['cpu_usage', 'memory_usage', 'disk_usage'] : [],
     ))
@@ -151,13 +152,33 @@ describe('alert policy recovery editor', () => {
     expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.fieldRecoveryThresholdHint)
   })
 
+  it('does not mark empty Event Types invalid until save', async () => {
+    const required = en.ops.alertsCenter.editor.validateTriggerRequired.replace(
+      '{field}', en.ops.alertsCenter.editor.eventTypes,
+    )
+    const { wrapper, state } = await render()
+    state.form.type = 'event'
+    await flushPromises()
+    expect(state.form.triggerRule.event_types).toEqual([])
+    expect(wrapper.text()).not.toContain(required)
+    expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.metadataSelectAvailable)
+    const eventTypesItem = wrapper.get('[data-alert-policy-field="event_types"]')
+    expect(eventTypesItem.classes()).not.toContain('is-error')
+    state.form.name = 'Config change'
+    await state.savePolicy()
+    await flushPromises()
+    expect(mocks.createPolicy).not.toHaveBeenCalled()
+    expect(eventTypesItem.classes()).toContain('is-error')
+  })
+
   it('describes heartbeat recovery without numeric inputs', async () => {
-    existing('availability', { enabled: true, threshold: 70, duration_seconds: 180 }, {
+    existing('health', { enabled: true, threshold: 70, duration_seconds: 180 }, {
       check_type: 'heartbeat', timeout_seconds: 300, duration_seconds: 300,
     })
     const { wrapper, state } = await render()
-    expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.recoveryHeartbeat)
+    expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.recoveryHeartbeatHint)
     expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.fieldRecoveryThresholdHint)
+    expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.recoveryManualHint)
     state.form.recoveryRule.enabled = false
     expect(state.policyPayload().recovery_rule).toMatchObject({ enabled: false })
   })
@@ -167,7 +188,7 @@ describe('alert policy recovery editor', () => {
       metric_key: 'cpu_usage', operator: '<=', threshold: 20, duration_seconds: 0,
     })
     const { wrapper } = await render()
-    expect(wrapper.text()).toContain('> 90 Immediately')
+    expect(wrapper.text()).toContain('CPU Usage > 90% Immediately')
     expect(wrapper.text()).not.toContain('below_threshold')
   })
 
@@ -180,42 +201,53 @@ describe('alert policy recovery editor', () => {
     expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.fieldRecoveryThresholdHint)
   })
 
-  it('updates recovery capability when changing system checks, retaining notification choices', async () => {
-    existing('system', { enabled: true, notify_on_resolved: false }, {
+  it('updates recovery capability when changing health checks, retaining notification choices', async () => {
+    existing('health', { enabled: true, notify_on_resolved: false }, {
       check_type: 'service_health', duration_seconds: 300,
     })
     const { wrapper, state } = await render()
     expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.recoveryManual)
-    state.form.triggerRule.check_type = 'disk_space_low'
+    state.form.triggerRule.check_type = 'heartbeat'
+    state.form.triggerRule.timeout_seconds = 300
     await flushPromises()
     expect(state.form.recoveryRule).toMatchObject({
-      enabled: true, operator: '<', threshold: 70, notify_on_resolved: false,
+      enabled: true, notify_on_resolved: false,
     })
-    expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.fieldRecoveryThresholdHint)
+    expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.recoveryHeartbeatHint)
     state.form.triggerRule.check_type = 'service_health'
     await flushPromises()
     expect(state.form.recoveryRule).toEqual({ enabled: false, notify_on_resolved: false })
-    expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.fieldRecoveryThresholdHint)
+    expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.recoveryManual)
   })
 
-  it('explains unsupported system-service metrics and blocks invalid saves', async () => {
+  it('lists Metric Resource Types in canonical host-then-data order', async () => {
     existing('metric', null)
     const { wrapper, state } = await render()
-    state.form.resourceType = 'system_service'
-    await flushPromises()
-    expect(wrapper.text()).toContain(en.ops.alertsCenter.resourceTypeDescriptions.system_service)
-    expect(wrapper.text()).toContain(en.ops.alertsCenter.policyTypeDescriptions.metric)
-    expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.metricUnsupported)
-    const option = wrapper.findAllComponents({ name: 'ElOption' })
-      .find(component => component.props('value') === 'system_service')!
-    expect(option.props('disabled')).toBe(true)
-    await state.savePolicy()
-    expect(mocks.updatePolicy).not.toHaveBeenCalled()
+    const optionValues = (state.selectableResourceTypeOptions as Array<{ value: string }>)
+      .map(opt => opt.value)
+    expect(optionValues).toEqual([
+      'system',
+      'agent_proxy',
+      'sync_proxy',
+      'gateway',
+      'source_resource',
+      'backup_repository',
+      'target_storage',
+    ])
+    expect(wrapper.text()).toContain(en.ops.alertsCenter.resourceTypeDescriptions.system)
     state.form.resourceType = 'system'
     await flushPromises()
-    expect(wrapper.text()).toContain(en.ops.alertsCenter.resourceTypeDescriptions.system)
     await state.savePolicy()
     expect(mocks.updatePolicy).toHaveBeenCalledOnce()
+  })
+
+  it('narrows Task Resource Type to Task only when switching Alert Type', async () => {
+    existing('metric', null)
+    const { state } = await render()
+    state.form.type = 'task'
+    await flushPromises()
+    expect(state.form.resourceType).toBe('task')
+    expect(state.selectableResourceTypeOptions.map(opt => opt.value)).toEqual(['task'])
   })
 
   it('shows loading and blocks saving while the metric catalog is pending', async () => {
@@ -236,25 +268,36 @@ describe('alert policy recovery editor', () => {
     expect(mocks.createPolicy).toHaveBeenCalledOnce()
   })
 
-  it('distinguishes a failed catalog request from unsupported metrics and permits retry', async () => {
+  it('falls back to the local metric catalog when the metadata API fails', async () => {
     const normal = mocks.fetchMetadata.getMockImplementation()!
-    let fail = true
     mocks.fetchMetadata.mockImplementation((kind: string, ...args: unknown[]) => {
-      if (kind === 'metrics' && fail) return Promise.reject(new Error('Offline'))
+      if (kind === 'metrics') return Promise.reject(new Error('Offline'))
       return normal(kind, ...args)
     })
     const { wrapper, state } = await render()
     state.form.name = 'CPU rule'
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.metricLoadFailed)
+    expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.metricUnsupported)
+    expect(state.form.triggerRule.metric_key).toBeTruthy()
+    await state.savePolicy()
+    expect(mocks.createPolicy).toHaveBeenCalledOnce()
+  })
+
+  it('shows load failure only when no local catalog exists for the resource type', async () => {
+    const normal = mocks.fetchMetadata.getMockImplementation()!
+    mocks.fetchMetadata.mockImplementation((kind: string, ...args: unknown[]) => {
+      if (kind === 'metrics') return Promise.reject(new Error('Offline'))
+      return normal(kind, ...args)
+    })
+    const { wrapper, state } = await render()
+    state.form.name = 'CPU rule'
+    state.form.resourceType = 'task'
+    await flushPromises()
     expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.metricLoadFailed)
     expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.metricUnsupported)
     await state.savePolicy()
     expect(mocks.createPolicy).not.toHaveBeenCalled()
-    fail = false
-    await wrapper.findAll('button').find(button => button.text() === en.ops.alertsCenter.editor.metricRetry)!.trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.metricLoadFailed)
-    await state.savePolicy()
-    expect(mocks.createPolicy).toHaveBeenCalledOnce()
   })
 
   it('ignores a late metric response for a previously selected resource type', async () => {
@@ -288,10 +331,10 @@ describe('alert policy recovery editor', () => {
     )!
     expect(section.exists()).toBe(true)
     expect(section.text()).toContain(copy.recoveryManual)
-    expect(section.text()).toContain(copy.recoveryManualTaskHint)
     expect(section.text()).not.toContain(copy.sectionRecoveryDesc)
-    expect(section.text().indexOf(copy.recoveryManualTaskHint))
-      .toBeLessThan(section.text().indexOf(copy.recoveryManualMeaning))
+    const hints = section.findAll('.fullscreen-form-field__hint')
+    expect(hints).toHaveLength(1)
+    expect(hints[0].text()).toBe(copy.recoveryManualTaskHint)
     expect(copy.recoveryManualTaskHint).toContain(messages.ops.alerts.resolve)
     expect(wrapper.find('aside').text()).toContain(copy.previewRecovery)
     expect(wrapper.text()).toContain(copy.fieldNotifyOnResolved)
@@ -308,11 +351,13 @@ describe('alert policy recovery editor', () => {
     const section = wrapper.findAll('section').find(item =>
       item.find('h3').text() === copy.sectionRecovery,
     )!
-    expect(section.text()).toContain(copy.sectionRecoveryDesc)
+    expect(section.text()).not.toContain(copy.sectionRecoveryDesc)
     expect(section.text()).toContain(copy.fieldRecoveryEnabled)
-    expect(section.text()).toContain(copy.fieldRecoveryDuration)
+    expect(section.text()).toContain(copy.fieldRecoveryEnabledHint)
+    expect(section.text()).toContain(copy.fieldDuration)
     expect(section.text()).not.toContain(copy.recoveryManualTaskHint)
     expect(section.text()).not.toContain(copy.recoveryManualHint)
+    expect(section.text()).not.toContain(copy.recoveryManualMeaning)
     expect(state.policyPayload().recovery_rule).toEqual({
       enabled: true, operator: '<', threshold: 70, duration_seconds: 180,
     })

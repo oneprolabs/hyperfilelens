@@ -1,4 +1,4 @@
-"""Periodic evaluation for metric, availability, and system alert policies."""
+"""Periodic evaluation for metric and health alert policies."""
 
 from __future__ import annotations
 
@@ -40,6 +40,28 @@ _OPERATORS = {
     "==": lambda a, b: a == b,
     "!=": lambda a, b: a != b,
 }
+
+# Threshold unit → multiplier against collected byte samples.
+# % / load / counts use multiplier 1. Legacy B/KB/MB/GB still accepted.
+_THRESHOLD_UNIT_MULTIPLIERS = {
+    "B": 1.0,
+    "KiB": 1024.0,
+    "MiB": 1024.0**2,
+    "GiB": 1024.0**3,
+    "TiB": 1024.0**4,
+    "KB": 1000.0,
+    "MB": 1000.0**2,
+    "GB": 1000.0**3,
+    "TB": 1000.0**4,
+}
+
+
+def _scaled_threshold(threshold: float, unit: object) -> float:
+    """Convert a user-entered threshold into the metric's native sample scale."""
+    key = str(unit or "").strip()
+    if not key or key == "%":
+        return threshold
+    return threshold * _THRESHOLD_UNIT_MULTIPLIERS.get(key, 1.0)
 
 
 def _policy_silenced(policy: AlertPolicy) -> bool:
@@ -212,12 +234,13 @@ def _recovery_satisfied(
         threshold = float(recovery.get("threshold", trigger.get("threshold", 0)))
     except (TypeError, ValueError):
         return False
+    unit = recovery.get("unit", trigger.get("unit"))
     current, sustained = _condition_state(
         samples=samples,
         value_getter=value_getter,
         metric_key=metric_key,
         operator=operator,
-        threshold=threshold,
+        threshold=_scaled_threshold(threshold, unit),
         duration_seconds=_rule_seconds(recovery, "duration_seconds", 0),
         now=now,
         freshness_seconds=freshness_seconds,
@@ -241,6 +264,8 @@ def _evaluate_metric_policy(policy: AlertPolicy) -> None:
     metric_key = str(rule.get("metric_key") or "").strip()
     operator = str(rule.get("operator") or ">")
     threshold = float(rule.get("threshold") or 0)
+    unit = rule.get("unit")
+    scaled_threshold = _scaled_threshold(threshold, unit)
     duration_seconds = int(rule.get("duration_seconds") or 0)
     if not metric_key:
         return
@@ -285,7 +310,7 @@ def _evaluate_metric_policy(policy: AlertPolicy) -> None:
             value_getter=value_getter,
             metric_key=metric_key,
             operator=operator,
-            threshold=threshold,
+            threshold=scaled_threshold,
             duration_seconds=duration_seconds,
             now=now,
             freshness_seconds=freshness_seconds,
@@ -299,11 +324,12 @@ def _evaluate_metric_policy(policy: AlertPolicy) -> None:
             )
             continue
         if sustained_match:
+            unit_suffix = f" {unit}" if unit else ""
             fire_alert(
                 policy,
                 resource=_ResourceStub(resource_id, resource_name),
                 title=f"{policy.name}: {metric_key}",
-                message=f"{metric_key}={value} {operator} {threshold}",
+                message=f"{metric_key}={value} {operator} {threshold}{unit_suffix}",
                 current_value=value,
                 alert_key=metric_key,
                 metadata={"metric_key": metric_key, "value": value},
@@ -348,10 +374,12 @@ class _ResourceStub:
         self.name = name
 
 
-def _evaluate_availability_policy(policy: AlertPolicy) -> None:
+def _evaluate_health_policy(policy: AlertPolicy) -> None:
     rule = policy.trigger_rule or {}
     check_type = str(rule.get("check_type") or "heartbeat")
     timeout_seconds = int(rule.get("timeout_seconds") or rule.get("duration_seconds") or 300)
+    # Org Health today: node heartbeat. Platform service checks are reserved for
+    # Admin Console rules and are not evaluated here until probes exist.
     if check_type != "heartbeat":
         return
 
@@ -387,10 +415,10 @@ def _evaluate_availability_policy(policy: AlertPolicy) -> None:
                 metadata={"check_type": check_type, "node_status": node.status},
             )
         elif (policy.recovery_rule or {}).get("enabled") is not False:
-            _resolve_availability_alerts(policy, str(node.id), check_type)
+            _resolve_health_alerts(policy, str(node.id), check_type)
 
 
-def _resolve_availability_alerts(policy: AlertPolicy, resource_id: str, check_type: str) -> None:
+def _resolve_health_alerts(policy: AlertPolicy, resource_id: str, check_type: str) -> None:
     """Match the original heartbeat key without rewriting historical records."""
     from apps.alert.constants import AlertStatus
     from apps.alert.services.internal.fingerprint import build_fingerprint
@@ -403,7 +431,7 @@ def _resolve_availability_alerts(policy: AlertPolicy, resource_id: str, check_ty
     alerts = AlertRecord.objects.filter(
         organization_id=policy.organization_id,
         policy_id=policy.id,
-        type=AlertType.AVAILABILITY,
+        type=AlertType.HEALTH,
         resource_type=policy.resource_type,
         resource_id=resource_id,
         fingerprint__in=fingerprints,
@@ -411,24 +439,6 @@ def _resolve_availability_alerts(policy: AlertPolicy, resource_id: str, check_ty
     )
     for alert in alerts:
         resolve_alert(alert)
-
-
-def _evaluate_system_policy(policy: AlertPolicy) -> None:
-    rule = policy.trigger_rule or {}
-    check_type = str(rule.get("check_type") or "service_health")
-    if check_type == "disk_space_low":
-        policy.trigger_rule = {
-            **rule,
-            "metric_key": "disk_usage",
-            "operator": ">=",
-            "threshold": rule.get("threshold", 90),
-            "duration_seconds": rule.get("duration_seconds", 0),
-        }
-        _evaluate_metric_policy(policy)
-        return
-    # service_health: rely on latest system metric CPU/memory thresholds if set
-    if rule.get("metric_key"):
-        _evaluate_metric_policy(policy)
 
 
 def _evaluation_interval_seconds(policy: AlertPolicy) -> int:
@@ -463,7 +473,7 @@ def evaluate_organization_policies(*, organization_id: int | None = None) -> dic
         )
     # organization_id is None → platform scheduler path: org + platform policies.
 
-    counts = {"metric": 0, "availability": 0, "system": 0, "skipped": 0}
+    counts = {"metric": 0, "health": 0, "skipped": 0}
     for policy in qs.iterator():
         if _policy_silenced(policy):
             counts["skipped"] += 1
@@ -488,12 +498,9 @@ def evaluate_organization_policies(*, organization_id: int | None = None) -> dic
             if policy.type == AlertType.METRIC:
                 _evaluate_metric_policy(policy)
                 counts["metric"] += 1
-            elif policy.type == AlertType.AVAILABILITY:
-                _evaluate_availability_policy(policy)
-                counts["availability"] += 1
-            elif policy.type == AlertType.SYSTEM:
-                _evaluate_system_policy(policy)
-                counts["system"] += 1
+            elif policy.type == AlertType.HEALTH:
+                _evaluate_health_policy(policy)
+                counts["health"] += 1
         except Exception:
             logger.exception("alert evaluation failed policy=%s", policy.id)
     return counts

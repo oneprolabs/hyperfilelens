@@ -13,10 +13,9 @@ const requiredFieldsByType = {
     'duration_seconds',
     'evaluation_interval_seconds',
   ],
-  availability: ['check_type', 'timeout_seconds', 'duration_seconds'],
+  health: ['check_type', 'timeout_seconds', 'duration_seconds'],
   task: ['task_type', 'event_type'],
   event: ['event_category', 'event_types'],
-  system: ['check_type', 'duration_seconds'],
 }
 
 describe('alert policy trigger validation', () => {
@@ -54,7 +53,7 @@ describe('alert policy trigger validation', () => {
   it('maps a nested backend field error to the matching current control', () => {
     const specs = backendTriggerErrorSpecs({
       'trigger_rule.timeout_seconds': ['This field is required.'],
-    }, 'availability')
+    }, 'health')
 
     expect(specs.map((spec) => spec.path)).toEqual(['triggerRule.timeout_seconds'])
   })

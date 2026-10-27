@@ -8,6 +8,10 @@ export const ERROR_CODE_I18N_KEYS: Record<string, string> = {
   'NOTIFICATION.WEBHOOK_TLS_FAILED': 'errors.codes.notificationWebhookTlsFailed',
   'NOTIFICATION.WEBHOOK_UNREACHABLE': 'errors.codes.notificationWebhookUnreachable',
   'NOTIFICATION.WEBHOOK_HTTP_ERROR': 'errors.codes.notificationWebhookHttpError',
+  'NOTIFICATION.EMAIL_TIMEOUT': 'errors.codes.notificationEmailTimeout',
+  'NOTIFICATION.EMAIL_UNREACHABLE': 'errors.codes.notificationEmailUnreachable',
+  'NOTIFICATION.EMAIL_AUTH_FAILED': 'errors.codes.notificationEmailAuthFailed',
+  'NOTIFICATION.EMAIL_SEND_FAILED': 'errors.codes.notificationEmailSendFailed',
   'CLIENT.OFFLINE': 'errors.codes.clientOffline',
   'CLIENT.ABORTED': 'errors.codes.clientAborted',
   'UNKNOWN.ERROR': 'errors.codes.unknown',
@@ -78,6 +82,14 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
     'The webhook server could not be reached. Verify the URL, port, firewall, and network route.',
   'NOTIFICATION.WEBHOOK_HTTP_ERROR':
     'The webhook endpoint rejected the request. Check the URL, method, headers, and payload.',
+  'NOTIFICATION.EMAIL_TIMEOUT':
+    'The SMTP connection timed out. Verify the host, port, encryption, and that the server is reachable.',
+  'NOTIFICATION.EMAIL_UNREACHABLE':
+    'The SMTP server could not be reached. Verify the host, port, firewall, and network route.',
+  'NOTIFICATION.EMAIL_AUTH_FAILED':
+    'SMTP authentication failed. Check the username and password.',
+  'NOTIFICATION.EMAIL_SEND_FAILED':
+    'The test email could not be sent. Check the SMTP settings and try again.',
   'CLIENT.OFFLINE': 'You are offline. Check your network connection.',
   'UNKNOWN.ERROR': 'Something went wrong. Please try again.',
   'VALIDATION.FAILED': 'Please check the form and try again.',

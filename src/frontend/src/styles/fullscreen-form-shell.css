@@ -387,6 +387,14 @@
   line-height: 1.5;
 }
 
+.fullscreen-form-field__unit {
+  flex-shrink: 0;
+  color: #86909c;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
 /* Use when a custom field layout cannot host Element Plus's absolutely
  * positioned .el-form-item__error. A layout may anchor it locally when the
  * message must not affect row height. */
@@ -506,7 +514,8 @@ html[data-theme='dark'] .fullscreen-form-field__label {
   color: #c7ccd4;
 }
 
-html[data-theme='dark'] .fullscreen-form-field__hint {
+html[data-theme='dark'] .fullscreen-form-field__hint,
+html[data-theme='dark'] .fullscreen-form-field__unit {
   color: #86909c;
 }
 

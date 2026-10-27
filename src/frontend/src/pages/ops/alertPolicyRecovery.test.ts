@@ -6,11 +6,10 @@ describe('alert recovery capabilities', () => {
     ['metric', {}, 'numeric'],
     ['task', {}, 'manual'],
     ['event', {}, 'manual'],
+    ['health', { check_type: 'heartbeat' }, 'heartbeat'],
+    ['health', { check_type: 'unknown' }, 'manual'],
     ['availability', { check_type: 'heartbeat' }, 'heartbeat'],
-    ['availability', { check_type: 'unknown' }, 'manual'],
-    ['system', { check_type: 'disk_space_low' }, 'numeric'],
-    ['system', { check_type: 'service_health', metric_key: 'cpu_usage' }, 'numeric'],
-    ['system', { check_type: 'service_health' }, 'manual'],
+    ['system', {}, 'numeric'],
   ] as const)('classifies %s %j as %s', (type, trigger, kind) => {
     expect(recoveryKind(type, trigger)).toBe(kind)
   })

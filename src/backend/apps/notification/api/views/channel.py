@@ -20,7 +20,7 @@ from apps.notification.api.serializers import (
 from apps.notification.api.views._org import require_org
 from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel, NotificationLog
-from apps.notification.exceptions import WebhookTestError
+from apps.notification.exceptions import ChannelTestError
 from apps.notification.selectors.interface import channel_statistics, channels_for_org, filter_channels
 from apps.notification.services.internal.log_details import notification_log_details
 from apps.notification.services.interface import test_channel
@@ -32,7 +32,7 @@ from apps.iam.models import Organization
 
 
 def _test_failure_response(exc: Exception) -> Response:
-    if isinstance(exc, WebhookTestError):
+    if isinstance(exc, ChannelTestError):
         return Response(
             {
                 "status": "failed",

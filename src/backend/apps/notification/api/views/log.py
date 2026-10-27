@@ -32,6 +32,8 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated, IsOrgReader]
     pagination_class = NotificationPagination
     queryset = NotificationLog.objects.all()
+    governance_resource_type = "notification_channel"
+    governance_read_action = "operations.notification_records.view"
 
     def get_queryset(self):
         org = require_org(self.request)

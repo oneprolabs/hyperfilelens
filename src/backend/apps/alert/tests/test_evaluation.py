@@ -138,7 +138,7 @@ def test_availability_policy_fires_on_stale_node(db):
     AlertPolicy.objects.create(
         organization=org,
         name="Heartbeat",
-        type=AlertType.AVAILABILITY,
+        type=AlertType.HEALTH,
         severity="critical",
         enabled=True,
         resource_type=ResourceType.SYNC_PROXY,
@@ -461,3 +461,54 @@ def test_platform_system_policy_is_evaluated_and_tenant_run_skips_it(db):
         owner_scope=ResourceScope.PLATFORM,
         organization__isnull=True,
     ).exists()
+
+
+@pytest.mark.django_db
+def test_byte_metric_threshold_scales_by_unit(db):
+    """Capacity thresholds are entered in GiB and compared against byte samples."""
+    from apps.alert.services.internal.evaluation import _scaled_threshold
+
+    assert _scaled_threshold(2, "GiB") == 2 * (1024**3)
+    assert _scaled_threshold(80, "%") == 80
+    assert _scaled_threshold(5, "") == 5
+
+    org = Organization.objects.create(key="size-org", name="Size Org")
+    policy = AlertPolicy.objects.create(
+        organization=org,
+        name="Repo used size",
+        type=AlertType.METRIC,
+        severity="warning",
+        enabled=True,
+        resource_type=ResourceType.BACKUP_REPOSITORY,
+        scope="selected",
+        resource_ids=["repo-1"],
+        trigger_rule={
+            "metric_key": "used_size",
+            "operator": ">=",
+            "threshold": 2,
+            "unit": "GiB",
+            "duration_seconds": 0,
+            "evaluation_interval_seconds": 60,
+        },
+    )
+    # 1.5 GiB — below 2 GiB threshold
+    record_resource_metric(
+        organization_id=org.id,
+        resource_type=ResourceType.BACKUP_REPOSITORY,
+        resource_id="repo-1",
+        metrics={"used_size": 1.5 * (1024**3)},
+        resource_name="repo-1",
+    )
+    evaluate_organization_policies(organization_id=org.id)
+    assert not AlertRecord.objects.filter(organization=org, policy_id=policy.id).exists()
+
+    # 2.5 GiB — fires
+    record_resource_metric(
+        organization_id=org.id,
+        resource_type=ResourceType.BACKUP_REPOSITORY,
+        resource_id="repo-1",
+        metrics={"used_size": 2.5 * (1024**3)},
+        resource_name="repo-1",
+    )
+    evaluate_organization_policies(organization_id=org.id)
+    assert AlertRecord.objects.filter(organization=org, policy_id=policy.id).exists()

@@ -17,7 +17,7 @@ describe('Tasks status cards', () => {
     expect(page).toContain(':value="stats.cancelled"')
   })
 
-  it('uses an explicit label when failed and timed out tasks are grouped', () => {
-    expect(locale).toContain("failedTimedOut: 'Failed / Timed out'")
+  it('labels the grouped failed and timed out card as Failed', () => {
+    expect(locale).toContain("failedTimedOut: 'Failed'")
   })
 })

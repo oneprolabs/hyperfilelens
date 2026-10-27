@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import smtplib
 import socket
 import ssl
 from urllib.parse import urlparse
@@ -13,8 +14,16 @@ from django.core.mail import EmailMessage
 from apps.notification.constants import ChannelType
 from apps.notification.models import NotificationChannel
 from apps.notification.channels import WebhookChannel
-from apps.notification.exceptions import DingTalkDeliveryError, FeishuDeliveryError, WebhookTestError
+from apps.notification.exceptions import (
+    DingTalkDeliveryError,
+    EmailTestError,
+    FeishuDeliveryError,
+    WebhookTestError,
+)
 from apps.notification.models import NotificationDelivery
+
+# Interactive connection tests should fail fast; production delivery may wait longer.
+_EMAIL_TEST_TIMEOUT_SECONDS = 10
 
 
 def _classify_webhook_error(exc: Exception) -> WebhookTestError:
@@ -58,6 +67,75 @@ def _classify_webhook_error(exc: Exception) -> WebhookTestError:
     )
 
 
+def _classify_email_error(exc: Exception) -> EmailTestError:
+    diagnostic = str(exc)
+    text = diagnostic.lower()
+    if isinstance(exc, (TimeoutError, socket.timeout)) or "timed out" in text:
+        return EmailTestError(
+            "NOTIFICATION.EMAIL_TIMEOUT",
+            "The SMTP connection timed out.",
+            diagnostic,
+        )
+    if isinstance(
+        exc,
+        (
+            ConnectionError,
+            OSError,
+            smtplib.SMTPConnectError,
+            smtplib.SMTPServerDisconnected,
+        ),
+    ) or any(token in text for token in ("connection refused", "name or service not known", "nodename nor servname", "temporary failure in name resolution")):
+        return EmailTestError(
+            "NOTIFICATION.EMAIL_UNREACHABLE",
+            "The SMTP server could not be reached.",
+            diagnostic,
+        )
+    if isinstance(exc, smtplib.SMTPAuthenticationError) or "auth" in text:
+        return EmailTestError(
+            "NOTIFICATION.EMAIL_AUTH_FAILED",
+            "SMTP authentication failed.",
+            diagnostic,
+        )
+    return EmailTestError(
+        "NOTIFICATION.EMAIL_SEND_FAILED",
+        "The test email could not be sent.",
+        diagnostic,
+    )
+
+
+def _email_connection(*, cfg: dict, timeout: float):
+    from django.core.mail import get_connection
+
+    smtp_host = cfg.get("smtp_host")
+    smtp_port = cfg.get("smtp_port")
+    if smtp_host and smtp_port:
+        return get_connection(
+            host=smtp_host,
+            port=int(smtp_port),
+            username=cfg.get("smtp_username") or None,
+            password=cfg.get("smtp_password") or None,
+            use_tls=cfg.get("use_tls", True),
+            use_ssl=cfg.get("use_ssl", False),
+            timeout=timeout,
+        ), cfg.get("from_email") or None
+
+    from apps.configuration.services.runtime_settings import email_connection_kwargs
+
+    platform_cfg = email_connection_kwargs()
+    connection = get_connection(
+        backend=platform_cfg["backend"],
+        host=platform_cfg["host"] or None,
+        port=platform_cfg["port"] or None,
+        username=platform_cfg["username"] or None,
+        password=platform_cfg["password"] or None,
+        use_tls=platform_cfg["use_tls"],
+        use_ssl=platform_cfg["use_ssl"],
+        timeout=timeout,
+    )
+    from_email = cfg.get("from_email") or platform_cfg.get("from_email") or None
+    return connection, from_email
+
+
 def test_channel(channel: NotificationChannel) -> dict:
     """Send a lightweight test message through a channel."""
     cfg = channel.config or {}
@@ -71,28 +149,7 @@ def test_channel(channel: NotificationChannel) -> dict:
             raise ValueError("Email channel requires to_emails.")
 
         subject = cfg.get("email_subject") or "[HyperFileLens] Notification channel test"
-        smtp_host = cfg.get("smtp_host")
-        smtp_port = cfg.get("smtp_port")
-
-        from_email = cfg.get("from_email") or None
-        if smtp_host and smtp_port:
-            from django.core.mail import get_connection
-
-            connection = get_connection(
-                host=smtp_host,
-                port=int(smtp_port),
-                username=cfg.get("smtp_username") or None,
-                password=cfg.get("smtp_password") or None,
-                use_tls=cfg.get("use_tls", True),
-                use_ssl=cfg.get("use_ssl", False),
-            )
-        else:
-            from apps.notification.channels.email import _connection_from_platform_email
-
-            connection, platform_cfg = _connection_from_platform_email()
-            if not from_email:
-                from_email = platform_cfg.get("from_email") or None
-
+        connection, from_email = _email_connection(cfg=cfg, timeout=_EMAIL_TEST_TIMEOUT_SECONDS)
         email = EmailMessage(
             subject=subject,
             body="This is a test notification from HyperFileLens.",
@@ -100,7 +157,10 @@ def test_channel(channel: NotificationChannel) -> dict:
             to=recipients,
             connection=connection,
         )
-        email.send()
+        try:
+            email.send()
+        except Exception as exc:  # noqa: BLE001 — classify for interactive test UX
+            raise _classify_email_error(exc) from exc
         return {"status": "success"}
 
     if channel_type in (ChannelType.WEBHOOK, ChannelType.DINGTALK, ChannelType.WECOM):
