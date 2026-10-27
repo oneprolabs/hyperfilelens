@@ -75,6 +75,8 @@ describe('backup wizard step 3 More Actions refresh', () => {
     expect(startBackup).toContain('markBackupStartAwaitingRuntime(result.results)')
     expect(startBackup).toContain('markBackupStartAwaitingRuntime')
     expect(startBackup).toContain("t('protection.backupsPage.msgStartBackupAcceptedRefreshFailed')")
+    expect(startBackup).toContain("showApiErrorI18n(err, t('errors.generic.requestFailed'))")
+    expect(startBackup).not.toContain("showApiError(err, 'Failed to start backup task')")
     expect(runRecovery).toContain('await handleBackupAlreadyRunning(')
     expect(runRecovery).toContain('refreshRecoverySourceRuntime(sourceIds)')
     expect(page).toContain('async function refreshRecoverySourceRuntime(sourceIds: string[])')

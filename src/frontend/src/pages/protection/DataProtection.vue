@@ -5590,7 +5590,7 @@ async function startSelectedBackupTasks() {
     }
     ElMessage.warning({ message: t('protection.backupsPage.msgSourceNoBackupConfig'), grouping: true })
   } catch (err) {
-    showApiError(err, 'Failed to start backup task')
+    showApiErrorI18n(err, t('errors.generic.requestFailed'))
   } finally {
     startBackupSubmitting.value = false
   }

@@ -45,4 +45,16 @@ describe('backup start result presentation', () => {
       ),
     ).toBe('translated:protection.backupsPage.backupRepositoryCheckTimeout')
   })
+
+  it('localizes quota usage failures returned as backup results', () => {
+    expect(
+      backupStartResultMessage(
+        {
+          error_code: 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE',
+          message: 'Quota usage cannot be measured completely. Retry after usage is available.',
+        },
+        t,
+      ),
+    ).toBe('translated:errors.codes.subscriptionQuotaUsageUnavailable')
+  })
 })

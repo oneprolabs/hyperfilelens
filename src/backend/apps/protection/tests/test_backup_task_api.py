@@ -61,6 +61,7 @@ from apps.task.services.interface import create_task
 from common.errors import AppError
 
 
+@override_settings(SECURE_SSL_REDIRECT=False)
 class ProtectionBackupTaskApiTests(TestCase):
     def setUp(self):
         from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests

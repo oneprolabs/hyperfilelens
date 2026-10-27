@@ -201,7 +201,7 @@
       "subscriptionQuotaExceededInstance": "共享实例容量已满。请联系平台管理员提高部署额度，或释放其他组织占用的容量。",
       "subscriptionQuotaExceededInstanceMeter": "共享实例的 {meter} 容量已满。请联系平台管理员提高部署额度，或释放其他组织占用的容量。",
       "subscriptionQuotaExceededGateway": "共享数据网关当前容量不足。请稍后重试或联系平台管理员。",
-      "subscriptionQuotaUsageUnavailable": "容量信息暂时不可用，请稍后重试。",
+      "subscriptionQuotaUsageUnavailable": "容量信息暂时不可用。请等待用量测量恢复后，再重新执行备份。",
       "backupAlreadyRunning": "该备份源的备份正在启动或运行。请先停止备份或等待其完成，再继续操作。",
       "restoreAlreadyRunning": "该备份源已有恢复任务正在运行",
       "notificationFeishuRejected": "飞书未接受测试消息，请检查机器人设置。"

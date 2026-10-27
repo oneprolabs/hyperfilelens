@@ -193,7 +193,7 @@ export const en = {
       subscriptionQuotaExceededGateway:
         'The shared Data Gateway currently has insufficient capacity. Try again later or contact your platform administrator.',
       subscriptionQuotaUsageUnavailable:
-        'Capacity information is temporarily unavailable. Try again shortly.',
+        'Capacity information is temporarily unavailable. Wait for usage measurement to recover, then retry the backup.',
       backupAlreadyRunning: 'A backup is starting or running for this source. Stop it or wait for it to finish before continuing.',
       restoreAlreadyRunning: 'A restore task is already running for this source.',
     },
