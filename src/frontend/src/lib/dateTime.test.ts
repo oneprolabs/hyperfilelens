@@ -21,6 +21,26 @@ describe('dateTime', () => {
     expect(formatAppDateTime(date)).toBe('2025-10-31 15:03:42')
   })
 
+  it.each([
+    [0, 15, 0, 15, '2026-01-15 00:15:42'],
+    [6, 15, 23, 45, '2026-07-15 23:45:42'],
+  ] as const)('converts API timestamps to browser time in month %s', (month, day, hour, minute, expected) => {
+    const utc = new Date(2026, month, day, hour, minute, 42).toISOString()
+    for (const value of [utc, utc.replace('Z', '+00:00')]) {
+      expect(formatAppDateTime(value)).toBe(expected)
+      expect(formatLocalDateTime(value)).toBe(expected)
+    }
+  })
+
+  it.each([
+    ['Asia/Shanghai', '2026-10-16T07:51:00Z', '2026-10-16 15:51:00'],
+    ['Asia/Shanghai', '2026-10-16T23:51:00Z', '2026-10-17 07:51:00'],
+    ['America/New_York', '2026-01-15T01:51:00Z', '2026-01-14 20:51:00'],
+    ['America/New_York', '2026-07-15T01:51:00Z', '2026-07-14 21:51:00'],
+  ])('preserves explicit %s conversion for %s', (timeZone, value, expected) => {
+    expect(formatAppDateTime(value, '—', { timeZone })).toBe(expected)
+  })
+
   it('formats date-only values as YYYY-MM-DD', () => {
     expect(formatAppDate('2026-12-31T00:00:00Z', '—', { timeZone: 'UTC' })).toBe('2026-12-31')
   })

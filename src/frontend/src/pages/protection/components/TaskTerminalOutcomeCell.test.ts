@@ -44,6 +44,30 @@ function mountCell(task: Record<string, unknown>, fallback?: Record<string, unkn
 }
 
 describe('TaskTerminalOutcomeCell', () => {
+  it.each(['finished_at', 'started_at', 'created_at'])('renders UTC %s in browser time', (field) => {
+    // In Asia/Shanghai this is the issue's 07:51Z -> 15:51 case.
+    const timestamp = new Date(2026, 9, 16, 15, 51, 0).toISOString()
+    const wrapper = mountCell({ status: 'success', [field]: timestamp })
+    try {
+      expect(wrapper.get('.task-terminal-outcome__time').text()).toBe('2026-10-16 15:51')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('converts an explicit-offset fallback timestamp to browser time', () => {
+    const timestamp = new Date(2026, 0, 15, 0, 15, 0).toISOString().replace('Z', '+00:00')
+    const wrapper = mountCell(
+      { status: 'running' },
+      { status: 'available', finished_at: timestamp },
+    )
+    try {
+      expect(wrapper.get('.task-terminal-outcome__time').text()).toBe('2026-01-15 00:15')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('uses the projected missing-root diagnosis instead of the persisted secondary error', () => {
     const wrapper = mountCell({
       status: 'failed',

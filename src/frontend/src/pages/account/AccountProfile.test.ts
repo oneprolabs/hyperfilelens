@@ -5,11 +5,19 @@ import { createI18n } from 'vue-i18n'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { en } from '../../locales/en'
 import AccountProfile from './AccountProfile.vue'
-const mocks = vi.hoisted(() => ({ api: vi.fn(), replace: vi.fn(), clearAuth: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  api: vi.fn(),
+  replace: vi.fn(),
+  clearAuth: vi.fn(),
+  userTimezone: undefined as string | undefined,
+}))
 vi.mock('../../lib/api', () => ({ api: mocks.api, apiErrorMessage: () => 'Error' }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ replace: mocks.replace }) }))
 vi.mock('../../composables/useAuth', () => ({
-  useAuth: () => ({ user: ref({ id: 1, email: 'account@example.com' }), clearAuth: mocks.clearAuth }),
+  useAuth: () => ({
+    user: ref({ id: 1, email: 'account@example.com', timezone: mocks.userTimezone }),
+    clearAuth: mocks.clearAuth,
+  }),
 }))
 function render() {
   return mount(AccountProfile, { global: {
@@ -21,7 +29,80 @@ function render() {
     },
   } })
 }
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  mocks.userTimezone = undefined
+})
+describe('account timestamp display', () => {
+  it.each([
+    { profileTimezone: 'UTC', authTimezone: 'UTC' },
+    { profileTimezone: 'Pacific/Honolulu', authTimezone: 'UTC' },
+    { profileTimezone: undefined, authTimezone: 'Pacific/Honolulu' },
+    { profileTimezone: undefined, authTimezone: undefined },
+  ])('uses browser time instead of hidden timezone $profileTimezone / $authTimezone', async ({
+    profileTimezone,
+    authTimezone,
+  }) => {
+    mocks.userTimezone = authTimezone
+    // Start with browser-local dates, then emulate the API's UTC timestamps.
+    // Run this suite in separate TZ processes, including winter/summer in New York.
+    mocks.api.mockResolvedValue({
+      has_usable_password: true,
+      timezone: profileTimezone,
+      registered_at: new Date(2026, 0, 15, 15, 54, 43).toISOString(),
+      security_audit: {
+        last_login_at: new Date(2026, 6, 15, 15, 57, 32).toISOString(),
+      },
+    })
+    const wrapper = render()
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('2026-01-15 15:54:43')
+      expect(wrapper.text()).toContain('2026-07-15 15:57:32')
+      expect(wrapper.text()).not.toContain(en.account.passwordDetailsFailed)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('accepts explicit offsets and camel-case account fields', async () => {
+    const registeredAt = new Date(2026, 9, 16, 15, 54, 43).toISOString().replace('Z', '+00:00')
+    const lastLoginAt = new Date(2026, 9, 27, 13, 57, 32).toISOString().replace('Z', '+00:00')
+    mocks.api.mockResolvedValue({
+      has_usable_password: true,
+      timezone: 'UTC',
+      registeredAt,
+      securityAudit: { lastLoginAt },
+    })
+    const wrapper = render()
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('2026-10-16 15:54:43')
+      expect(wrapper.text()).toContain('2026-10-27 13:57:32')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps empty timestamp placeholders without failing the account request', async () => {
+    mocks.api.mockResolvedValue({
+      has_usable_password: true,
+      registered_at: null,
+      security_audit: { last_login_at: null },
+    })
+    const wrapper = render()
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain(en.account.emptyValue)
+      expect(wrapper.find('form').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('Invalid Date')
+      expect(wrapper.text()).not.toContain(en.account.passwordDetailsFailed)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
 describe('account password settings', () => {
   it('shows loading until password state is known', async () => {
     let resolve!: (value: unknown) => void
