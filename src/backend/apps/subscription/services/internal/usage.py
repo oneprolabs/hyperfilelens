@@ -9,9 +9,16 @@ from apps.subscription.constants import UNLIMITED
 class IncompleteUsageMeasurementError(RuntimeError):
     """A quota meter has a known lower bound but is not fully measurable."""
 
-    def __init__(self, message: str, *, measured_value: int | float = 0):
+    def __init__(
+        self,
+        message: str,
+        *,
+        measured_value: int | float = 0,
+        blocking_repository_ids: list[int] | None = None,
+    ):
         super().__init__(message)
         self.measured_value = measured_value
+        self.blocking_repository_ids = blocking_repository_ids or []
 
 
 _INSTANCE_USAGE_KEYS = (
@@ -245,10 +252,16 @@ def _storage_usage_bytes(repositories) -> int:
         ),
     )
     measured_bytes = int(facts.get("total") or 0)
-    if _storage_usage_unknown_repositories(repositories).exists():
+    blocking_ids = list(
+        _storage_usage_unknown_repositories(repositories)
+        .order_by("id")
+        .values_list("id", flat=True)[:51]
+    )
+    if blocking_ids:
         raise IncompleteUsageMeasurementError(
             "Storage usage cannot be measured completely",
             measured_value=measured_bytes,
+            blocking_repository_ids=blocking_ids,
         )
     return measured_bytes
 

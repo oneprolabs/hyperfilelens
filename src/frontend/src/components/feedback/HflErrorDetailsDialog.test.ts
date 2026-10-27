@@ -11,7 +11,9 @@ import { notificationTestFailureDetails } from '../../lib/notificationTestFailur
 
 const { push, resolve } = vi.hoisted(() => ({
   push: vi.fn(),
-  resolve: vi.fn(({ path, query }) => ({ href: `${path}?taskUuid=${encodeURIComponent(query.taskUuid)}` })),
+  resolve: vi.fn(({ path, query }) => ({ href: query.focus
+    ? `${path}?focus=${encodeURIComponent(query.focus)}`
+    : `${path}?taskUuid=${encodeURIComponent(query.taskUuid)}` })),
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push, resolve }) }))
 vi.mock('../../lib/api', () => ({ apiErrorMessageI18n: () => 'Request failed' }))
@@ -62,6 +64,43 @@ describe('notification rejection presentation', () => {
 
 describe('related task navigation', () => {
   afterEach(() => { closeErrorDetails(); push.mockClear(); resolve.mockClear() })
+
+  it('keeps a long repository list in a named keyboard-accessible scroll region', async () => {
+    const wrapper = mountDialog()
+    openErrorDetails({
+      title: 'Incomplete usage', summary: 'Incomplete usage',
+      errorCode: 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE',
+      entities: Array.from({ length: 20 }, (_, index) => ({
+        type: 'repository' as const, id: index + 1, name: `Repository ${index + 1}`,
+      })),
+    })
+    await flushPromises()
+    const list = wrapper.get('.hfl-error-details__entities')
+    expect(list.classes()).toContain('scrollbar')
+    expect(list.attributes('tabindex')).toBe('0')
+    expect(list.attributes('aria-label')).toBe(en.feedback.errorDetails.affectedEntities)
+    expect(list.findAll('li')).toHaveLength(20)
+    expect(list.findAll('.hfl-error-details__entity-link')).toHaveLength(20)
+    expect(list.find('.hfl-error-details__task-link').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('links a visible blocking repository without closing the backup failure details', async () => {
+    const wrapper = mountDialog()
+    openErrorDetails({
+      title: 'Incomplete organization usage', summary: 'Incomplete organization usage',
+      errorCode: 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE',
+      entities: [{ type: 'repository', id: 7, name: 'Unmeasured NAS' }],
+    })
+    await flushPromises()
+    expect(wrapper.get('a').attributes()).toMatchObject({
+      href: '/node/repositories?focus=7', target: '_blank', rel: 'noopener noreferrer',
+      'aria-label': 'Open repository Unmeasured NAS in a new tab',
+    })
+    expect(errorDetailsState.current).not.toBeNull()
+    expect(push).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 
   it('opens a single task in a new tab without navigating or closing the details', async () => {
     const wrapper = mountDialog()

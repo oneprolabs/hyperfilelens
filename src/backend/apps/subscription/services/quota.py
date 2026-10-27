@@ -139,6 +139,7 @@ def enforce_license_quota(organization, resource_type: str, additional: int | fl
         raise _quota_usage_unavailable_error(
             quota_type=quota_key,
             used=exc.measured_value,
+            blocking_repository_ids=exc.blocking_repository_ids,
         ) from exc
 
     if _would_exceed(limit=limit, current=current, needed=needed):
@@ -158,7 +159,12 @@ def _would_exceed(*, limit: int | float, current: int | float, needed: int | flo
     return current + needed > limit or (needed == 0 and current >= limit)
 
 
-def _quota_usage_unavailable_error(*, quota_type: str, used: int | float) -> AppError:
+def _quota_usage_unavailable_error(
+    *,
+    quota_type: str,
+    used: int | float,
+    blocking_repository_ids: list[int] | None = None,
+) -> AppError:
     message = "Quota usage cannot be measured completely. Retry after usage is available."
     return AppError(
         code="SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE",
@@ -170,6 +176,8 @@ def _quota_usage_unavailable_error(*, quota_type: str, used: int | float) -> App
             "quota_type": quota_type,
             "used": used,
             "scope": "organization",
+            "blocking_repository_ids": (blocking_repository_ids or [])[:50],
+            "blocking_repositories_truncated": len(blocking_repository_ids or []) > 50,
         },
     )
 

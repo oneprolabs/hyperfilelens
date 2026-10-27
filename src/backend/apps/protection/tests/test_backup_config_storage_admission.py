@@ -262,7 +262,26 @@ class BackupConfigStorageAdmissionMixin:
 class CommunityBackupConfigStorageAdmissionTests(
     BackupConfigStorageAdmissionMixin, TestCase
 ):
-    pass
+    def test_usage_error_identifies_only_unmeasured_repositories_in_this_organization(self):
+        blocker = Repository.objects.create(
+            organization_id=self.org.id,
+            name="Unmeasured storage",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+        )
+        other_org = Organization.objects.create(key="other-usage-org", name="Other")
+        Repository.objects.create(
+            organization_id=other_org.id,
+            name="Private storage",
+            repo_type=Repository.Type.S3,
+            status=Repository.Status.CREATED,
+        )
+        with self.assertRaises(AppError) as raised:
+            enforce_license_quota(self.org, "max_storage_bytes", additional=0)
+        self.assertEqual(raised.exception.code, "SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE")
+        self.assertEqual(raised.exception.meta["scope"], "organization")
+        self.assertEqual(raised.exception.meta["blocking_repository_ids"], [blocker.id])
+        self.assertFalse(raised.exception.meta["blocking_repositories_truncated"])
 
 
 @skipUnless(apps.is_installed("apps.subscription_gov"), "Requires the EE extension")

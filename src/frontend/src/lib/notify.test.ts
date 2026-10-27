@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { closeErrorDetails, errorDetailsState } from './errors/details'
-import { notifyError } from './notify'
+import { closeErrorDetails, errorDetailsState, openErrorDetails } from './errors/details'
+import { notifyError, notifyWarning } from './notify'
 import { resetToastStoreForTests, toastState } from './toast/store'
 
 describe('notify error presentation', () => {
@@ -51,6 +51,30 @@ describe('notify error presentation', () => {
 
     expect(toastState.items).toHaveLength(0)
     expect(errorDetailsState.current?.errorCode).toBe('ENDPOINT.UNAVAILABLE')
+  })
+
+  it('keeps quota warning details closed until the user opens them', () => {
+    const details = {
+      title: 'Storage usage unavailable',
+      summary: 'Organization storage usage is incomplete',
+      errorCode: 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE',
+      resolutions: ['Refresh usage for the affected repositories'],
+    }
+    notifyWarning({
+      message: details.summary,
+      details,
+      showDetails: true,
+      dedupeKey: 'backup-start:quota-usage-unavailable',
+    })
+
+    expect(toastState.items).toHaveLength(1)
+    expect(toastState.items[0]?.type).toBe('warning')
+    expect(toastState.items[0]?.details?.resolutions).toEqual(details.resolutions)
+    expect(errorDetailsState.current).toBeNull()
+
+    openErrorDetails(toastState.items[0]!.details!)
+
+    expect(errorDetailsState.current?.errorCode).toBe(details.errorCode)
   })
 
   it('avoids repeating the same title and message in a toast', () => {

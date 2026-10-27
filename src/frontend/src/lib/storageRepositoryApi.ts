@@ -64,7 +64,9 @@ export type StorageRepository = {
   storage_pool_key?: string
   storage_mount_point?: string
   last_checked_at?: string | null
+  metrics_last_attempt_at?: string | null
   usage_probe_status?: string
+  usage_last_error?: string | null
   capacity_probe_status?: string
   usage_last_success_at?: string | null
   capacity_last_success_at?: string | null
@@ -364,6 +366,16 @@ export async function listAllStorageRepositories(
 export async function getStorageRepository(id: number, init?: RequestInit) {
   return unwrapApiPayload<StorageRepository>(
     await api<unknown>(`${repositoryBase}/${id}/`, { ...init, headers: orgHeaders() }),
+  )
+}
+
+export async function syncStorageRepositoryUsage(id: number, force = true) {
+  return unwrapApiPayload<{ queued: boolean, task_id?: string | null }>(
+    await api<unknown>(`${repositoryBase}/${id}/sync-usage/`, {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+      headers: orgHeaders(),
+    }),
   )
 }
 

@@ -176,7 +176,7 @@ import {
   cancelProtectionBackupTask,
   type StartBackupTaskResultItem,
 } from '../../lib/protectionBackupTaskApi'
-import { backupStartResultMessage } from '../../lib/protectionBackupTaskPresentation'
+import { backupQuotaUsageDetails, backupStartResultMessage } from '../../lib/protectionBackupTaskPresentation'
 import { cancelProtectionRestoreTask } from '../../lib/protectionRestoreTaskApi'
 import {
   type ProtectionStopConfirmItem,
@@ -5522,6 +5522,28 @@ function onBackupTaskSelection(rows: FlowSourceRow[]) {
   onStep3SelectionChange(rows)
 }
 
+async function showBackupStartFailure(result: StartBackupTaskResultItem) {
+  if (result.error_code !== 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE') {
+    ElMessage.warning({ message: backupStartResultMessage(result, t), grouping: true })
+    return
+  }
+  let repositories: StorageRepository[] = []
+  if (result.error_meta?.scope === 'organization' && result.error_meta.blocking_repository_ids?.length) {
+    try {
+      repositories = await listAllStorageRepositories({ page_size: 100 })
+    } catch {
+      repositories = []
+    }
+  }
+  const details = backupQuotaUsageDetails(result, repositories, t)
+  notifyWarning({
+    message: details.summary,
+    details,
+    showDetails: true,
+    dedupeKey: 'backup-start:quota-usage-unavailable',
+  })
+}
+
 async function startSelectedBackupTasks() {
   const sources = step3SourceSelection.value
   if (!sources.length) {
@@ -5575,7 +5597,7 @@ async function startSelectedBackupTasks() {
       })
       const failed = result.results.find((item) => item.status === 'failed' || item.status === 'skipped')
       if (failed?.message) {
-        ElMessage.warning({ message: backupStartResultMessage(failed, t), grouping: true })
+        await showBackupStartFailure(failed)
       }
       return
     }
@@ -5585,7 +5607,7 @@ async function startSelectedBackupTasks() {
     }
     const failed = result.results.find((item) => item.status === 'failed' || item.status === 'skipped')
     if (failed?.message) {
-      ElMessage.warning({ message: backupStartResultMessage(failed, t), grouping: true })
+      await showBackupStartFailure(failed)
       return
     }
     ElMessage.warning({ message: t('protection.backupsPage.msgSourceNoBackupConfig'), grouping: true })

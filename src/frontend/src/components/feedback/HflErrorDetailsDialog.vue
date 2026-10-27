@@ -95,6 +95,7 @@ function entityIcon(type: ErrorEntity['type']) {
     class="hfl-error-details"
     :class="{ 'hfl-error-details--warning': isWarning }"
     modal-class="hfl-error-details-overlay"
+    body-class="scrollbar"
     append-to-body
     destroy-on-close
     :show-close="false"
@@ -190,7 +191,11 @@ function entityIcon(type: ErrorEntity['type']) {
         class="hfl-error-details__section"
       >
         <h3>{{ t('feedback.errorDetails.affectedEntities') }}</h3>
-        <ul class="hfl-error-details__entities">
+        <ul
+          class="hfl-error-details__entities scrollbar"
+          tabindex="0"
+          :aria-label="t('feedback.errorDetails.affectedEntities')"
+        >
           <li
             v-for="entity in details.entities"
             :key="`${entity.type}:${entity.id}`"
@@ -204,7 +209,24 @@ function entityIcon(type: ErrorEntity['type']) {
               :size="16"
             /></span>
             <div class="hfl-error-details__entity-body">
-              <span class="hfl-error-details__entity-name">{{ entity.name }}</span>
+              <a
+                v-if="details.errorCode === 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE' && entity.type === 'repository' && Number.isSafeInteger(Number(entity.id)) && Number(entity.id) > 0"
+                class="hfl-error-details__entity-name hfl-error-details__entity-link"
+                :href="router.resolve({ path: '/node/repositories', query: { focus: String(entity.id) } }).href"
+                target="_blank"
+                rel="noopener noreferrer"
+                :aria-label="t('repositoriesPage.quotaUsageOpenRepository', { name: entity.name })"
+              >
+                {{ entity.name }}
+                <ExternalLink
+                  :size="14"
+                  aria-hidden="true"
+                />
+              </a>
+              <span
+                v-else
+                class="hfl-error-details__entity-name"
+              >{{ entity.name }}</span>
               <span
                 v-if="entity.error"
                 class="hfl-error-details__entity-error"
@@ -361,21 +383,39 @@ function entityIcon(type: ErrorEntity['type']) {
 </template>
 
 <style>
+.hfl-error-details-overlay .el-overlay-dialog {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  padding: calc(16px + var(--app-safe-top)) calc(16px + var(--app-safe-right)) calc(16px + var(--app-safe-bottom)) calc(16px + var(--app-safe-left));
+  overflow: hidden;
+}
 .hfl-error-details.el-dialog {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 32px);
   padding: 0;
+  margin: 0;
   overflow: hidden;
   border-radius: 18px;
 }
 .hfl-error-details .el-dialog__header {
+  flex: 0 0 auto;
   padding: 0;
   margin: 0;
 }
 .hfl-error-details .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: min(62vh, 640px);
   padding: 2px 26px 10px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 .hfl-error-details .el-dialog__footer {
+  flex: 0 0 auto;
   display: block;
   width: 100%;
   padding: 0;
@@ -652,27 +692,42 @@ function entityIcon(type: ErrorEntity['type']) {
 }
 .hfl-error-details__entities {
   display: grid;
-  gap: 6px;
-  padding: 0;
+  max-height: min(260px, 32vh);
+  gap: 8px;
+  padding: 4px;
   margin: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   list-style: none;
+}
+.hfl-error-details__entities:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 10px;
 }
 .hfl-error-details__entity {
   display: flex;
+  min-height: 44px;
+  box-sizing: border-box;
   gap: 10px;
-  padding: 8px 11px;
-  align-items: flex-start;
+  padding: 10px 12px;
+  align-items: center;
   background: var(--color-grey-2);
   border: 1px solid var(--color-border-light);
   border-radius: 9px;
 }
 .hfl-error-details__entity-icon {
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
   font-size: 15px;
   line-height: 20px;
 }
 .hfl-error-details__entity-body {
   display: grid;
+  flex: 1;
   min-width: 0;
   gap: 2px;
 }
@@ -680,11 +735,33 @@ function entityIcon(type: ErrorEntity['type']) {
   color: var(--color-text-primary);
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.hfl-error-details__entity-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--color-primary);
+  text-decoration: none;
+}
+.hfl-error-details__entity-link svg {
+  flex-shrink: 0;
+}
+.hfl-error-details__entity-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.hfl-error-details__entity-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 .hfl-error-details__entity-error {
   color: var(--color-text-secondary);
   font-size: 12px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .hfl-error-details__technical-disclosure {
@@ -723,6 +800,13 @@ function entityIcon(type: ErrorEntity['type']) {
   padding-bottom: 4px;
 }
 
+@media (max-width: 640px), (max-height: 600px) {
+  .hfl-error-details__entities {
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+}
 
 @media (max-width: 640px) {
   .hfl-error-details__task-row {
@@ -747,7 +831,7 @@ function entityIcon(type: ErrorEntity['type']) {
     display: flex;
     width: 100% !important;
     max-width: none;
-    max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - 8px);
+    max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 8px);
     margin: 0;
     flex-direction: column;
     border-radius: 18px 18px 0 0;
