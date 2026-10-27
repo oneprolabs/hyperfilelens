@@ -19,6 +19,7 @@ const (
 func ScheduleDetachedUpgrade(
 	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
+	minimumFreeBytes uint64,
 ) error {
 	archivePath = strings.TrimSpace(archivePath)
 	if archivePath == "" {
@@ -43,6 +44,7 @@ func ScheduleDetachedUpgrade(
 		runAsHome,
 		userInstall,
 		scriptPath,
+		minimumFreeBytes,
 	); err != nil {
 		_ = os.Remove(scriptPath)
 		if logDir != "" {
@@ -69,6 +71,7 @@ func writeWindowsUpgradeScript(
 	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
 	scriptPath string,
+	minimumFreeBytes uint64,
 ) error {
 	logFile := UpgradeLogPath(logDir)
 	pendingDir := filepath.Dir(archivePath)
@@ -88,6 +91,7 @@ $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $runtimeTaskName = if ($userInstall) { "HyperFileLensAgent.User.$currentSid" } else { 'HyperFileLensAgent' }
 $scheduledTaskName = if ($userInstall) { "$runtimeTaskName.DetachedRunner" } else { 'HyperFileLensAgent.DetachedRunner' }
 $SLEEP_SECONDS = %d
+$env:HFL_UPGRADE_MIN_FREE_BYTES = "%d"
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $logFile) | Out-Null
 function Log([string]$msg) {
@@ -149,6 +153,7 @@ exit $rc
 		runAsHome,
 		userInstallFlag,
 		upgradeDelaySecond,
+		minimumFreeBytes,
 	)
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o750); err != nil {
 		return err

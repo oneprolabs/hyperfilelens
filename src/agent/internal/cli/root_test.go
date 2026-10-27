@@ -1,6 +1,12 @@
 package cli
 
-import "testing"
+import (
+	"errors"
+	"testing"
+	"time"
+
+	"hyperfilelens/agent/internal/platform/install"
+)
 
 func TestVersionIsARealSubcommand(t *testing.T) {
 	if !IsSubcommand("version") {
@@ -38,5 +44,32 @@ func TestPackageVerifyRejectsUnknownRole(t *testing.T) {
 	err := runPackage([]string{"verify", "--root", t.TempDir(), "--role", "unknown"})
 	if err == nil || err.Error() != `unsupported package role "unknown"` {
 		t.Fatalf("runPackage() error = %v", err)
+	}
+}
+
+func TestPackageCheckSpaceRequiresAbsolutePaths(t *testing.T) {
+	if err := runPackage([]string{"check-space"}); err == nil {
+		t.Fatal("missing paths accepted")
+	}
+	if err := runPackage([]string{"check-space", "--data-dir", "relative", "--install-dir", "relative"}); err == nil {
+		t.Fatal("relative paths accepted")
+	}
+}
+
+func TestPackageCheckSpaceRecordsDetachedDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	started := time.Now().UTC()
+	t.Setenv("HFL_UPGRADE_MIN_FREE_MB", "")
+	t.Setenv("HFL_UPGRADE_MIN_FREE_BYTES", "18446744073709551615")
+	err := runPackage([]string{
+		"check-space", "--record-failure", "--data-dir", root, "--install-dir", root,
+	})
+	var failure *install.UpgradeSpaceError
+	if !errors.As(err, &failure) || failure.Code != install.UpgradeSpaceInsufficient {
+		t.Fatalf("failure = %v", err)
+	}
+	record := install.ReadUpgradeSpaceFailure(root, &started)
+	if record == nil || record.Code != failure.Code {
+		t.Fatalf("missing detached diagnostics: %#v", record)
 	}
 }

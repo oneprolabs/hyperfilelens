@@ -31,10 +31,12 @@ const (
 )
 
 var (
-	fetchUpgradeArtifact   = release.FetchArtifact
-	downloadUpgradeArchive = install.DownloadURLWithProgress
-	upgradeRetryDelays     = []time.Duration{5 * time.Second, 15 * time.Second}
-	waitUpgradeRetry       = waitWithContext
+	fetchUpgradeArtifact      = release.FetchArtifact
+	downloadUpgradeArchive    = install.DownloadURLWithProgress
+	upgradeRetryDelays        = []time.Duration{5 * time.Second, 15 * time.Second}
+	waitUpgradeRetry          = waitWithContext
+	checkUpgradeSpace         = install.CheckUpgradeSpace
+	checkUpgradeDownloadSpace = install.CheckUpgradeDownloadSpace
 )
 
 type upgradePreparationError struct {
@@ -48,6 +50,10 @@ func (failure *upgradePreparationError) Unwrap() error { return failure.err }
 func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID string, p Payload) (string, map[string]any, string) {
 	if e.current().InstallationMode == model.InstallationModeAccount {
 		return "failed", nil, "specified-user continuous protection requires administrator authorization for upgrade; run the generated local administrator command"
+	}
+	minimum, err := upgradeMinimumFromPayload(p)
+	if err != nil {
+		return "failed", nil, err.Error()
 	}
 	archivePath, targetVersion, workDir, bundleRoot, err := e.prepareUpgradeBundle(ctx, rep, taskID, p)
 	if err != nil {
@@ -70,6 +76,9 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 	}
 	installDir := vfs.LifecycleInstallDirForMode(cfg.InstallationMode)
 	upgradeLog := install.UpgradeLogPath(logDir)
+	if err := e.checkLocalUpgradeSpace(minimum); err != nil {
+		return upgradeSpaceFailure(err)
+	}
 
 	stagedArchive, err := install.StageUpgradeArchive(dataDir, archivePath)
 	if err != nil {
@@ -80,6 +89,10 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 		return "failed", nil, err.Error()
 	}
 
+	if err := e.checkLocalUpgradeSpace(minimum); err != nil {
+		_ = os.RemoveAll(filepath.Dir(stagedArchive))
+		return upgradeSpaceFailure(err)
+	}
 	_ = sendProgress(ctx, rep, taskID, map[string]any{
 		"phase":       "upgrade",
 		"mode":        "local_detached",
@@ -93,6 +106,7 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 		cfg.RunAsUser,
 		cfg.RunAsHome,
 		cfg.InstallationMode == model.InstallationModeUser || cfg.InstallationMode == model.InstallationModeUserContinuous,
+		minimum,
 	); err != nil {
 		slog.Warn("detached upgrade schedule failed", "err", err, "upgrade_log", upgradeLog)
 		if !install.ShouldRetainDetachedLifecycleFiles(err) {
@@ -219,6 +233,13 @@ func (e *Engine) prepareUpgradeBundle(ctx context.Context, rep ReporterSink, tas
 		dataDir = vfs.DefaultAgentDataDir()
 	}
 
+	minimum, err := upgradeMinimumFromPayload(p)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	if err := e.checkLocalUpgradeSpace(minimum); err != nil {
+		return "", "", "", "", err
+	}
 	workDir = install.RuntimeDownloadDir(dataDir)
 	if err := os.RemoveAll(workDir); err != nil {
 		return "", "", "", "", err
@@ -245,6 +266,10 @@ func (e *Engine) prepareUpgradeBundle(ctx context.Context, rep ReporterSink, tas
 		return "", "", "", "", err
 	}
 
+	if err := e.checkLocalUpgradeSpace(minimum); err != nil {
+		os.RemoveAll(workDir)
+		return "", "", "", "", err
+	}
 	extractDir := filepath.Join(workDir, "extract")
 	if err := install.ExtractArchive(ctx, archivePath, extractDir); err != nil {
 		os.RemoveAll(workDir)
@@ -287,6 +312,7 @@ func (e *Engine) downloadUpgradeBundle(
 		})
 
 		downloadURL := ""
+		var requiredSpace uint64
 		if attempt == 1 && initialDownloadURL != "" {
 			downloadURL = initialDownloadURL
 		} else {
@@ -318,8 +344,24 @@ func (e *Engine) downloadUpgradeBundle(
 				)
 			}
 			downloadURL = artifact.DownloadURL
+			requiredSpace = artifact.RequiredSpace
 		}
 
+		// Existing release capacity metadata is a conservative preparation estimate.
+		// Legacy payloads/releases without it still use the baseline local checks.
+		if requiredSpace > 0 {
+			dataDir := strings.TrimSpace(cfg.DataDir)
+			if dataDir == "" {
+				dataDir = vfs.DefaultAgentDataDir()
+			}
+			if err := checkUpgradeDownloadSpace(dataDir, requiredSpace); err != nil {
+				var failure *install.UpgradeSpaceError
+				if errors.As(err, &failure) {
+					return &upgradePreparationError{err: err, result: failure.Result()}
+				}
+				return err
+			}
+		}
 		tracker := &upgradeDownloadTracker{}
 		reporter := tracker.reporter(ctx, rep, taskID, attempt, *targetVersion)
 		downloadErr := downloadUpgradeArchive(ctx, downloadURL, archivePath, reporter)
@@ -519,4 +561,40 @@ func downloadErrorReason(err error) string {
 		return "truncated"
 	}
 	return "network_error"
+}
+
+func upgradeMinimumFromPayload(p Payload) (uint64, error) {
+	var requested uint64
+	if raw, exists := p.Extra["min_free_bytes"]; exists {
+		value, ok := payloadIntValue(raw)
+		if !ok || value < 0 {
+			return 0, fmt.Errorf("invalid upgrade min_free_bytes")
+		}
+		requested = uint64(value)
+	}
+	return install.UpgradeMinimumFreeBytes(requested)
+}
+
+func (e *Engine) checkLocalUpgradeSpace(minimum uint64) error {
+	cfg := e.current()
+	dataDir := strings.TrimSpace(cfg.DataDir)
+	if dataDir == "" {
+		dataDir = vfs.DefaultAgentDataDir()
+	}
+	if err := checkUpgradeSpace(dataDir, vfs.InstallDirForMode(cfg.InstallationMode), minimum); err != nil {
+		var failure *install.UpgradeSpaceError
+		if errors.As(err, &failure) {
+			return &upgradePreparationError{err: err, result: failure.Result()}
+		}
+		return err
+	}
+	return nil
+}
+
+func upgradeSpaceFailure(err error) (string, map[string]any, string) {
+	var failure *upgradePreparationError
+	if errors.As(err, &failure) {
+		return "failed", failure.result, err.Error()
+	}
+	return "failed", nil, err.Error()
 }

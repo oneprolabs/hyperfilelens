@@ -2382,7 +2382,7 @@ export const en = {
       downgrade: 'Remote upgrade cannot install an older Agent version.',
       proxyBound: 'Reassign or remove the bound resources, then retry.',
     },
-    confirmImpactUpgrade: 'Nodes may be briefly unavailable during upgrade; related tasks may pause.',
+    confirmImpactUpgrade: 'The Agent checks free space on its actual upgrade paths before stopping. Disk usage percentage alone does not block upgrades. Nodes may be briefly unavailable during upgrade; related tasks may pause.',
     confirmImpactRemove: 'Online agents will be uninstalled. Console records will be removed. This cannot be undone.',
     cancelQueued: 'Cancel Queued',
     workloadBlocked: 'This node still has active tasks or resource dependencies. Resolve them and try again.',

@@ -486,3 +486,116 @@ func TestGatewayHooksPreferLongLivedNodeCredential(t *testing.T) {
 		t.Fatal("detached gateway upgrade hook must derive Agent Root from INSTALL_SH")
 	}
 }
+
+func TestInstallShellChecksLocalSpaceBeforeStopping(t *testing.T) {
+	source := readPackagingInstallShell(t)
+	start := strings.Index(source, "cmd_upgrade() {")
+	end := strings.Index(source[start:], "\ncmd_")
+	upgrade := source[start:]
+	if end > 0 {
+		upgrade = upgrade[:end]
+	}
+	first := strings.Index(upgrade, `upgrade_preflight "${data_dir}" "${src_root}"`)
+	snapshot := strings.Index(upgrade, `backup_agent_config_and_db "${data_dir}"`)
+	final := strings.Index(upgrade, `upgrade_disk_preflight "${data_dir}" "${src_root}"`)
+	stop := strings.Index(upgrade, "\n\tstop_service")
+	if first < 0 || !(first < snapshot && snapshot < final && final < stop) {
+		t.Fatalf("incorrect check/snapshot/stop order: %d %d %d %d", first, snapshot, final, stop)
+	}
+	if !strings.Contains(source, `package check-space --record-failure --data-dir "${data_dir}" --install-dir "${INSTALL_DIR}"`) {
+		t.Fatal("must use shared cross-platform checker")
+	}
+	if strings.Contains(source, "UPGRADE_MIN_FREE_MB=") {
+		t.Fatal("must not maintain separate shell space policy")
+	}
+}
+
+func TestInstallShellSelectsSupportedDiskCheckerWithoutBypassingFailure(t *testing.T) {
+	body := shellFunction(t, readPackagingInstallShell(t), "upgrade_disk_preflight")
+	for _, test := range []struct {
+		name      string
+		installed string
+		target    string
+		want      string
+		wantExit  int
+	}{
+		{"installed checker with old package", "supported", "old", "installed", 0},
+		{"prefer installed when both support", "supported", "supported", "installed", 0},
+		{"target bridges old installed Agent", "old", "supported", "target", 0},
+		{"target bridges absent installed Agent", "absent", "supported", "target", 0},
+		{"target bridges unreadable installed help", "help-failed", "supported", "target", 0},
+		{"installed disk failure does not fall back", "disk-failed", "supported", "installed", 2},
+		{"target disk failure aborts", "old", "disk-failed", "target", 2},
+		{"no supported checker must fail", "old", "old", "target", 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "paths with spaces")
+			installDir := filepath.Join(root, "installed", "bin")
+			sourceRoot := filepath.Join(root, "source")
+			for _, dir := range []string{installDir, filepath.Join(sourceRoot, "bin")} {
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, candidate := range []struct{ path, name, mode string }{
+				{filepath.Join(installDir, "hfl-agent"), "installed", test.installed},
+				{filepath.Join(sourceRoot, "bin", "hfl-agent"), "target", test.target},
+			} {
+				if candidate.mode == "absent" {
+					continue
+				}
+				// These stubs only expose help and the selected checker result.
+				stub := "#!/usr/bin/env bash\nset -eu\nname=" + shellSingleQuote(candidate.name) +
+					"\nmode=" + shellSingleQuote(candidate.mode) + `
+if [[ "${1:-}" == "help" ]]; then
+  [[ "$mode" != "help-failed" ]] || exit 2
+  if [[ "$mode" == "old" ]]; then echo 'package verify'; else echo 'package check-space'; fi
+  exit 0
+fi
+echo "$name" >>"$TRACE"
+[[ "$mode" != "old" ]] || { echo 'unsupported command'; exit 2; }
+[[ "$#" == 7 && "$1" == "package" && "$2" == "check-space" &&
+   "$3" == "--record-failure" && "$4" == "--data-dir" &&
+   "$5" == "$DATA_ROOT" && "$6" == "--install-dir" && "$7" == "$INSTALL_DIR" ]] || exit 64
+[[ "$mode" != "disk-failed" ]] || { echo 'AGENT_UPGRADE_DISK_SPACE_INSUFFICIENT'; exit 2; }
+`
+				if err := os.WriteFile(candidate.path, []byte(stub), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			trace := filepath.Join(root, "checks")
+			cmd := exec.Command("bash", "-c", "set -Eeuo pipefail\n"+body+`
+log_fail() { echo "$1"; exit "${2:-1}"; }
+upgrade_disk_preflight "$DATA_ROOT" "$SOURCE_ROOT"
+`)
+			cmd.Env = append(os.Environ(),
+				"INSTALL_DIR="+installDir,
+				"SOURCE_ROOT="+sourceRoot,
+				"DATA_ROOT="+filepath.Join(root, "data"),
+				"TRACE="+trace,
+			)
+			output, err := cmd.CombinedOutput()
+			exitCode := 0
+			if err != nil {
+				var ok bool
+				exitCode, ok = shellExitStatus(err)
+				if !ok {
+					t.Fatalf("start checker test: %v", err)
+				}
+			}
+			if exitCode != test.wantExit {
+				t.Fatalf("exit = %d, want %d; output: %s", exitCode, test.wantExit, output)
+			}
+			raw, err := os.ReadFile(trace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(raw) != test.want+"\n" {
+				t.Fatalf("checks = %q, want only %s", raw, test.want)
+			}
+			if test.installed == "disk-failed" && !strings.Contains(string(output), "AGENT_UPGRADE_DISK_SPACE_INSUFFICIENT") {
+				t.Fatal("lost the selected checker's disk failure")
+			}
+		})
+	}
+}

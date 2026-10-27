@@ -16,6 +16,7 @@ const upgradeDelaySecond = 5
 func ScheduleDetachedUpgrade(
 	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
+	minimumFreeBytes uint64,
 ) error {
 	if archivePath = strings.TrimSpace(archivePath); archivePath == "" {
 		return fmt.Errorf("upgrade archive path required")
@@ -39,6 +40,7 @@ func ScheduleDetachedUpgrade(
 		runAsHome,
 		userInstall,
 		scriptPath,
+		minimumFreeBytes,
 	); err != nil {
 		if logDir != "" {
 			_ = AppendUpgradeLog(logDir, fmt.Sprintf("Failed to write upgrade script: %v.", err))
@@ -65,6 +67,7 @@ func writeUnixUpgradeScript(
 	archivePath, installerPath, logDir, installationMode, runAsUser, runAsHome string,
 	userInstall bool,
 	scriptPath string,
+	minimumFreeBytes uint64,
 ) error {
 	logFile := UpgradeLogPath(logDir)
 	pendingDir := filepath.Dir(archivePath)
@@ -83,6 +86,7 @@ RUN_AS_USER=%q
 RUN_AS_HOME=%q
 USER_INSTALL=%s
 SLEEP_SECONDS=%d
+export HFL_UPGRADE_MIN_FREE_BYTES=%d
 
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 umask 022
@@ -160,6 +164,7 @@ exit "$rc"
 		runAsHome,
 		userInstallFlag,
 		upgradeDelaySecond,
+		minimumFreeBytes,
 		unixGatewaySidecarUpgradeHook,
 	)
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o750); err != nil {
