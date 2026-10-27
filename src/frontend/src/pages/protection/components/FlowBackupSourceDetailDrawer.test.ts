@@ -12,6 +12,27 @@ const snapshotPanel = compactSourceText(
   readFileSync(resolve(process.cwd(), 'src/pages/protection/components/SnapshotPointDetailPanel.vue'), 'utf8'),
 )
 
+describe('source task toolbar badge layout', () => {
+  it('reserves space above the toolbar for the advanced-filter badge', () => {
+    expect(drawer).toContain('.dp-source-task-toolbar { padding-top: 10px; margin-bottom: 10px; }')
+    expect(drawer).toContain('class="dp-source-task-filter-badge"')
+  })
+})
+
+describe('source task advanced-filter date range', () => {
+  it('keeps Date values consistent with normalization and restores the applied range', () => {
+    const picker = sourceTextBetween(
+      drawer,
+      'v-model="taskAdvancedFilterDraft.dateRange"',
+      '</ElFormItem>',
+    )
+    expect(picker).toContain('type="datetimerange"')
+    expect(picker).not.toContain('value-format=')
+    expect(drawer).toContain('taskAdvancedFilterDraft.dateRange = taskFilterDateRange.value')
+    expect(drawer).toContain('function openSourceTaskAdvancedFilterDrawer() { syncSourceTaskAdvancedFilterDraft() taskAdvancedFilterOpen.value = true }')
+  })
+})
+
 function sourceTextBetween(source: string, start: string, end: string) {
   const startIndex = source.indexOf(start)
   const endIndex = source.indexOf(end, startIndex)
