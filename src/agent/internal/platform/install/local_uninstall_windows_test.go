@@ -258,15 +258,17 @@ func TestWriteWindowsUserUninstallScriptUsesCurrentUserLifecycle(t *testing.T) {
 	assertPowerShellParses(t, path)
 }
 
-func TestWriteWindowsUserUpgradeScriptStopsScheduledTask(t *testing.T) {
+func TestWriteWindowsUserUpgradeScriptPreservesLifecycleContext(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + `/run-upgrade.ps1`
 	err := writeWindowsUpgradeScript(
 		dir+`\install`,
 		dir+`\package.zip`,
 		dir+`\logs`,
+		"user", "", "",
 		true,
 		path,
+		DefaultUpgradeMinFreeBytes,
 	)
 	if err != nil {
 		t.Fatalf("writeWindowsUpgradeScript: %v", err)
@@ -279,8 +281,8 @@ func TestWriteWindowsUserUpgradeScriptStopsScheduledTask(t *testing.T) {
 	for _, expected := range []string{
 		"$userInstall = $true",
 		"$runtimeTaskName = if ($userInstall) { \"HyperFileLensAgent.User.$currentSid\" }",
-		"Stop-ScheduledTask -TaskName $runtimeTaskName",
-		"$agentRoot = Split-Path -Parent $install",
+		`$env:HFL_INSTALLATION_MODE = $installationMode`,
+		`$env:HFL_UPGRADE_MIN_FREE_BYTES = "536870912"`,
 		"$scheduledTaskName = if ($userInstall) { \"$runtimeTaskName.DetachedRunner\" }",
 		"$upgradeSucceeded = $false",
 		"} finally {",

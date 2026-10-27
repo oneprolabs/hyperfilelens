@@ -1360,25 +1360,33 @@ EOF
 	log_ok "wrote ${meta}"
 }
 
-UPGRADE_MIN_FREE_MB="${HFL_UPGRADE_MIN_FREE_MB:-512}"
 UPGRADE_BIN_BACKUP=""
+upgrade_disk_preflight() {
+	local data_dir="$1" src_root="$2" output checker checker_help
+	checker="${src_root}/bin/hfl-agent"
+	# Prefer the installed checker for main-to-release switches and same-version
+	# repairs using packages that predate this command. Otherwise use the verified
+	# target binary to protect upgrades from older installed Agents.
+	if [[ -x "${INSTALL_DIR}/hfl-agent" ]] \
+		&& checker_help="$("${INSTALL_DIR}/hfl-agent" help 2>/dev/null)" \
+		&& [[ "${checker_help}" == *"package check-space"* ]]; then
+		checker="${INSTALL_DIR}/hfl-agent"
+	fi
+	# A selected checker's failure must abort, never retry with a weaker checker.
+	if ! output="$("${checker}" package check-space --record-failure --data-dir "${data_dir}" --install-dir "${INSTALL_DIR}" 2>&1)"; then
+		log_fail "${output}" 2
+	fi
+}
+
 upgrade_preflight() {
-	local data_dir="$1"
-	local free_mb
-	free_mb="$(df -Pm "${data_dir}" 2>/dev/null | awk 'NR==2 {print $4}')"
-	if [[ -n "${free_mb}" && "${free_mb}" -lt "${UPGRADE_MIN_FREE_MB}" ]]; then
-		log_fail "Upgrade preflight failed: ${data_dir} needs at least ${UPGRADE_MIN_FREE_MB}MB free space, but only ${free_mb}MB is available." 2
-	fi
-	free_mb="$(df -Pm "${INSTALL_DIR}" 2>/dev/null | awk 'NR==2 {print $4}')"
-	if [[ -n "${free_mb}" && "${free_mb}" -lt "${UPGRADE_MIN_FREE_MB}" ]]; then
-		log_fail "Upgrade preflight failed: ${INSTALL_DIR} needs at least ${UPGRADE_MIN_FREE_MB}MB free space, but only ${free_mb}MB is available." 2
-	fi
+	local data_dir="$1" src_root="$2"
+	upgrade_disk_preflight "${data_dir}" "${src_root}"
 	if agent_manages_service && agent_uses_systemd; then
 		if ! hfl_systemctl cat hyperfilelens-agent.service >/dev/null 2>&1; then
 			log_fail "Upgrade preflight failed: hyperfilelens-agent.service unit is missing." 2
 		fi
 	fi
-	log_ok "upgrade preflight passed (min free ${UPGRADE_MIN_FREE_MB}MB)"
+	log_ok "upgrade preflight passed (local path free-space checks)"
 }
 
 backup_upgrade_binaries() {
@@ -2887,7 +2895,7 @@ cmd_upgrade() {
 		hfl_print_section "Preflight checks"
 	fi
 
-	upgrade_preflight "${data_dir}"
+	upgrade_preflight "${data_dir}" "${src_root}"
 	install_nas_deps "${installed_role}" "${src_root}"
 	# Do not mutate or stop a running legacy service until the requested target
 	# version has passed confirmation and downgrade checks.
@@ -2922,6 +2930,7 @@ cmd_upgrade() {
 	# All rollback state is captured before touching the running Agent. This
 	# keeps a stop failure non-destructive and preserves a standalone consistent
 	# SQLite snapshot for any later deployment failure.
+	upgrade_disk_preflight "${data_dir}" "${src_root}"
 	UPGRADE_STOP_ATTEMPTED=1
 	write_upgrade_state "${data_dir}" "stopping"
 	stop_service

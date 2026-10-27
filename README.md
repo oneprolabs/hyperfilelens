@@ -233,6 +233,43 @@ python3 -m unittest tools/quality/test_check_english_source.py
 
 For additional development and build options, run the relevant repository scripts with `--help`.
 
+## Agent Upgrade Disk Preflight
+
+Disk usage percentage alone does not block Agent upgrades. The controller's
+host-wide capacity inventory can be stale or describe unrelated volumes; it is
+not an authoritative upgrade admission check.
+
+On Linux, macOS and Windows, the Agent checks caller-available free bytes on
+its actual data, binary, download, extraction, staging and rollback paths.
+Windows also checks the temporary location used for the state snapshot. Missing
+directories are checked using their nearest existing parent. Unreadable capacity
+is reported separately from insufficient space.
+
+The baseline reserve is 512 MiB per checked filesystem. This is a minimum
+reserve, not a guarantee of peak upgrade capacity; existing release preparation
+estimates are also applied to package preparation paths when available.
+`NODE_UPGRADE_MIN_FREE_BYTES` raises the controller-requested reserve.
+`HFL_UPGRADE_MIN_FREE_MB` (MiB) can raise the local installer reserve.
+Neither can lower the 512 MiB safety floor. `NODE_UPGRADE_MAX_DISK_USED_PCT`
+is no longer used.
+
+Online upgrades check before downloading, before extraction and before
+scheduling the detached installer. Both installers prefer the installed Agent's
+shared local checker when supported, otherwise use the validated target package.
+This protects upgrades from older Agents while allowing main-to-release switches
+and same-version repairs using older packages. A checker failure always aborts;
+it is never bypassed by trying another checker. Installers check after package
+preparation and again after capturing rollback state, before the
+service-stop/deployment boundary. A preflight failure
+does not replace the existing binaries. Detached preflight diagnostics are
+retained for the existing task-repair flow. A valid current-attempt disk failure
+takes precedence over historical success logs.
+
+These checks cannot reserve space against other processes. Existing snapshot,
+deployment, health-check and rollback protections still apply if space is
+consumed later. Data Gateway sidecar/image upgrade behavior is unchanged;
+this reserve is not an estimate of Docker image capacity.
+
 ## Repository Maintenance and Orphan Snapshots
 
 Full Maintenance uses persistent, balanced two-day calendar assignments in the

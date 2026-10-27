@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from apps.iam.models import Organization
@@ -14,6 +14,7 @@ from apps.node.exceptions import NodeLifecycleError
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.node_lifecycle import (
+    _upgrade_failure_code,
     _source_version_from_task,
     _target_commit_from_task,
     _target_version_from_task,
@@ -520,6 +521,10 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(persisted_payload["source_version"], "1.0.0")
         self.assertEqual(persisted_payload["source_commit"], "a" * 40)
         self.assertNotIn("source_version", mock_dispatch.call_args.kwargs["payload"])
+        self.assertEqual(
+            mock_dispatch.call_args.kwargs["payload"]["min_free_bytes"],
+            max(512 * 1024 * 1024, node_conf.UPGRADE_MIN_FREE_BYTES),
+        )
 
     def test_upgrade_lifecycle_keeps_source_version_after_node_updates(self):
         task = NodeTask.objects.create(
@@ -551,6 +556,23 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(lifecycle["source_version"], "0.2.10")
         self.assertEqual(lifecycle["current_version"], "0.2.11")
         self.assertEqual(lifecycle["target_version"], "0.2.11")
+
+    def test_upgrade_lifecycle_preserves_local_space_failure_code(self):
+        for code in (
+            "AGENT_UPGRADE_DISK_SPACE_INSUFFICIENT",
+            "AGENT_UPGRADE_DISK_SPACE_UNAVAILABLE",
+        ):
+            with self.subTest(code=code):
+                task = NodeTask.objects.create(
+                    organization=self.org, node=self.node, kind="agent.upgrade",
+                    status=NodeTask.Status.FAILED,
+                    payload={"target_version": "1.2.0"},
+                    result={"error_code": code, "old_agent_unchanged": True},
+                    last_error=f"{code}: local preflight failed",
+                    watchdog_deadline_at=timezone.now(),
+                )
+                lifecycle = _upgrade_lifecycle_payload(org=self.org, node=self.node, task=task)
+                self.assertEqual(lifecycle["failure_code"], code)
 
     def test_source_version_falls_back_for_legacy_task(self):
         task = NodeTask.objects.create(
@@ -1048,57 +1070,25 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(len(preview["eligible"]), 1)
         self.assertEqual(preview["eligible"][0]["target_version"], "1.2.0")
 
+    @patch("apps.node.services.internal.node_lifecycle.validate_agent_upgrade", return_value="1.2.0")
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
-    def test_preview_batch_upgrade_reports_required_free_space(self, _routable):
-        self.node.metadata = {
-            "capabilities": ["detached_uninstall_v2"],
-            "disk_total_bytes": 100 * 1024**3,
-            "disk_free_bytes": 400 * 1024**2,
-        }
-        self.node.save(update_fields=["metadata", "updated_at"])
-
-        preview = preview_batch_operations(
-            org=self.org,
-            node_ids=[self.node.id],
-            kind="upgrade",
-        )
-
-        self.assertEqual(preview["eligible"], [])
-        self.assertEqual(len(preview["skipped_disk_full"]), 1)
-        self.assertEqual(
-            preview["skipped_disk_full"][0],
-            {
-                "node_id": self.node.id,
-                "name": self.node.name,
-                "reason": "disk_full",
-                "failure_type": "minimum_free_bytes",
-                "disk_free_bytes": 400 * 1024**2,
-                "required_free_bytes": 512 * 1024**2,
-                "disk_used_percent": 99.6,
-                "max_disk_used_percent": 90.0,
-                "check_scope": "agent_storage",
-            },
-        )
-
-    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
-    def test_preview_batch_upgrade_reports_disk_usage_limit(self, _routable):
-        self.node.metadata = {
-            "capabilities": ["detached_uninstall_v2"],
-            "disk_total_bytes": 100 * 1024**3,
-            "disk_free_bytes": 5 * 1024**3,
-        }
-        self.node.save(update_fields=["metadata", "updated_at"])
-
-        preview = preview_batch_operations(
-            org=self.org,
-            node_ids=[self.node.id],
-            kind="upgrade",
-        )
-
-        self.assertEqual(preview["eligible"], [])
-        self.assertEqual(preview["skipped_disk_full"][0]["failure_type"], "maximum_used_percent")
-        self.assertEqual(preview["skipped_disk_full"][0]["disk_used_percent"], 95.0)
-        self.assertEqual(preview["skipped_disk_full"][0]["disk_free_bytes"], 5 * 1024**3)
+    def test_preview_upgrade_defers_aggregate_disk_metrics_to_local_check(self, _routable, _validate):
+        for inventory in (
+            {"disk_total_bytes": 100 * 1024**3, "disk_free_bytes": 400 * 1024**2},
+            {"disk_total_bytes": 100 * 1024**3, "disk_free_bytes": 5 * 1024**3},
+            {"disk_total_bytes": 100 * 1024**3, "disk_free_bytes": 0},
+            {"storage_inventory_status": "pending", "disk_free_bytes": 0},
+            {"disk_total_bytes": "invalid", "disk_free_bytes": "invalid"},
+        ):
+            for metadata in (inventory, {"inventory": inventory}):
+                with self.subTest(metadata=metadata):
+                    self.node.metadata = metadata
+                    self.node.save(update_fields=["metadata", "updated_at"])
+                    preview = preview_batch_operations(
+                        org=self.org, node_ids=[self.node.id], kind="upgrade",
+                    )
+                    self.assertEqual(len(preview["eligible"]), 1)
+                    self.assertEqual(preview["skipped_disk_full"], [])
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     @patch("apps.node.services.internal.node_lifecycle.validate_agent_upgrade", return_value="1.2.0")
@@ -2043,3 +2033,46 @@ class NodeLifecycleTests(TestCase):
             before + timezone.timedelta(seconds=node_conf.TASK_WATCHDOG_SECONDS),
         )
         self.assertIn("detached_at", updated.result or {})
+
+
+class UpgradeFailureCodeTests(SimpleTestCase):
+    def test_non_string_agent_error_codes_preserve_existing_fallback(self):
+        for agent_code in (None, [], {}, ["unexpected"], {"code": "unknown"}, 42, False):
+            for message, expected in (
+                ("", None),
+                ("download stream failed: unexpected EOF", "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED"),
+            ):
+                with self.subTest(agent_code=agent_code, message=message):
+                    task = NodeTask(last_error=message)
+                    self.assertEqual(
+                        _upgrade_failure_code(
+                            task=task, result={"error_code": agent_code},
+                        ),
+                        expected,
+                    )
+
+    def test_disk_error_codes_keep_existing_diagnostic_precedence(self):
+        task = NodeTask(last_error="")
+        for code in (
+            "AGENT_UPGRADE_DISK_SPACE_INSUFFICIENT",
+            "AGENT_UPGRADE_DISK_SPACE_UNAVAILABLE",
+        ):
+            with self.subTest(code=code):
+                self.assertEqual(
+                    _upgrade_failure_code(task=task, result={"error_code": code}),
+                    code,
+                )
+                self.assertEqual(
+                    _upgrade_failure_code(
+                        task=task,
+                        result={"failure_code": "PRIMARY_FAILURE", "error_code": code},
+                    ),
+                    "PRIMARY_FAILURE",
+                )
+                self.assertEqual(
+                    _upgrade_failure_code(
+                        task=task,
+                        result={"diagnostic_error_code": "PRIMARY_DIAGNOSTIC", "error_code": code},
+                    ),
+                    "PRIMARY_DIAGNOSTIC",
+                )

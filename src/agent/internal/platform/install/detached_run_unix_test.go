@@ -131,6 +131,7 @@ func TestUnixUserUpgradeScriptUsesUserLifecycleForRecovery(t *testing.T) {
 		"",
 		true,
 		scriptPath,
+		DefaultUpgradeMinFreeBytes,
 	)
 	if err != nil {
 		t.Fatalf("writeUnixUpgradeScript: %v", err)
@@ -167,6 +168,7 @@ func TestUnixUpgradeScriptKeepsGatewaySidecarInAgentUpgrade(t *testing.T) {
 		"",
 		false,
 		scriptPath,
+		DefaultUpgradeMinFreeBytes,
 	)
 	if err != nil {
 		t.Fatalf("writeUnixUpgradeScript: %v", err)

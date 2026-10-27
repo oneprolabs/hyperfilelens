@@ -436,7 +436,20 @@ FROM tasks WHERE status=?
 		status := model.TaskStatusFailed
 		errMsg := repairError
 		result := map[string]any{}
-		if ok, repairedResult := install.InterruptedLifecycleSucceeded(
+		// A current-attempt disk failure is authoritative. Check it before the
+		// legacy success-log heuristic, whose clock-skew window can include a
+		// previous upgrade. Keep the FAILED marker requirement so an installer
+		// that is still running cannot be sealed early.
+		var spaceFailure *install.UpgradeSpaceError
+		if install.PendingUpgradeFailed(opts.DataDir) &&
+			strings.Contains(strings.ToLower(repaired[i].Kind), "upgrade") {
+			spaceFailure = install.ReadUpgradeSpaceFailure(opts.DataDir, repaired[i].StartedAt)
+		}
+		if spaceFailure != nil {
+			errMsg = spaceFailure.Error()
+			result = spaceFailure.Result()
+			result["mode"] = "local_detached"
+		} else if ok, repairedResult := install.InterruptedLifecycleSucceeded(
 			repaired[i].Kind,
 			repaired[i].StartedAt,
 			opts.DataDir,

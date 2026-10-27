@@ -501,3 +501,121 @@ func TestTaskRepoSealCancelledExecutorResultDoesNotOverwriteSuccess(t *testing.T
 		t.Fatalf("successful terminal result changed: %#v", task)
 	}
 }
+
+func TestTaskRepoRepairsDetachedDiskPreflightFailure(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	db, err := Open(ctx, filepath.Join(root, "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewTaskRepo(db)
+	started := time.Now().UTC().Add(-time.Second)
+	if err := repo.RecordCommand(ctx, RecordInput{TaskID: "upgrade-space-failure", Kind: "agent.upgrade", StartedAt: &started}); err != nil {
+		t.Fatal(err)
+	}
+	failure := &install.UpgradeSpaceError{Code: install.UpgradeSpaceInsufficient, CollectedAt: time.Now().UTC(), Checks: []install.UpgradeSpaceCheck{{Scope: "agent_install", Path: root, RequiredBytes: install.DefaultUpgradeMinFreeBytes}}}
+	if err := install.RecordUpgradeSpaceFailure(root, failure); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(install.LifecycleUpgradeFailedPath(root), []byte("failed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := repo.RepairInterrupted(ctx, RepairOptions{DataDir: root})
+	if err != nil || len(repaired) != 1 {
+		t.Fatalf("repaired=%v err=%v", repaired, err)
+	}
+	task, err := repo.Get(ctx, "upgrade-space-failure")
+	if err != nil || task.Status != model.TaskStatusFailed || task.Result["error_code"] != install.UpgradeSpaceInsufficient || task.Result["old_agent_unchanged"] != true {
+		t.Fatalf("task=%#v err=%v", task, err)
+	}
+}
+
+func TestTaskRepoDiskFailurePrecedesPreviousUpgradeSuccess(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		record string
+		failed bool
+		want   model.TaskStatus
+	}{
+		{"current failure", "current", true, model.TaskStatusFailed},
+		{"stale diagnostics", "stale", true, model.TaskStatusSucceeded},
+		{"malformed diagnostics", "malformed", true, model.TaskStatusSucceeded},
+		{"installer still running", "current", false, model.TaskStatusRunning},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			root := t.TempDir()
+			logDir := filepath.Join(root, "logs")
+			if err := os.MkdirAll(logDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			started := time.Now().UTC().Add(-2 * time.Second)
+			previousSuccess := started.Add(-10 * time.Second)
+			log := fmt.Sprintf("[%s] [ OK  ] Upgrade completed successfully.\n", previousSuccess.Format(time.RFC3339Nano))
+			if err := os.WriteFile(install.UpgradeLogPath(logDir), []byte(log), 0600); err != nil {
+				t.Fatal(err)
+			}
+			db, err := Open(ctx, filepath.Join(root, "agent.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			repo := NewTaskRepo(db)
+			const taskID = "upgrade-current-attempt"
+			if err := repo.RecordCommand(ctx, RecordInput{
+				TaskID: taskID, Kind: "agent.upgrade", StartedAt: &started,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			collected := time.Now().UTC()
+			if test.record == "stale" {
+				collected = started.Add(-time.Minute)
+			}
+			failure := &install.UpgradeSpaceError{
+				Code: install.UpgradeSpaceInsufficient, CollectedAt: collected,
+				Checks: []install.UpgradeSpaceCheck{{
+					Scope: "agent_install", Path: root,
+					RequiredBytes: install.DefaultUpgradeMinFreeBytes,
+				}},
+			}
+			if err := install.RecordUpgradeSpaceFailure(root, failure); err != nil {
+				t.Fatal(err)
+			}
+			if test.record == "malformed" {
+				path := filepath.Join(install.LifecycleUpgradeDir(root), "disk-preflight.json")
+				if err := os.WriteFile(path, []byte("invalid JSON"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.failed {
+				if err := os.WriteFile(install.LifecycleUpgradeFailedPath(root), []byte("failed"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				path := filepath.Join(install.LifecycleUpgradeDir(root), "package.tar.gz")
+				if err := os.WriteFile(path, []byte("pending"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := repo.RepairInterrupted(ctx, RepairOptions{DataDir: root, LogDir: logDir}); err != nil {
+				t.Fatal(err)
+			}
+			task, err := repo.Get(ctx, taskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if task.Status != test.want {
+				t.Fatalf("status = %s, want %s; result = %#v", task.Status, test.want, task.Result)
+			}
+			if test.want == model.TaskStatusFailed &&
+				(task.Result["error_code"] != install.UpgradeSpaceInsufficient || task.Result["old_agent_unchanged"] != true) {
+				t.Fatalf("current disk diagnostics lost: %#v", task.Result)
+			}
+			if test.want == model.TaskStatusSucceeded && task.Result["error_code"] != nil {
+				t.Fatalf("invalid diagnostics replaced the existing log fallback: %#v", task.Result)
+			}
+		})
+	}
+}

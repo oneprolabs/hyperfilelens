@@ -4784,7 +4784,7 @@
       "downgrade": "La actualización remota no puede instalar una versión anterior del Agent.",
       "proxyBound": "Reasigne o elimine los recursos vinculados y vuelva a intentarlo."
     },
-    "confirmImpactUpgrade": "Los nodos pueden no estar disponibles brevemente durante la actualización; las tareas relacionadas pueden detenerse.",
+    "confirmImpactUpgrade": "El Agent comprueba el espacio libre en las rutas reales de actualización antes de detenerse. El porcentaje de uso del disco por sí solo no bloquea las actualizaciones. Los nodos pueden no estar disponibles brevemente durante la actualización; las tareas relacionadas pueden detenerse.",
     "confirmImpactRemove": "Los agentes en línea se desinstalarán. Se eliminarán los registros de la consola. Esto no se puede deshacer.",
     "cancelQueued": "Cancelar en cola",
     "workloadBlocked": "Este nodo todavía tiene tareas activas o dependencias de recursos. Resuélvalas y vuelva a intentarlo.",

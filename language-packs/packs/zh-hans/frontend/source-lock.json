@@ -2058,7 +2058,7 @@
   "nodeLifecycle.confirmEligibleRemove": "85916cea4ef3ff872469cd85bb76f05e78abec40cd8c570b29c7850ce915d960",
   "nodeLifecycle.confirmEligibleUpgrade": "a36ec4c32f3b31a659da6cd1b673bb0a8058a6f2bdc01dc30831c1faa0bfd69c",
   "nodeLifecycle.confirmImpactRemove": "fbd721fda7064942e7c1b4c5294cc2cb350e5b52a0e4b91dd9319d95b054d9db",
-  "nodeLifecycle.confirmImpactUpgrade": "17e1be795dc83eab47eb7c2897901115cf3d00d9b71c7a9d5c9d25dcce6a43f9",
+  "nodeLifecycle.confirmImpactUpgrade": "2a1ff02bfe42637f7a65500594bd34f21c80c94ac7435d94a8b001c7fbe3c2f4",
   "nodeLifecycle.confirmRecommendation": "0904a871acd63efb8979dc299887a4aa8c6d54616c6131d0f0dabcd2f9158845",
   "nodeLifecycle.confirmSkipDiskFree": "bbca82b0df02d039ccc121e919e2c942bdfdaf81a432a479aa0f708fb2b0fe6e",
   "nodeLifecycle.confirmSkipDiskUnknown": "49a66274000d45b7cbf25abfba18867536e103c8cd7d5f0f38e99b8199bfd4e3",

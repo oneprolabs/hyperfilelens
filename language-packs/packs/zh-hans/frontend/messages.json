@@ -4784,7 +4784,7 @@
       "downgrade": "远程升级无法安装更旧的 Agent 版本。",
       "proxyBound": "请重新分配或移除关联资源后重试。"
     },
-    "confirmImpactUpgrade": "升级过程中节点可能短暂不可用，相关任务可能暂停。",
+    "confirmImpactUpgrade": "Agent 会在停止前检查实际升级路径的可用空间，不会仅因磁盘使用率较高而阻止升级。升级过程中节点可能短暂不可用，相关任务可能暂停。",
     "confirmImpactRemove": "在线 Agent 将卸载，控制台记录将被移除。此操作不可撤销。",
     "cancelQueued": "取消排队",
     "workloadBlocked": "该节点仍存在进行中的任务或资源依赖，请解决后重试。",

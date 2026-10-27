@@ -791,6 +791,31 @@ function Verify-HflUpgradePackage {
   Write-HflOk "upgrade package manifest and checksums verified"
 }
 
+function Test-HflUpgradeDiskSpace {
+  param(
+    [Parameter(Mandatory = $true)][string]$DataRoot,
+    [Parameter(Mandatory = $true)][string]$SrcRoot
+  )
+  # Prefer the installed checker for main-to-release switches and repairs using
+  # older packages. The verified target bridges upgrades from older Agents.
+  $checker = Join-Path $SrcRoot "bin\hfl-agent.exe"
+  $installedChecker = Join-Path $InstallRoot "hfl-agent.exe"
+  if (Test-Path -LiteralPath $installedChecker) {
+    try {
+      $installedHelp = (& $installedChecker help 2>$null | Out-String)
+      if ($LASTEXITCODE -eq 0 -and $installedHelp -match 'package check-space') {
+        $checker = $installedChecker
+      }
+    }
+    catch {
+      # If help cannot be read, retain the verified target as the checker.
+    }
+  }
+  # A selected checker's failure must abort, never retry with a weaker checker.
+  $output = (& $checker package check-space --record-failure --data-dir $DataRoot --install-dir $InstallRoot 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) { throw "Upgrade disk preflight failed: $output" }
+}
+
 function Get-UpgradeWorkspace {
   param([Parameter(Mandatory = $true)][string]$DataRoot)
   return Join-Path (Get-HflRuntimeRoot $DataRoot) "workspace"
@@ -2497,9 +2522,6 @@ function Invoke-Upgrade {
         $prevVer = (Get-Content -LiteralPath $InstalledVersionFile -Raw).Trim()
       }
     }
-    if ($legacyUpgrade) {
-      Invoke-LegacyMigration
-    }
     $srcRoot = Resolve-UpgradeSource -Path $From -DataRoot $dataRoot
     $newVer = Get-BundleVersionFrom -Root $srcRoot
 	$script:UpgradeLifecycleWasRunning = $false
@@ -2512,6 +2534,9 @@ function Invoke-Upgrade {
     Write-HflUpgradeState -DataRoot $dataRoot -Phase "package_resolved"
 
     $installedRole = Read-HflEnvValue -EnvFile $envFile -Key "HFL_NODE_ROLE"
+    if ($legacyUpgrade -and -not $installedRole) {
+      $installedRole = Read-HflEnvValue -EnvFile (Join-Path $legacyDataRoot "agent.env") -Key "HFL_NODE_ROLE"
+    }
     $versionComparison = Compare-HflVersion -Left $newVer -Right $prevVer
     if ($newVer -eq $prevVer -and $newVer -ne "unknown") {
       Confirm-HflSameVersionUpgrade -Version $prevVer
@@ -2522,6 +2547,8 @@ function Invoke-Upgrade {
     $effectiveRole = if ($installedRole) { $installedRole } else { "agent" }
     Verify-HflUpgradePackage -Root $srcRoot -RoleName $effectiveRole -Version $newVer
     Update-HflLifecycleLockTarget -Version $newVer -Manifest (Join-Path $srcRoot "MANIFEST.json")
+    Test-HflUpgradeDiskSpace -DataRoot $dataRoot -SrcRoot $srcRoot
+    if ($legacyUpgrade) { Invoke-LegacyMigration }
 
     if (-not $QuietFooter) {
       Write-HflBanner "upgrade $prevVer -> $newVer" -RoleName (Get-HflRoleDisplayName -Value $installedRole)
@@ -2552,6 +2579,7 @@ function Invoke-Upgrade {
       # Capture configuration and SQLite sidecar files before stopping the
       # Agent. A stop failure must remain non-destructive, while a later
       # deployment failure still has a complete rollback snapshot.
+      Test-HflUpgradeDiskSpace -DataRoot $dataRoot -SrcRoot $srcRoot
       $script:UpgradeStopAttempted = $true
       Write-HflUpgradeState -DataRoot $dataRoot -Phase "stopping"
       Stop-AgentForUpgrade
@@ -2586,6 +2614,7 @@ function Invoke-Upgrade {
     }
     catch {
       $originalError = $_.Exception.Message
+      if (-not $script:UpgradeStopAttempted) { throw }
       Invoke-HflUpgradeRollback -DataRoot $dataRoot -PreviousVersion $prevVer -OriginalError $originalError -LegacyUpgrade:$legacyUpgrade
     }
 

@@ -637,3 +637,60 @@ func readPackagingUninstallCommand(t *testing.T) string {
 	}
 	return string(raw)
 }
+
+func TestInstallPs1ChecksLocalSpaceBeforeStopping(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	start := strings.Index(source, "function Cmd-Upgrade")
+	if start < 0 {
+		start = strings.Index(source, "function Invoke-Upgrade")
+	}
+	if start < 0 {
+		t.Fatal("missing upgrade command")
+	}
+	upgrade := source[start:]
+	first := strings.Index(upgrade, "Test-HflUpgradeDiskSpace -DataRoot $dataRoot -SrcRoot $srcRoot")
+	snapshot := strings.Index(upgrade, "Backup-AgentConfigAndDb -DataRoot $dataRoot")
+	final := strings.LastIndex(upgrade, "Test-HflUpgradeDiskSpace -DataRoot $dataRoot -SrcRoot $srcRoot")
+	stop := strings.Index(upgrade, "Stop-AgentForUpgrade")
+	if first < 0 || !(first < snapshot && snapshot < final && final < stop) {
+		t.Fatalf("incorrect check/snapshot/stop order: %d %d %d %d", first, snapshot, final, stop)
+	}
+	if !strings.Contains(source, "package check-space --record-failure --data-dir $DataRoot --install-dir $InstallRoot") {
+		t.Fatal("must use shared cross-platform checker")
+	}
+	if !strings.Contains(upgrade, "if (-not $script:UpgradeStopAttempted) { throw }") {
+		t.Fatal("preflight failure must not invoke service rollback")
+	}
+}
+
+func TestInstallPs1PrefersSupportedInstalledDiskChecker(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	start := strings.Index(source, "function Test-HflUpgradeDiskSpace {")
+	if start < 0 {
+		t.Fatal("missing disk-check helper")
+	}
+	end := strings.Index(source[start:], "\nfunction Get-UpgradeWorkspace")
+	if end < 0 {
+		t.Fatal("missing disk-check helper")
+	}
+	body := source[start : start+end]
+	previous := -1
+	for _, statement := range []string{
+		`$checker = Join-Path $SrcRoot "bin\hfl-agent.exe"`,
+		`if (Test-Path -LiteralPath $installedChecker)`,
+		`$installedHelp = (& $installedChecker help 2>$null | Out-String)`,
+		`if ($LASTEXITCODE -eq 0 -and $installedHelp -match 'package check-space')`,
+		`$checker = $installedChecker`,
+		`$output = (& $checker package check-space`,
+		`if ($LASTEXITCODE -ne 0) { throw`,
+	} {
+		index := strings.Index(body, statement)
+		if index <= previous {
+			t.Fatalf("missing or out-of-order disk-check rule %q", statement)
+		}
+		previous = index
+	}
+	if strings.Count(body, "& $checker package check-space") != 1 {
+		t.Fatal("a failed disk check must not fall back to a second checker")
+	}
+}

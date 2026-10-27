@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/database"
 	"hyperfilelens/agent/internal/model"
+	"hyperfilelens/agent/internal/platform/install"
 	"hyperfilelens/agent/internal/selfupdate"
 )
 
@@ -87,6 +90,29 @@ func runDatabase(args []string) error {
 }
 
 func runPackage(args []string) error {
+	if len(args) > 0 && args[0] == "check-space" {
+		fs := flag.NewFlagSet("package check-space", flag.ContinueOnError)
+		data := fs.String("data-dir", "", "Agent data directory")
+		bin := fs.String("install-dir", "", "Agent install directory")
+		record := fs.Bool("record-failure", false, "Retain diagnostics for a detached upgrade")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 || *data == "" || *bin == "" {
+			return fmt.Errorf("package check-space requires --data-dir and --install-dir")
+		}
+		minimum, err := install.UpgradeMinimumFreeBytes(0)
+		if err != nil {
+			return err
+		}
+		err = install.CheckUpgradeSpace(*data, *bin, minimum)
+		var failure *install.UpgradeSpaceError
+		if *record && errors.As(err, &failure) {
+			_ = install.RecordUpgradeSpaceFailure(*data, failure)
+		}
+		return err
+	}
+
 	if len(args) < 1 || args[0] != "verify" {
 		return fmt.Errorf("usage: hfl-agent package verify --root <directory> [--role agent|proxy|gateway] [--version <version>]")
 	}
@@ -125,6 +151,7 @@ Usage:
   hfl-agent run [flags]             Run agent daemon (WebSocket control plane)
   hfl-agent version                 Print version and exit
   hfl-agent package verify          Verify a release package manifest and checksums
+  hfl-agent package check-space     Check local upgrade paths before stopping the Agent
   hfl-agent database backup         Create a consistent local database backup
   hfl-agent help                    Show this help
   hfl-agent config show|set|paths   Manage hot-reloadable configuration
