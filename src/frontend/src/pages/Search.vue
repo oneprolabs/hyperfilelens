@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Search as SearchIcon } from 'lucide-vue-next'
@@ -10,6 +10,9 @@ import HflTypeLabel from '../components/HflTypeLabel.vue'
 import SnapshotStatusTag from '../components/SnapshotStatusTag.vue'
 import TaskStatusTag from '../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../components/TaskTypeLabel.vue'
+import ErrorState from '../components/errors/ErrorState.vue'
+import { useDebouncedAction } from '../composables/useDebouncedAction'
+import { operationalSearchAliases, taskAlertDisplay } from '../lib/operationalEventDisplay'
 import { alertStatusTagAttrs as sharedAlertStatusTagAttrs, lifecycleStatusTagAttrs, severityStatusTagAttrs } from '../lib/statusTag'
 
 type Task = { id: number; task_uuid: string; task_type: string; status: string; display_name?: string; created_at?: string }
@@ -22,7 +25,7 @@ type Snapshot = {
   repository_display_name?: string
   status?: string
 }
-type Alert = { id: number; title: string; status: string; severity?: string }
+type Alert = { id: string; type?: string; title: string; status: string; severity?: string }
 
 function includesAny(hay: string, q: string) {
   if (!q) return true
@@ -31,8 +34,12 @@ function includesAny(hay: string, q: string) {
 
 const { t } = useI18n()
 const route = useRoute()
-const q = ref('')
+const q = ref(String(route.query.q || ''))
 const busy = ref(false)
+const alertLoading = ref(false)
+const alertError = ref<unknown>(null)
+let alertRequestSequence = 0
+const { schedule: scheduleAlertSearch } = useDebouncedAction(() => loadAlerts())
 
 const tasks = ref<Task[]>([])
 const nodes = ref<Node[]>([])
@@ -101,29 +108,49 @@ const side = computed(() => [
 ])
 
 async function load() {
-  const [j, n, r, s, a] = await Promise.all([
+  const [j, n, r, s] = await Promise.all([
     api<unknown>(`/api/v1/tasks/`),
     api<unknown>(`/api/v1/node/nodes/`),
     api<unknown>(`/api/v1/storage/repositories/`),
     api<unknown>(`/api/v1/protection/backup-source-snapshots/?page=1&page_size=100`),
-    api<unknown>(`/api/v1/alerts/records/`),
+    loadAlerts(),
   ])
   tasks.value = asList<Task>(j)
   nodes.value = asList<Node>(n)
   repos.value = asList<Repo>(r)
   snaps.value = asList<Snapshot>(s)
-  alerts.value = asList<Alert>(a)
+}
+
+async function loadAlerts() {
+  const requestId = ++alertRequestSequence
+  alertLoading.value = true
+  alertError.value = null
+  const query = new URLSearchParams({ page_size: '20', search: q.value.trim(), search_context: 'global' })
+  const aliases = operationalSearchAliases(q.value, t, 'alert')
+  if (aliases.length) query.set('search_aliases', JSON.stringify(aliases))
+  try {
+    const response = await api<unknown>(`/api/v1/alerts/records/?${query}`)
+    if (requestId === alertRequestSequence) alerts.value = asList<Alert>(response)
+  } catch (error) {
+    if (requestId === alertRequestSequence) alertError.value = error
+  } finally {
+    if (requestId === alertRequestSequence) alertLoading.value = false
+  }
 }
 
 onMounted(() => {
-  q.value = String(route.query.q || '')
   load().catch(() => {
     tasks.value = []
     nodes.value = []
     repos.value = []
     snaps.value = []
-    alerts.value = []
   })
+})
+onBeforeUnmount(() => { alertRequestSequence += 1 })
+watch(q, () => {
+  alertRequestSequence += 1
+  alertLoading.value = true
+  scheduleAlertSearch()
 })
 
 watch(
@@ -146,7 +173,7 @@ const snapRows = computed(() =>
     .slice(0, 20),
 )
 const alertRows = computed(() =>
-  alerts.value.filter((x) => includesAny(`${x.id} ${x.title} ${x.status} ${x.severity || ''}`, q.value)).slice(0, 20),
+  alerts.value.map(alert => ({ ...alert, title: taskAlertDisplay(alert, t).title })),
 )
 
 async function onRefresh() {
@@ -396,10 +423,15 @@ async function onRefresh() {
         <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">
           {{ t('searchPage.sectionAlerts') }}
         </div>
+        <ErrorState
+          v-if="alertError"
+          :error="alertError"
+          @retry="loadAlerts"
+        />
         <el-table
+          v-loading="alertLoading"
           :data="alertRows"
           stripe
-          :loading="busy"
         >
           <el-table-column
             prop="id"

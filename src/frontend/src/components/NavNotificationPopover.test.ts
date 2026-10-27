@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { defineComponent } from 'vue'
@@ -68,14 +70,22 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function mountPopover() {
-  const i18n = createI18n({
+function testI18n() {
+  return createI18n({
     legacy: false,
     locale: 'en',
-    messages: { en },
+    messages: {
+      en,
+      ...Object.fromEntries(['zh-hans', 'es'].map(locale => [locale, JSON.parse(readFileSync(
+        resolve(process.cwd(), `../../language-packs/packs/${locale}/frontend/messages.json`), 'utf8',
+      ))])),
+    },
     missingWarn: false,
     fallbackWarn: false,
   })
+}
+
+function mountPopover(i18n = testI18n()) {
   return mount(NavNotificationPopover, {
     global: {
       plugins: [i18n],
@@ -95,6 +105,39 @@ describe('NavNotificationPopover', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('renders firing and resolved task alerts and switches locales without refetching', async () => {
+    const id = '68b61992-8307-4cb9-a9a0-89d5bbb58ce5'
+    const firing = { ...notification('1'), title: 'Task alert: task_failed', summary: `Task ${id} status=failed` }
+    const resolved = { ...notification('2'), title: 'Resolved: Task alert: task_timeout', summary: 'Backup prod-myteamone' }
+    mocks.list.mockResolvedValue(response([firing, resolved], 2))
+    const i18n = testI18n()
+    const wrapper = mountPopover(i18n)
+    await flushPromises()
+    for (const locale of ['en', 'zh-hans', 'es']) {
+      i18n.global.locale.value = locale
+      await flushPromises()
+      const { t } = i18n.global
+      expect(wrapper.findAll('.nn-item-title').map(item => item.text())).toEqual([
+        t('ops.events.taskAlert', { event: t('ops.alertsCenter.taskEvents.task_failed') }),
+        t('ops.events.resolvedTaskAlert', {
+          title: t('ops.events.taskAlert', { event: t('ops.alertsCenter.taskEvents.task_timeout') }),
+        }),
+      ])
+      expect(wrapper.findAll('.nn-item-summary').map(item => item.text())).toEqual([
+        t('ops.events.taskDiagnostic.taskStatus', { id, status: t('ops.task.status.failed') }),
+        resolved.summary,
+      ])
+    }
+    expect(mocks.list).toHaveBeenCalledOnce()
+    expect(firing.title).toBe('Task alert: task_failed')
+    expect(firing.summary).toBe(`Task ${id} status=failed`)
+    await wrapper.findAll('.nn-item')[1]!.trigger('click')
+    await flushPromises()
+    expect(mocks.markRead).toHaveBeenCalledWith('2')
+    expect(mocks.push).toHaveBeenCalledWith('/ops/alerts')
+    wrapper.unmount()
   })
 
   it('uses the unread count for the badge and opens the notification target', async () => {

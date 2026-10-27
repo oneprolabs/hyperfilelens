@@ -15,6 +15,7 @@ from apps.notification.constants import NotificationLogStatus
 from apps.notification.models import NotificationChannel, NotificationLog
 from apps.notification.selectors.interface import filter_logs, logs_for_org
 from apps.notification.services.internal.log_details import notification_log_details
+from common.drf.search import parse_search_aliases
 
 
 def _parse_datetime(value):
@@ -44,6 +45,7 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
             status=params.get("status", ""),
             notification_type=params.get("notification_type", ""),
             search=params.get("search", ""),
+            search_aliases=parse_search_aliases(params),
             alert_type=params.get("type", ""),
             severity=params.get("severity", ""),
             policy_id=params.get("policy_id", ""),

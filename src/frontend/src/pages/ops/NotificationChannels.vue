@@ -33,6 +33,7 @@ import { booleanStatusTag, lifecycleStatusTagAttrs } from '../../lib/statusTag'
 import { apiErrorMessageI18n } from '../../lib/api'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { notificationTestFailureDetails } from '../../lib/notificationTestFailure'
+import { taskAlertDisplay } from '../../lib/operationalEventDisplay'
 import {
   bulkDeleteChannels,
   bulkStateChannels,
@@ -1556,7 +1557,7 @@ watch(
                 >
                   <template #default="{ row }">
                     <div class="hfl-ops-channel-detail-drawer__event-title">
-                      {{ row.alert?.title || row.event_type || t('common.empty') }}
+                      {{ taskAlertDisplay(row.alert || {}, t).title || row.event_type || t('common.empty') }}
                     </div>
                     <div
                       v-if="row.policy?.name"

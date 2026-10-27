@@ -6438,6 +6438,16 @@
       "deliveryHistory": "Historial de entrega"
     },
     "events": {
+      "taskTerminal": {
+        "failed": "{type} falló: {name}",
+        "timeout": "{type} agotó el tiempo de espera: {name}"
+      },
+      "taskAlert": "Alerta de tarea: {event}",
+      "resolvedTaskAlert": "Resuelta: {title}",
+      "taskDiagnostic": {
+        "unsupportedSource": "Error de carga: origen no compatible: {source}",
+        "taskStatus": "Tarea {id}: {status}"
+      },
       "repositoryTask": {
         "failed": "Operación del repositorio fallida: {name}",
         "timeout": "Tiempo de espera de la operación del repositorio agotado: {name}",

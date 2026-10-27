@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpRight, Bell } from 'lucide-vue-next'
+import { taskAlertNotificationDisplay } from '../lib/operationalEventDisplay'
 import {
   listUserNotifications,
   markAllUserNotificationsRead,
@@ -240,10 +241,10 @@ onUnmounted(() => {
               />
               <div class="nn-item-body">
                 <div class="nn-item-title">
-                  {{ notification.title }}
+                  {{ taskAlertNotificationDisplay(notification, t).title }}
                 </div>
                 <div class="nn-item-meta">
-                  <span class="nn-item-summary">{{ notification.summary || '—' }}</span>
+                  <span class="nn-item-summary">{{ taskAlertNotificationDisplay(notification, t).summary || '—' }}</span>
                   <span class="nn-item-sep">|</span>
                   <span class="nn-item-time">{{ formatRelativeTime(notification.occurred_at || notification.updated_at) }}</span>
                 </div>

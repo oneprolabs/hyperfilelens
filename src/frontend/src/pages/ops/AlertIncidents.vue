@@ -16,6 +16,7 @@ import { copyTextToClipboard } from '../../lib/clipboard'
 import { formatLocalDateTime } from '../../lib/dateTime'
 import { apiErrorMessage } from '../../lib/api'
 import { alertStatusTagAttrs, severityStatusTagAttrs } from '../../lib/statusTag'
+import { operationalSearchAliases, taskAlertDisplay } from '../../lib/operationalEventDisplay'
 import {
   acknowledgeRecord,
   listRecords,
@@ -100,7 +101,7 @@ function hasResourceLabel(alert: AlertRecord) {
 }
 
 function alertTitleMeta(alert: AlertRecord) {
-  return alert.message?.trim() || resourceLabel(alert)
+  return alertMessage(alert) || resourceLabel(alert)
 }
 
 function severityLabel(severity?: string | null) {
@@ -146,7 +147,7 @@ function hasMetricValues(alert: AlertRecord) {
 }
 
 function alertMessage(alert: AlertRecord) {
-  return String(alert.message || '').trim()
+  return taskAlertDisplay(alert, t).message.trim()
 }
 
 async function copyIncidentId(id: string) {
@@ -161,17 +162,20 @@ async function copyIncidentId(id: string) {
 async function fetchAlerts() {
   loading.value = true
   try {
+    const searchAliases = JSON.stringify(operationalSearchAliases(filters.search, t, 'alert'))
     const [res, statRes] = await Promise.all([
       listRecords({
         page: pagination.page,
         page_size: pagination.pageSize,
         search: filters.search,
+        search_aliases: searchAliases,
         severity: filters.severity,
         type: filters.type,
         status: filters.status,
       }),
       recordStatistics({
         search: filters.search,
+        search_aliases: searchAliases,
         severity: filters.severity,
         type: filters.type,
       }),
@@ -536,7 +540,7 @@ watch(
                         class="hfl-table-name-link hfl-table-name-link--single min-w-0"
                         @click="openDetail(row)"
                       >
-                        {{ row.title }}
+                        {{ taskAlertDisplay(row, t).title }}
                       </button>
                     </div>
                     <div class="hfl-ops-cell-stack__meta line-clamp-1">
@@ -644,7 +648,7 @@ watch(
       @closed="closeDetail"
     >
       <template #header>
-        <span class="hfl-detail-drawer__title">{{ selected?.title || t('ops.nav.alerts') }}</span>
+        <span class="hfl-detail-drawer__title">{{ (selected && taskAlertDisplay(selected, t).title) || t('ops.nav.alerts') }}</span>
       </template>
 
       <div

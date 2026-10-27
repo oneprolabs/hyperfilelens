@@ -44,6 +44,22 @@ describe('Dashboard statistics loading', () => {
     vi.useRealTimers()
   })
 
+  it('retains the alert type and original text for reactive task alert localization', async () => {
+    const alert = {
+      id: 1500, type: 'task', title: 'Task alert: task_failed',
+      message: 'upload error: unsupported source: root@agent:/data',
+    }
+    apiMock.mockImplementation(async (path) => {
+      if (path.includes('/dashboard-statistics/')) return summary()
+      if (path.includes('/alerts/records/?status=firing')) return { count: 1, results: [alert] }
+      return mockOtherEndpoint(path)
+    })
+    const result = await loadDashboardOverview((key) => key)
+    expect(result.activeAlerts).toEqual([expect.objectContaining({
+      id: '1500', type: alert.type, title: alert.title, detail: alert.message,
+    })])
+  })
+
   it('retains the event type and original text for reactive event localization', async () => {
     const event = {
       id: 1459,
