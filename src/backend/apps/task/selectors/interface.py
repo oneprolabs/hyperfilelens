@@ -38,6 +38,10 @@ def list_tasks(
         .prefetch_related("resources", "dependencies__blocking_task")
         .order_by("-created_at", "-id")
     )
+    queryset = queryset.exclude(
+        task_type=Task.Type.REPOSITORY_OPERATION,
+        replacement_task__isnull=False,
+    )
     if status:
         queryset = queryset.filter(status=status)
     if task_type:
@@ -120,6 +124,37 @@ def get_task(*, organization_id: int, task_uuid: UUID | str) -> Task | None:
         )
         .first()
     )
+
+
+def repository_execution_history(*, task: Task) -> list[Task]:
+    """Return linked executions without merging unrelated scheduled runs."""
+    if task.task_type != Task.Type.REPOSITORY_OPERATION:
+        return []
+    tasks = Task.objects.filter(
+        organization_id=task.organization_id,
+        task_type=task.task_type,
+        repository_operation__repository_id=task.repository_operation.repository_id,
+    ).only(
+        "id", "task_uuid", "status", "created_at", "started_at", "finished_at",
+        "replaces_task_id",
+    )
+    history = [task]
+    visited = {task.id}
+    current = task
+    while current.replaces_task_id and current.replaces_task_id not in visited:
+        current = tasks.filter(pk=current.replaces_task_id).first()
+        if current is None:
+            break
+        visited.add(current.id)
+        history.insert(0, current)
+    current = task
+    while True:
+        current = tasks.filter(replaces_task_id=current.id).first()
+        if current is None or current.id in visited:
+            break
+        visited.add(current.id)
+        history.append(current)
+    return history
 
 
 def list_task_steps(*, task: Task) -> QuerySet[TaskStep]:

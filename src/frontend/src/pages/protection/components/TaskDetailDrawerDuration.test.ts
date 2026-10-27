@@ -51,6 +51,9 @@ const i18n = createI18n({
     startTime: 'Start Time',
     endTime: 'End Time',
     retryCountValue: '{count} times',
+    retryCount: 'Retries',
+    executionHistory: 'Execution History',
+    triggerType: { system: 'System', manual: 'Manual', retry: 'Retry' },
   } } } },
 })
 
@@ -62,8 +65,8 @@ function mountDrawer() {
       directives: { loading: {}, 'table-column-resize': {}, 'table-overflow-title': {} },
       stubs: {
         ElDrawer: { template: '<div><slot name="header" /><slot /></div>' },
-        ElButton: true,
-        ElTag: true,
+        ElButton: { template: '<button><slot /></button>' },
+        ElTag: { template: '<span><slot /></span>' },
         ElTabs: { template: '<div><slot /></div>' },
         ElTabPane: { template: '<div><slot /></div>' },
         ElTable: true,
@@ -91,6 +94,53 @@ afterEach(() => {
 })
 
 describe('TaskDetailDrawer live duration', () => {
+  it('shows linked execution times and results without retry counters or badges', async () => {
+    const history = [
+      { task_uuid: 'original', status: 'failed', started_at: start, finished_at: start, created_at: start },
+      { task_uuid: 'running-1', status: 'success', started_at: start, finished_at: start, created_at: start },
+    ]
+    vi.mocked(getTask).mockResolvedValue({
+      ...running,
+      task_type: 'repository_operation',
+      trigger_type: 'system',
+      status: 'success',
+      finished_at: start,
+      retry_count: 2,
+      recovery_attempt: 1,
+      execution_history: history,
+    })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const section = wrapper.get('.hfl-task-drawer__execution-history')
+    expect(section.text()).toContain('Execution History')
+    expect(section.findAll('li')).toHaveLength(2)
+    expect(section.findAllComponents({ name: 'TaskStatusTag' }).map(tag => tag.props('status')))
+      .toEqual(['failed', 'success'])
+    expect(wrapper.text()).not.toContain('Retries')
+    expect(wrapper.text()).not.toContain('2 times')
+    expect(wrapper.get('.hfl-task-drawer__metric-tags').text()).toContain('System')
+    expect(wrapper.get('.hfl-task-drawer__metric-tags').text()).not.toContain('Retry')
+    expect(section.text()).not.toMatch(/Retry|Attempt|Replacement/i)
+    await section.find('button').trigger('click')
+    expect(wrapper.emitted('open-task')).toEqual([['original']])
+    wrapper.unmount()
+  })
+
+  it('does not add an execution history section for an unrelated single run', async () => {
+    vi.mocked(getTask).mockResolvedValue({
+      ...running,
+      task_type: 'repository_operation',
+      execution_history: [{
+        task_uuid: running.task_uuid, status: 'running', started_at: start,
+        finished_at: null, created_at: start,
+      }],
+    })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.find('.hfl-task-drawer__execution-history').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('excludes the delayed orphan retry queue from execution-step duration', async () => {
     const at = (seconds: number) => new Date(Date.parse(start) + seconds * 1000).toISOString()
     const names = ['prepare_repository_operation', 'verify_repository_owner', 'run_repository_operation', 'finalize_repository_operation']
@@ -98,7 +148,7 @@ describe('TaskDetailDrawer live duration', () => {
       ...running,
       task_type: 'repository_operation',
       operation_type: 'snapshot.reconcile',
-      trigger_type: 'retry',
+      trigger_type: 'system',
       recovery_attempt: 1,
       status: 'success',
       started_at: at(60),

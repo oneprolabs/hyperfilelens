@@ -1144,7 +1144,10 @@ watch(
               </div>
             </div>
           </div>
-          <div class="hfl-task-drawer__metric">
+          <div
+            v-if="activeTask.task_type !== 'repository_operation'"
+            class="hfl-task-drawer__metric"
+          >
             <RotateCcw
               :size="18"
               class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--indigo"
@@ -1215,6 +1218,30 @@ watch(
             </div>
           </div>
         </div>
+      </section>
+
+      <section
+        v-if="(activeTask.execution_history?.length || 0) > 1"
+        class="hfl-task-drawer__execution-history"
+      >
+        <h3 class="hfl-task-drawer__hero-section-title">
+          {{ t('ops.task.executionHistory') }}
+        </h3>
+        <ul>
+          <li
+            v-for="execution in activeTask.execution_history"
+            :key="execution.task_uuid"
+          >
+            <ElButton
+              link
+              type="primary"
+              @click="emit('open-task', execution.task_uuid)"
+            >
+              {{ formatTime(execution.started_at || execution.created_at) }}
+            </ElButton>
+            <TaskStatusTag :status="execution.status" />
+          </li>
+        </ul>
       </section>
 
       <ElAlert
@@ -2041,6 +2068,20 @@ watch(
   border: 1px solid rgb(226 232 240);
   border-radius: 10px;
   background: white;
+}
+
+.hfl-task-drawer__execution-history ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hfl-task-drawer__execution-history li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
 }
 
 .hfl-task-drawer__hero {
@@ -2895,12 +2936,6 @@ watch(
   border-color: rgb(216 180 254);
   background: rgb(250 245 255);
   color: rgb(147 51 234);
-}
-
-.hfl-task-drawer__trigger-pill--retry {
-  border-color: rgb(254 215 170);
-  background: rgb(255 247 237);
-  color: rgb(234 88 12);
 }
 
 .hfl-task-drawer__trigger-pill--api {

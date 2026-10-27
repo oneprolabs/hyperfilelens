@@ -837,6 +837,56 @@ class RepositoryTaskTests(TestCase):
             "STORAGE_MAINTENANCE_FULL_WINDOW_END": "06:00",
         },
     )
+    def test_scheduler_preserves_source_and_links_repeated_failed_runs(self):
+        now = timezone.make_aware(datetime(2026, 7, 14, 12, 0, 0))
+        discover_repository_execution_targets(now=now)
+        target = self.repository.execution_targets.get()
+        first = create_repository_operation_task(
+            target_id=target.id,
+            operation_type=RepositoryTask.OperationType.MAINTENANCE_QUICK,
+        )
+        previous = first
+        for attempt in range(1, 4):
+            finalize_repository_operation(
+                repository_task_id=previous.id,
+                succeeded=False,
+                error_message="Storage unavailable",
+            )
+            state = target.maintenance_state
+            state.refresh_from_db()
+            state.next_retry_at = now
+            state.next_quick_due_at = now
+            state.next_reconcile_due_at = None
+            state.save()
+            scheduled = schedule_due_maintenance(now=now)
+            self.assertEqual(len(scheduled), 1)
+            replacement = RepositoryTask.objects.get(pk=scheduled[0])
+            self.assertEqual(replacement.task.trigger_type, Task.TriggerType.SYSTEM)
+            self.assertEqual(replacement.task.replaces_task_id, previous.task_id)
+            self.assertEqual(replacement.task.recovery_attempt, attempt)
+            self.assertEqual(schedule_due_maintenance(now=now), [])
+            previous.task.refresh_from_db()
+            self.assertEqual(previous.task.status, Task.Status.FAILED)
+            previous = replacement
+        finalize_repository_operation(repository_task_id=previous.id, succeeded=True)
+        state.refresh_from_db()
+        self.assertEqual(state.consecutive_failures, 0)
+        self.assertIsNone(state.next_retry_at)
+        state.next_quick_due_at = now
+        state.save()
+        following = RepositoryTask.objects.get(pk=schedule_due_maintenance(now=now)[0])
+        self.assertIsNone(following.task.replaces_task_id)
+        self.assertEqual(following.task.recovery_attempt, 0)
+        self.assertEqual(following.task.trigger_type, Task.TriggerType.SYSTEM)
+
+    @patch.dict(
+        "os.environ",
+        {
+            "STORAGE_MAINTENANCE_TIMEZONE": "UTC",
+            "STORAGE_MAINTENANCE_FULL_WINDOW_START": "00:00",
+            "STORAGE_MAINTENANCE_FULL_WINDOW_END": "06:00",
+        },
+    )
     def test_scheduler_runs_full_inside_full_window(self):
         now = timezone.make_aware(datetime(2026, 7, 14, 5, 59, 59))
         # A fresh target is assigned a future balanced slot, not immediately due.
@@ -912,6 +962,58 @@ class RepositoryTasksApiTests(TestCase):
         self.assertEqual(
             rows[0]["repository_owner"]["identity"], "hfl-maintenance@controller"
         )
+
+    def test_lists_latest_execution_and_keeps_history_accessible_in_detail(self):
+        original = self.repository_task
+        finalize_repository_operation(
+            repository_task_id=original.id, succeeded=False,
+            error_message="Storage unavailable",
+        )
+        original.task.refresh_from_db()
+        replacement = create_repository_operation_task(
+            target_id=original.execution_target_id,
+            operation_type=original.operation_type,
+            replaces_task=original.task,
+        )
+        unrelated = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Separate scheduled task",
+            trigger_type=Task.TriggerType.SYSTEM,
+        )
+        RepositoryTask.objects.create(
+            task=unrelated, repository=self.repository,
+            operation_type=original.operation_type,
+            owner_type="controller", owner_identity="hfl-maintenance@controller",
+        )
+        for url in (
+            f"/api/v1/storage/repositories/{self.repository.id}/tasks/",
+            "/api/v1/tasks/",
+        ):
+            response = self.client.get(
+                url, {"page_size": 1, "trigger_type": "system"},
+                HTTP_X_ORG_KEY=self.org.key,
+            )
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertEqual(response.data["data"]["pagination"]["total"], 2)
+            self.assertNotIn(
+                str(original.task.task_uuid),
+                [row["task_uuid"] for row in response.data["data"]["list"]],
+            )
+        for task in (original.task, replacement.task):
+            response = self.client.get(
+                f"/api/v1/tasks/{task.task_uuid}/", HTTP_X_ORG_KEY=self.org.key,
+            )
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertEqual(
+                [row["task_uuid"] for row in response.data["execution_history"]],
+                [str(original.task.task_uuid), str(replacement.task.task_uuid)],
+            )
+        other_org = Organization.objects.create(key="other-trigger-org", name="Other")
+        self.assertEqual(self.client.get(
+            f"/api/v1/tasks/{original.task.task_uuid}/",
+            HTTP_X_ORG_KEY=other_org.key,
+        ).status_code, 403)
 
     def test_task_search_field_filters_name_and_uuid(self):
         base_url = f"/api/v1/storage/repositories/{self.repository.id}/tasks/"

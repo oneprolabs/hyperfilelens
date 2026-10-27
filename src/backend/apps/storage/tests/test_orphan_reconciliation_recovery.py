@@ -154,7 +154,7 @@ class ReconciliationRecoveryTests(TestCase):
         self.assertEqual(list(rt.task.events.values()), original_events)
         self.assertFalse(retry.task.events.filter(level='ERROR').exists())
         self.assertEqual(retry.task.recovery_attempt, 1)
-        self.assertEqual(retry.task.trigger_type, Task.TriggerType.RETRY)
+        self.assertEqual(retry.task.trigger_type, rt.task.trigger_type)
         self.assertIsNone(retry.task.error_message)
 
     @patch('apps.storage.services.internal.repository_access.repository_payload_for_node', return_value={})

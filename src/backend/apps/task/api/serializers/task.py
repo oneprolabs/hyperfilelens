@@ -10,6 +10,7 @@ from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.error_contract import backup_source_failure_projection, sanitize_task_detail, task_error_contract
 from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import create_task
+from apps.task.trigger import task_trigger_source
 
 
 class TaskResourceSerializer(serializers.ModelSerializer):
@@ -73,6 +74,30 @@ class TaskDependencySerializer(serializers.ModelSerializer):
 
 class TaskSerializer(serializers.ModelSerializer):
     error_details = serializers.SerializerMethodField()
+    trigger_type = serializers.SerializerMethodField()
+    execution_history = serializers.SerializerMethodField()
+
+    def get_trigger_type(self, obj: Task) -> str:
+        return task_trigger_source(obj)
+
+    def get_execution_history(self, obj: Task) -> list[dict]:
+        if (
+            not self.context.get("include_execution_history")
+            or self._repository_operation(obj) is None
+        ):
+            return []
+        from apps.task.selectors.interface import repository_execution_history
+
+        return [
+            {
+                "task_uuid": str(task.task_uuid),
+                "status": task.status,
+                "started_at": task.started_at.isoformat() if task.started_at else None,
+                "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+                "created_at": task.created_at.isoformat(),
+            }
+            for task in repository_execution_history(task=obj)
+        ]
 
     def get_error_details(self, obj):
         return task_error_contract(obj, obj.resources.all())
@@ -110,6 +135,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "recovery_attempt",
             "replaces_task_uuid",
             "replacement_task_uuid",
+            "execution_history",
             "trigger_type",
             "request_payload",
             "group_uuid",

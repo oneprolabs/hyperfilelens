@@ -85,6 +85,13 @@ export type TaskRow = {
   recovery_attempt: number
   replaces_task_uuid?: string | null
   replacement_task_uuid?: string | null
+  execution_history?: Array<{
+    task_uuid: string
+    status: string
+    started_at: string | null
+    finished_at: string | null
+    created_at: string
+  }>
   trigger_type: string
   group_uuid?: string | null
   request_payload?: unknown

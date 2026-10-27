@@ -120,6 +120,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
+        context["include_execution_history"] = self.action == "retrieve"
         if self.action == "create":
             context["organization_id"] = self._organization_id()
         return context

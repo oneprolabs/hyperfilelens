@@ -7160,7 +7160,8 @@
         "proxy": "Proxy",
         "gateway": "Gateway",
         "source": "Agent"
-      }
+      },
+      "executionHistory": "Historial de ejecución"
     },
     "alertsCenter": {
       "common": {

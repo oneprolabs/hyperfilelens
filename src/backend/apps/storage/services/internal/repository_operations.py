@@ -240,6 +240,7 @@ def create_repository_operation_task(
     operation_type: str,
     trigger_type: str = Task.TriggerType.SYSTEM,
     due_at: datetime | None = None,
+    replaces_task: Task | None = None,
 ) -> RepositoryTask | None:
     if operation_type not in {value for value, _ in RepositoryTask.OperationType.choices}:
         raise ValidationError({"operation_type": "Unsupported repository operation."})
@@ -320,6 +321,7 @@ def create_repository_operation_task(
             else None
         ),
         normalize_trigger_type=False,
+        replaces_task=replaces_task,
     )
     repository_task = RepositoryTask.objects.create(
         task=task,
@@ -374,15 +376,36 @@ def schedule_due_maintenance(*, now: datetime | None = None) -> list[int]:
             operation = RepositoryTask.OperationType.MAINTENANCE_QUICK
         if operation is None or not _concurrency_available(target, settings):
             continue
+        previous = None
+        if (
+            operation != RepositoryTask.OperationType.SNAPSHOT_RECONCILE
+            and state.consecutive_failures
+        ):
+            latest = (
+                RepositoryTask.objects.filter(
+                    execution_target=target,
+                    operation_type__in={
+                        RepositoryTask.OperationType.MAINTENANCE_QUICK,
+                        RepositoryTask.OperationType.MAINTENANCE_FULL,
+                    },
+                )
+                .select_related("task")
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            if (
+                latest is not None
+                and latest.operation_type == operation
+                and latest.task.status == Task.Status.FAILED
+                and not Task.objects.filter(replaces_task=latest.task).exists()
+            ):
+                previous = latest.task
         repository_task = create_repository_operation_task(
             target_id=target.id,
             operation_type=operation,
-            trigger_type=(
-                Task.TriggerType.RETRY
-                if operation != RepositoryTask.OperationType.SNAPSHOT_RECONCILE
-                and state.consecutive_failures else Task.TriggerType.SYSTEM
-            ),
+            trigger_type=Task.TriggerType.SYSTEM,
             due_at=current,
+            replaces_task=previous,
         )
         if repository_task:
             scheduled.append(repository_task.id)

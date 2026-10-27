@@ -222,8 +222,14 @@ class OrphanTests(TestCase):
         from apps.storage.tasks import execute_repository_operation
         rt = create_repository_operation_task(
             target_id=self.target.id, operation_type=RepositoryTask.OperationType.MAINTENANCE_FULL,
-            due_at=timezone.now(), trigger_type=Task.TriggerType.RETRY,
+            due_at=timezone.now(), trigger_type=Task.TriggerType.SYSTEM,
         )
+        with patch('apps.storage.services.internal.repository_operations._inside_full_window', return_value=False):
+            result = execute_repository_operation.run(repository_task_id=rt.id)
+        self.assertEqual(result["status"], "deferred_maintenance_window")
+        execute.assert_not_called()
+        # A rolling upgrade can still encounter a legacy persisted retry value.
+        Task.objects.filter(pk=rt.task_id).update(trigger_type=Task.TriggerType.RETRY)
         with patch('apps.storage.services.internal.repository_operations._inside_full_window', return_value=False):
             result = execute_repository_operation.run(repository_task_id=rt.id)
         self.assertEqual(result["status"], "deferred_maintenance_window")

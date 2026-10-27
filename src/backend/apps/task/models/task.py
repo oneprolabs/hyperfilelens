@@ -42,7 +42,7 @@ class Task(models.Model):
     class TriggerType(models.TextChoices):
         MANUAL = "manual", "Manual"
         SYSTEM = "system", "System"
-        RETRY = "retry", "Retry"
+        RETRY = "retry", "Retry"  # Legacy storage value, not a trigger source.
         API = "api", "API"
         HOOK = "hook", "Hook"
 

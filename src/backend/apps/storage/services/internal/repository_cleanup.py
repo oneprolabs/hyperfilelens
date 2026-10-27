@@ -1651,7 +1651,7 @@ def _create_cleanup_task(
             ),
         ),
         trigger_type=(
-            Task.TriggerType.RETRY
+            replaces_task.trigger_type
             if replaces_task is not None
             else Task.TriggerType.SYSTEM
             if triggered_by_task is not None

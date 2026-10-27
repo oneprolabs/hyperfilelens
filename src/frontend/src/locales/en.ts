@@ -4516,6 +4516,7 @@ export const en = {
       createTitle: 'Create System Task',
       detailTitle: 'Task Details',
       basicData: 'Basic Data',
+      executionHistory: 'Execution History',
       ownerLabel: 'Owner',
       duration: 'Duration',
       executionTime: 'Execution Time',
