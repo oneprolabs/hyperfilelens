@@ -47,12 +47,19 @@ def _normalized_retry_run_uuid(value) -> str:
     return str(value or "")
 
 
-_AGENT_ROUNDS = {"flash", "fast", "balanced", "deep", "max"}
+def _submission_deep_thinking(submission: LensRunSubmission) -> bool | None:
+    """Keep pre-upgrade pending submissions recoverable without old SL APIs."""
+    if submission.deep_thinking is not None:
+        return submission.deep_thinking
+    if submission.agent_rounds:
+        return submission.agent_rounds in {"deep", "max"}
+    return None
 
 
-def _normalized_agent_rounds(value) -> str:
-    text = str(value or "").strip()
-    return text if text in _AGENT_ROUNDS else ""
+def _same_deep_thinking(left: bool | None, right: bool | None) -> bool:
+    """Treat omitted legacy mode and the new default-off mode as equivalent."""
+
+    return bool(left) == bool(right)
 
 
 def _submission_for_active_run(
@@ -86,7 +93,8 @@ def prepare_submission(
     idempotency_key: str,
     attachment_uuids: list[str] | None = None,
     retry_of_run_uuid: uuid.UUID | None = None,
-    agent_rounds: str = "",
+    deep_thinking: bool | None = None,
+    agent_rounds: str | None = None,
 ) -> tuple[LensRunSubmission, dict[str, Any] | None]:
     """Persist one submission before SourceLens receives the request.
 
@@ -94,8 +102,11 @@ def prepare_submission(
     payload is non-null when the same idempotency key was already bound.
     """
 
+    if deep_thinking is None and agent_rounds:
+        # Accept an old worker's call during a rolling HFL deployment, but
+        # translate it to the SourceLens v0.63 run contract.
+        deep_thinking = agent_rounds in {"deep", "max"}
     normalized_attachments = _normalized_attachment_uuids(attachment_uuids)
-    normalized_rounds = _normalized_agent_rounds(agent_rounds)
     link = (
         LensSessionLink.objects.select_for_update()
         .select_related("organization", "hfl_user")
@@ -118,8 +129,10 @@ def prepare_submission(
                     active_submission.attachment_uuids
                 )
                 != normalized_attachments
-                or _normalized_agent_rounds(active_submission.agent_rounds)
-                != normalized_rounds
+                or not _same_deep_thinking(
+                    _submission_deep_thinking(active_submission),
+                    deep_thinking,
+                )
             ):
                 raise RunSubmissionConflictError(
                     "The idempotency key is already associated with another request."
@@ -133,7 +146,7 @@ def prepare_submission(
                     question=question,
                     retry_of_run_uuid=retry_of_run_uuid,
                     attachment_uuids=normalized_attachments,
-                    agent_rounds=normalized_rounds,
+                    deep_thinking=deep_thinking,
                     status=LensRunSubmission.Status.BOUND,
                     sl_run_uuid=link.active_run_uuid,
                     run_status=str(active_run.get("status") or link.active_run_status),
@@ -152,7 +165,10 @@ def prepare_submission(
             != _normalized_retry_run_uuid(retry_of_run_uuid)
             or _normalized_attachment_uuids(existing.attachment_uuids)
             != normalized_attachments
-            or _normalized_agent_rounds(existing.agent_rounds) != normalized_rounds
+            or not _same_deep_thinking(
+                _submission_deep_thinking(existing),
+                deep_thinking,
+            )
         ):
             raise RunSubmissionConflictError(
                 "The idempotency key is already associated with another request."
@@ -186,7 +202,7 @@ def prepare_submission(
         question=question,
         retry_of_run_uuid=retry_of_run_uuid,
         attachment_uuids=normalized_attachments,
-        agent_rounds=normalized_rounds,
+        deep_thinking=deep_thinking,
         recovery_next_at=timezone.now(),
     )
     return submission, None
@@ -251,9 +267,9 @@ def execute_submission(
     )
     if attachment_uuids:
         run_body["attachment_uuids"] = attachment_uuids
-    agent_rounds = _normalized_agent_rounds(submission.agent_rounds)
-    if agent_rounds:
-        run_body["agent_rounds"] = agent_rounds
+    deep_thinking = _submission_deep_thinking(submission)
+    if deep_thinking is not None:
+        run_body["deep_thinking"] = deep_thinking
     data = sl_client.request_json(
         "POST",
         f"/api/lens/sessions/{link.sl_session_uuid}/runs/",

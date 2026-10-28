@@ -69,7 +69,7 @@ const name = ref('')
 const agentModelRef = ref('')
 const multimodalModelRef = ref('')
 const maxConcurrency = ref(5)
-const agentRounds = ref('balanced')
+const deepThinking = ref(false)
 const knowledgeSourceId = ref<number | null>(null)
 const selectedTask = ref('')
 const retrievalScopeText = ref('')
@@ -122,18 +122,6 @@ function isSkillSelected(uuid: string) {
 function isMcpSelected(uuid: string) {
   return mcpUuids.value.includes(uuid)
 }
-
-const agentRoundsTiers = computed(() => [
-  { value: 'flash', label: t('insight.assistants.roundsFlash'), hint: t('insight.assistants.roundsFlashHint') },
-  { value: 'fast', label: t('insight.assistants.roundsFast'), hint: t('insight.assistants.roundsFastHint') },
-  {
-    value: 'balanced',
-    label: t('insight.assistants.roundsBalanced'),
-    hint: t('insight.assistants.roundsBalancedHint'),
-  },
-  { value: 'deep', label: t('insight.assistants.roundsDeep'), hint: t('insight.assistants.roundsDeepHint') },
-  { value: 'max', label: t('insight.assistants.roundsMax'), hint: t('insight.assistants.roundsMaxHint') },
-])
 
 const pageTitle = computed(() => {
   if (isEditing.value && name.value.trim()) return name.value.trim()
@@ -211,8 +199,8 @@ function resetForm() {
   name.value = ''
   agentModelRef.value = ''
   multimodalModelRef.value = ''
+  deepThinking.value = false
   maxConcurrency.value = 5
-  agentRounds.value = 'balanced'
   knowledgeSourceId.value = null
   selectedTask.value = ''
   retrievalScopeText.value = ''
@@ -286,8 +274,8 @@ async function loadDetail() {
   name.value = String(row.name || '')
   agentModelRef.value = String(row.agent_model_ref || '')
   multimodalModelRef.value = String(row.multimodal_model_ref || '')
+  deepThinking.value = Boolean(row.deep_thinking)
   maxConcurrency.value = Number(row.max_concurrency ?? 5)
-  agentRounds.value = String(row.agent_rounds || 'balanced')
   selectedTask.value = String(row.selected_task || '')
 
   const ksIdRaw = row.knowledge_source_id
@@ -445,7 +433,7 @@ function buildPayload() {
     retrieval_include_paths: includePaths,
     agent_model_ref: agentModelRef.value || null,
     multimodal_model_ref: multimodalModelRef.value || null,
-    agent_rounds: agentRounds.value,
+    deep_thinking: deepThinking.value,
     max_concurrency: Number(maxConcurrency.value) || 5,
     settings: Object.keys(retrievalPolicy).length ? { retrieval_policy: retrievalPolicy } : {},
     workspace_guide: {
@@ -717,29 +705,10 @@ watch(
                   </p>
                 </ElFormItem>
 
-                <ElFormItem
-                  :label="t('insight.assistants.fieldAgentRounds')"
-                  required
-                >
-                  <ElRadioGroup
-                    v-model="agentRounds"
-                    class="assistant-rounds-grid"
-                  >
-                    <ElRadio
-                      v-for="tier in agentRoundsTiers"
-                      :key="tier.value"
-                      :value="tier.value"
-                      border
-                      class="assistant-rounds-card !mr-0"
-                    >
-                      <div class="assistant-rounds-card__inner">
-                        <span class="assistant-rounds-card__label">{{ tier.label }}</span>
-                        <span class="assistant-rounds-card__hint">{{ tier.hint }}</span>
-                      </div>
-                    </ElRadio>
-                  </ElRadioGroup>
+                <ElFormItem :label="t('insight.copilot.deepThinking')">
+                  <ElSwitch v-model="deepThinking" />
                   <p class="assistant-field-hint">
-                    {{ t('insight.assistants.fieldAgentRoundsHint') }}
+                    {{ t('insight.copilot.deepThinkingHint') }}
                   </p>
                 </ElFormItem>
               </ElForm>
@@ -1333,63 +1302,13 @@ watch(
   width: 140px;
 }
 
-.assistant-rounds-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 12px;
-  width: 100%;
-}
-
-@media (max-width: 900px) {
-  .assistant-rounds-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.assistant-rounds-grid :deep(.el-radio__input),
 .assistant-visibility-grid :deep(.el-radio__input) {
   display: none;
 }
 
-.assistant-rounds-grid :deep(.el-radio__label),
 .assistant-visibility-grid :deep(.el-radio__label) {
   padding-left: 0;
   width: 100%;
-}
-
-.assistant-rounds-grid :deep(.el-radio) {
-  height: auto !important;
-  min-height: 64px;
-  margin-right: 0 !important;
-  padding: 12px 10px !important;
-  border-radius: 12px !important;
-  align-items: center;
-  justify-content: center;
-}
-
-.assistant-rounds-grid :deep(.el-radio.is-bordered.is-checked) {
-  border-color: var(--color-primary, #6d5ef6) !important;
-  background: var(--color-primary-light, #f2f0fe);
-}
-
-.assistant-rounds-card__inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  width: 100%;
-  text-align: center;
-}
-
-.assistant-rounds-card__label {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-title);
-}
-
-.assistant-rounds-card__hint {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
 }
 
 .assistant-tools-form :deep(.el-form-item) {

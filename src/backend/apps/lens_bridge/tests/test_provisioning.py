@@ -522,7 +522,7 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
         self.assertEqual(str(result), assistant_uuid)
         payload = request_json.call_args.kwargs["json_body"]
         self.assertEqual(payload["agent_model_ref"], agent_ref)
-        self.assertEqual(payload["agent_rounds"], "balanced")
+        self.assertNotIn("agent_rounds", payload)
         self.assertEqual(
             payload["datasource_bindings"],
             [
@@ -553,20 +553,6 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
             },
         )
 
-    def test_analysis_mode_maps_to_source_lens_agent_rounds(self):
-        from apps.lens_bridge.services import provisioning
-
-        self.assertEqual(provisioning.agent_rounds_for_analysis_mode("fast"), "fast")
-        self.assertEqual(
-            provisioning.agent_rounds_for_analysis_mode("standard"),
-            "balanced",
-        )
-        self.assertEqual(provisioning.agent_rounds_for_analysis_mode("deep"), "deep")
-        self.assertEqual(
-            provisioning.agent_rounds_for_analysis_mode("unsupported"),
-            "balanced",
-        )
-
     @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
     def test_analysis_type_updates_source_lens_selected_task(self, request_json):
         from apps.lens_bridge.services import provisioning
@@ -584,6 +570,20 @@ class CreateAssistantModelBindingTests(SimpleTestCase):
             "PATCH",
             f"/api/lens/assistants/{assistant_uuid}/",
             json_body={"selected_task": "code_analysis"},
+        )
+
+    @patch("apps.lens_bridge.services.provisioning.sl_client.request_json")
+    def test_deep_analysis_mode_uses_source_lens_deep_thinking(self, request_json):
+        from apps.lens_bridge.services import provisioning
+
+        knowledge_source = MagicMock(sl_assistant_uuid="assistant-uuid")
+        provisioning.sync_assistant_execution_config(
+            ks=knowledge_source,
+            analysis_mode="deep",
+            assistant_uuid=uuid.uuid4(),
+        )
+        self.assertTrue(
+            request_json.call_args.kwargs["json_body"]["deep_thinking"]
         )
 
 

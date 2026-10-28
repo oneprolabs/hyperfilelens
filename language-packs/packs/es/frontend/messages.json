@@ -4048,7 +4048,21 @@
       "clarificationTitle": "Se necesita un poco más de información",
       "clarificationPlaceholder": "Añada los detalles necesarios para continuar…",
       "clarificationSubmit": "Continuar",
-      "clarificationSubmitting": "Continuando…"
+      "clarificationSubmitting": "Continuando…",
+      "deepThinking": "Pensamiento profundo",
+      "deepThinkingHint": "Usa un razonamiento más profundo y una revisión independiente de la respuesta. Puede tardar más.",
+      "answerReview": "Revisión de la respuesta",
+      "reviewSupported": "Con respaldo",
+      "reviewUnsupported": "Sin respaldo",
+      "reviewInconclusive": "No concluyente",
+      "reviewNotRequested": "No solicitada",
+      "reviewEvidenceComplete": "La cobertura de las fuentes está completa.",
+      "reviewEvidenceIncomplete": "La cobertura de las fuentes está incompleta.",
+      "reviewMaterialIncomplete": "Las pruebas para la revisión están incompletas.",
+      "reviewUnavailable": "La revisión de la respuesta no está disponible.",
+      "reviewWarningInconclusive": "La revisión de la respuesta no pudo llegar a una conclusión.",
+      "outcomePartial": "Esta respuesta solo está parcialmente completa.",
+      "outcomeBlocked": "No se pudo completar esta respuesta."
     },
     "aiSettings": {
       "btnAdd": "Añadir",

@@ -34,12 +34,6 @@ _LENSNODE_DIR_WAIT_SECONDS = 60.0
 _LENSNODE_DIR_POLL_SECONDS = 0.5
 LENSNODE_PROVISION_CLAIM_TTL_SECONDS = 300
 
-ANALYSIS_MODE_AGENT_ROUNDS = {
-    "fast": "fast",
-    "standard": "balanced",
-    "deep": "deep",
-}
-
 ANALYSIS_TYPE_TASKS = {
     "knowledge_qa": "knowledge_qa",
     "code_analysis": "code_analysis",
@@ -94,12 +88,6 @@ def has_gateway_task_snapshot(link: LensGatewayLink) -> bool:
     config = link.config_json or {}
     snapshot = config.get("sl_lensnode_snapshot")
     return isinstance(snapshot, dict) and "sl_tasks" in snapshot
-
-
-def agent_rounds_for_analysis_mode(mode: str | None) -> str:
-    """Map HFL's stable product choices to SourceLens execution values."""
-
-    return ANALYSIS_MODE_AGENT_ROUNDS.get(str(mode or "standard"), "balanced")
 
 
 class LensNodeProvisionBusyError(sl_client.LensBridgeError):
@@ -593,12 +581,13 @@ def create_sl_assistant_for_ks(
         "selected_task": selected_task,
         "datasource_bindings": datasource_bindings_for_ks(ks),
         "agent_model_ref": model_ref,
-        "agent_rounds": agent_rounds_for_analysis_mode(analysis_mode),
         "visibility": "private",
         "status": "active",
     }
     if multimodal_model_ref:
         payload["multimodal_model_ref"] = str(multimodal_model_ref)
+    if analysis_mode is not None:
+        payload["deep_thinking"] = analysis_mode == "deep"
     policy = ingest_policy.normalize_ingest_policy(ks.ingest_policy_json)
     payload["settings"] = {
         "ingestion": {
@@ -645,15 +634,15 @@ def sync_assistant_execution_config(
     if ks.sl_assistant_uuid != target:
         ks.sl_assistant_uuid = target
         ks.save(update_fields=["sl_assistant_uuid", "updated_at"])
-    payload: dict[str, str] = {}
+    payload: dict[str, Any] = {}
     if model_ref is not None:
         payload["agent_model_ref"] = str(model_ref)
-    if analysis_mode is not None:
-        payload["agent_rounds"] = agent_rounds_for_analysis_mode(analysis_mode)
     if analysis_type is not None:
         payload["selected_task"] = ANALYSIS_TYPE_TASKS[
             normalize_analysis_type(analysis_type)
         ]
+    if analysis_mode is not None:
+        payload["deep_thinking"] = analysis_mode == "deep"
     if not payload:
         return
     sl_client.request_json(

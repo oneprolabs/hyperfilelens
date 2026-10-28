@@ -133,7 +133,7 @@ class RunSubmissionRecoveryTests(TestCase):
         )
 
     @patch("apps.lens_bridge.services.run_submissions.sl_client.request_json")
-    def test_recovery_replays_the_selected_reasoning_depth(self, request_json):
+    def test_recovery_replays_deep_thinking(self, request_json):
         run_uuid = uuid.uuid4()
         submission = LensRunSubmission.objects.create(
             organization=self.org,
@@ -141,7 +141,7 @@ class RunSubmissionRecoveryTests(TestCase):
             session_link=self.session,
             idempotency_key="recover-rounds",
             question="Think this through",
-            agent_rounds="deep",
+            deep_thinking=True,
         )
         request_json.return_value = {
             "uuid": str(run_uuid),
@@ -157,7 +157,7 @@ class RunSubmissionRecoveryTests(TestCase):
             json_body={
                 "question": "Think this through",
                 "idempotency_key": "recover-rounds",
-                "agent_rounds": "deep",
+                "deep_thinking": True,
             },
             hfl_user=self.user,
         )
@@ -190,6 +190,25 @@ class RunSubmissionRecoveryTests(TestCase):
             },
             hfl_user=self.user,
         )
+
+    def test_legacy_omitted_thinking_matches_new_default_off_request(self):
+        submission = LensRunSubmission.objects.create(
+            organization=self.org,
+            hfl_user=self.user,
+            session_link=self.session,
+            idempotency_key="legacy-default-thinking",
+            question="Reuse the default mode",
+        )
+
+        existing, run = run_submissions.prepare_submission(
+            self.session,
+            question=submission.question,
+            idempotency_key=submission.idempotency_key,
+            deep_thinking=False,
+        )
+
+        self.assertEqual(existing.pk, submission.pk)
+        self.assertIsNone(run)
 
     def test_stale_worker_does_not_fail_a_newer_recovery_claim(self):
         submission = LensRunSubmission.objects.create(

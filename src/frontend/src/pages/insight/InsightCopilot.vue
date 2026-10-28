@@ -111,16 +111,7 @@ const sharedRunsBySession = ref<Record<number, string[]>>({})
 const executionSettingsOpen = ref(false)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const input = ref('')
-const AGENT_ROUNDS_STORAGE_KEY = 'hfl.copilot.agentRounds'
-const AGENT_ROUND_VALUES = new Set(['flash', 'fast', 'balanced', 'deep', 'max'])
-
-function readStoredAgentRounds() {
-  if (typeof window === 'undefined') return 'balanced'
-  const stored = window.localStorage.getItem(AGENT_ROUNDS_STORAGE_KEY) || ''
-  return AGENT_ROUND_VALUES.has(stored) ? stored : 'balanced'
-}
-
-const agentRounds = ref(readStoredAgentRounds())
+const deepThinking = ref(false)
 const composerAttachments = ref<CopilotComposerAttachment[]>([])
 const retryDraft = ref<CopilotRetryDraft | null>(null)
 const composerHeight = ref(176)
@@ -179,6 +170,8 @@ function mapApiMessage(row: LensChatMessage): CopilotDisplayMessage | null {
     row.citations?.length
     || hasPlannedEvidence
     || row.thinking?.steps?.length
+    || row.thinking?.outcome
+    || Object.keys(row.thinking?.termination_detail || {}).length
     || row.thinking?.termination_detail?.request,
   )
   if (row.role !== 'user' && !text.trim() && !hasRuntimePayload) return null
@@ -1161,7 +1154,7 @@ async function submitQuestion(
   const sessionId = activeSessionId.value
   const readyAttachments = attachments.filter((item) => item.status === 'ready')
   if ((!text && !readyAttachments.length) || sessionId == null || submissionBlocked.value) return
-  const agentRoundsAtSubmit = agentRounds.value
+  const deepThinkingAtSubmit = deepThinking.value
 
   const submissionComposerGeneration = composerLifecycleGeneration
   const submissionRetryDraft = retryDraft.value
@@ -1199,7 +1192,7 @@ async function submitQuestion(
       idempotencyKey,
       attachmentUuids,
       retryOfRunUuid,
-      agentRoundsAtSubmit,
+      deepThinkingAtSubmit,
     )
     runAccepted = true
     revokeComposerAttachments(readyAttachments)
@@ -1353,15 +1346,15 @@ async function refreshSharedRun(sessionId: number) {
   }
 }
 
-watch(activeSessionId, (sessionId) => {
-  retryDraft.value = null
-  if (sessionId != null) void refreshSharedRun(sessionId)
-})
-
-watch(agentRounds, (value) => {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(AGENT_ROUNDS_STORAGE_KEY, value || '')
-})
+watch(
+  () => [activeSessionId.value, activeSession.value?.analysis_mode],
+  ([sessionId, analysisMode]) => {
+    deepThinking.value = analysisMode === 'deep'
+    retryDraft.value = null
+    if (typeof sessionId !== 'number') return
+    void refreshSharedRun(sessionId)
+  },
+)
 
 onActivated(() => {
   componentUnmounted = false
@@ -1529,8 +1522,8 @@ onUnmounted(() => {
             :disabled="composerUnavailable"
             :supports-images="supportsImageAttachments"
             :supports-documents="supportsDocumentAttachments"
-            :agent-rounds="agentRounds"
-            @update:agent-rounds="agentRounds = $event"
+            :deep-thinking="deepThinking"
+            @update:deep-thinking="deepThinking = $event"
             @send="sendMessage"
             @stop="stopStreaming"
             @attach="addComposerAttachments"

@@ -10,6 +10,7 @@ import CopilotAttachmentList from './CopilotAttachmentList.vue'
 import CopilotOutputFileList from './CopilotOutputFileList.vue'
 import CopilotThinkingTimeline from './CopilotThinkingTimeline.vue'
 import CopilotMessageCitations from './CopilotMessageCitations.vue'
+import CopilotAnswerReviewStatus from './CopilotAnswerReviewStatus.vue'
 import { messagesForLiveHandoff } from './copilotLiveHandoff'
 import {
   formatAgentActivityDuration,
@@ -451,6 +452,11 @@ const displayMessages = computed(() =>
               >
                 {{ msg.plannedEvidence.planner_rejection_reason || t('insight.copilot.evidenceMayBeInsufficient') }}
               </div>
+
+              <CopilotAnswerReviewStatus
+                v-if="msg.role === 'assistant'"
+                :message="msg"
+              />
 
               <CopilotOutputFileList
                 v-if="msg.role === 'assistant' && msg.outputFiles?.length"

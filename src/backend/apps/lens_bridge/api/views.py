@@ -2270,7 +2270,7 @@ class _LensCopilotSessionViewSetBase(OrgScopedMixin, viewsets.ViewSet):
             str(value) for value in body.validated_data.get("attachment_uuids", [])
         ]
         idempotency_key = body.validated_data.get("idempotency_key") or uuid.uuid4().hex
-        agent_rounds = body.validated_data.get("agent_rounds") or ""
+        deep_thinking = body.validated_data["deep_thinking"]
         from apps.lens_bridge.services import run_submissions
 
         if retry_of_run_uuid is not None:
@@ -2286,7 +2286,7 @@ class _LensCopilotSessionViewSetBase(OrgScopedMixin, viewsets.ViewSet):
                     idempotency_key=idempotency_key,
                     attachment_uuids=attachment_uuids,
                     retry_of_run_uuid=retry_of_run_uuid,
-                    agent_rounds=agent_rounds,
+                    deep_thinking=deep_thinking,
                 )
             except run_submissions.RunSubmissionConflictError as exc:
                 raise CopilotRunConflict() from exc

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from 'lucide-vue-next'
 import type { CopilotComposerAttachment } from './types'
-import CopilotReasoningSelect from './CopilotReasoningSelect.vue'
+import CopilotDeepThinkingToggle from './CopilotDeepThinkingToggle.vue'
 
 const SOURCE_LENS_MAX_ATTACHMENTS = 4
 const SOURCE_LENS_IMAGE_ATTACHMENTS = [
@@ -27,12 +27,12 @@ const props = defineProps<{
   disabled?: boolean
   supportsImages?: boolean
   supportsDocuments?: boolean
-  agentRounds?: string
+  deepThinking?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  'update:agentRounds': [value: string]
+  'update:deepThinking': [value: boolean]
   send: []
   stop: []
   attach: [files: File[]]
@@ -234,10 +234,10 @@ onBeforeUnmount(() => {
           @keydown.enter.exact.prevent="submit"
         />
 
-        <CopilotReasoningSelect
-          :model-value="agentRounds || 'balanced'"
+        <CopilotDeepThinkingToggle
+          :model-value="deepThinking || false"
           :disabled="disabled"
-          @update:model-value="emit('update:agentRounds', $event)"
+          @update:model-value="emit('update:deepThinking', $event)"
         />
 
         <button

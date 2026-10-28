@@ -955,13 +955,19 @@ class LensRunCreateSerializer(serializers.Serializer):
         default=list,
         max_length=4,
     )
+    deep_thinking = serializers.BooleanField(required=False)
+    # Accept the previous HFL request during a rolling frontend deployment.
+    # It is translated locally and never forwarded to the new SL contract.
     agent_rounds = serializers.ChoiceField(
         choices=("", "flash", "fast", "balanced", "deep", "max"),
         required=False,
-        default="",
+        write_only=True,
     )
 
     def validate(self, attrs):
+        if "deep_thinking" not in attrs:
+            attrs["deep_thinking"] = attrs.get("agent_rounds") in {"deep", "max"}
+        attrs.pop("agent_rounds", None)
         attachment_uuids = attrs.get("attachment_uuids") or []
         if len(set(attachment_uuids)) != len(attachment_uuids):
             raise serializers.ValidationError(

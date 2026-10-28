@@ -217,7 +217,7 @@ def _serialize_list_row(
         "supports_document_attachments": bool(
             item.get("supports_document_attachments")
         ),
-        "agent_rounds": item.get("agent_rounds") or "",
+        "deep_thinking": bool(item.get("deep_thinking")),
         "knowledge_source_id": ks.id if ks else None,
         "knowledge_source_name": ks.name if ks else None,
         "knowledge_source_status": ks.status if ks else None,
@@ -673,7 +673,7 @@ def update_org_assistant(
         raise ValidationError(
             {"assistant": "Assistant management authorization is required."}
         )
-    get_org_assistant(
+    existing = get_org_assistant(
         org,
         assistant_uuid,
         user=user,
@@ -689,6 +689,13 @@ def update_org_assistant(
         user=user,
         platform_passthrough=platform_passthrough,
     )
+    if isinstance(payload.get("settings"), dict):
+        # The HFL form owns retrieval settings, not SL's execution budgets,
+        # decision policies or share settings. A PATCH replaces this JSON field.
+        payload["settings"] = {
+            **(existing.get("settings") or {}),
+            **payload["settings"],
+        }
     _validate_assistant_tool_bindings(
         org,
         payload,

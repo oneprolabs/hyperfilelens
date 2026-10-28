@@ -505,7 +505,7 @@ dev_insight_output="$({
 	source "${ROOT_REPO}/dev/stack.sh"
 	ROOT="${dev_fixture}"
 	WITH_SOURCELENS=1
-	SOURCELENS_GIT_REF=v0.61.3
+	SOURCELENS_GIT_REF=v0.63.4
 	LOG_FILE="${dev_fixture}/dev.log"
 	print_urls
 } 2>&1)"
@@ -523,14 +523,14 @@ target_output="$({
 	CMD=restart
 	restart_force=1
 	WITH_SOURCELENS=1
-	SOURCELENS_GIT_REF=v0.61.3
+	SOURCELENS_GIT_REF=v0.63.4
 	EXTENSION_SOURCES=("https://github.com/example/hyperfilelens-ee.git@v1.2.3")
 	LOG_FILE="${fixture}/build/logs/dev-restart.log"
 	print_dev_target
 } 2>&1)"
 grep -F '  Command              restart --force' <<<"${target_output}" >/dev/null
 grep -F '  Extension revision   v1.2.3' <<<"${target_output}" >/dev/null
-grep -F '  SourceLens           bundled / v0.61.3' <<<"${target_output}" >/dev/null
+grep -F '  SourceLens           bundled / v0.63.4' <<<"${target_output}" >/dev/null
 grep -F '  Host platform        ' <<<"${target_output}" >/dev/null
 grep -F '  Container platform   linux/amd64' <<<"${target_output}" >/dev/null
 grep -F '  Session log          build/logs/dev-restart.log' <<<"${target_output}" >/dev/null

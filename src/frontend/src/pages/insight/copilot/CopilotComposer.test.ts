@@ -160,23 +160,12 @@ describe('CopilotComposer attachments', () => {
     expect(disconnect).toHaveBeenCalledOnce()
   })
 
-  it('offers SourceLens reasoning depths and emits the selected tier', async () => {
+  it('offers SourceLens deep thinking and emits the selected state', async () => {
     const wrapper = mountComposer()
 
-    expect(wrapper.get('.reasoning-depth-trigger').text()).toContain('Balanced')
-    await wrapper.get('.reasoning-depth-trigger').trigger('click')
-    const options = wrapper.findAll('.reasoning-depth-option')
-    expect(options.map((option) => option.get('.reasoning-depth-option-label').text())).toEqual([
-      'Flash',
-      'Fast',
-      'Balanced',
-      'Deep',
-      'Max',
-    ])
-
-    await options[1].trigger('click')
-
-    expect(wrapper.emitted('update:agentRounds')?.at(-1)).toEqual(['fast'])
-    expect(wrapper.find('.reasoning-depth-menu').exists()).toBe(false)
+    const toggle = wrapper.get('.deep-thinking-toggle')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    expect(wrapper.emitted('update:deepThinking')?.at(-1)).toEqual([true])
   })
 })

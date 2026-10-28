@@ -322,9 +322,9 @@ grep -F 'no_cache=1' <<<"${config}" >/dev/null
 grep -F -- '--prebuilt' "${ROOT}/release/build-sourcelens.sh" >/dev/null
 grep -F 'ln "${source_archive}" "${temporary}"' \
 	"${ROOT}/tools/sourcelens/common.sh" >/dev/null
-grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.61.3}"' \
+grep -F 'SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.63.4}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
-grep -F 'SOURCELENS_GIT_REF=v0.61.3' \
+grep -F 'SOURCELENS_GIT_REF=v0.63.4' \
 	"${ROOT}/.env.example" >/dev/null
 grep -F 'SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"' \
 	"${ROOT}/tools/sourcelens/defaults.env" >/dev/null
@@ -374,10 +374,9 @@ PY
 
 sourcelens_common="${ROOT}/tools/sourcelens/common.sh"
 sourcelens_build_body="$(sed -n '/^sourcelens_build_app_images()/,/^}/p' "${sourcelens_common}")"
-grep -F 'https://deb.debian.org/debian' <<<"${sourcelens_build_body}" >/dev/null
-grep -F 'https://pypi.org/simple' <<<"${sourcelens_build_body}" >/dev/null
-if grep -F 'mirrors.tuna.tsinghua.edu.cn' <<<"${sourcelens_build_body}" >/dev/null; then
-	printf 'ERROR: SourceLens build must not enable a third-party mirror by default\n' >&2
+grep -F 'sourcelens_prepare_official_app_images' <<<"${sourcelens_build_body}" >/dev/null
+if grep -F 'compose build' <<<"${sourcelens_build_body}" >/dev/null; then
+	printf 'ERROR: HFL must not rebuild SourceLens application images\n' >&2
 	exit 1
 fi
 
@@ -486,7 +485,7 @@ grep -Fx '      context: .' \
 grep -Fx '      dockerfile: lensnode/Dockerfile' \
 	"${tmp}/source-patch/docker-compose.standalone.yml" >/dev/null
 
-grep -F '# SourceLens v0.61.3 requires no HFL functional patches.' \
+grep -F '# SourceLens v0.63.4 requires no HFL functional patches.' \
 	"${ROOT}/tools/sourcelens/patches/series" >/dev/null
 [[ -x "${ROOT}/tools/sourcelens/update-runtime-contract.sh" ]]
 [[ -x "${ROOT}/tools/quality/test-sourcelens-runtime-contract.sh" ]]

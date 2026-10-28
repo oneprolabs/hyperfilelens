@@ -108,6 +108,45 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     wrapper.unmount()
   })
 
+  it('renders SourceLens answer review and terminal outcome fields', async () => {
+    const wrapper = mountList({
+      messages: [{
+        id: 'assistant-review',
+        role: 'assistant',
+        text: 'Answer',
+        thinking: {
+          outcome: 'partial',
+          termination_detail: {
+            assessment: {
+              coverage: 'incomplete',
+              review: 'not_requested',
+            },
+          },
+        },
+      }],
+    })
+
+    expect(wrapper.find('.copilot-answer-review').classes()).toContain('is-not_requested')
+    expect(wrapper.find('.copilot-answer-review').text()).toContain('Answer review: Not requested')
+
+    await wrapper.get('.copilot-answer-review__button').trigger('click')
+    expect(wrapper.find('.copilot-answer-review__details').text()).toContain('Source coverage is incomplete.')
+    wrapper.unmount()
+
+    const outcomeWrapper = mountList({
+      messages: [{
+        id: 'assistant-outcome',
+        role: 'assistant',
+        text: 'Partial answer',
+        thinking: { outcome: 'partial' },
+      }],
+    })
+    expect(outcomeWrapper.find('.copilot-answer-review').text()).toContain(
+      'This response is only partially complete.',
+    )
+    outcomeWrapper.unmount()
+  })
+
   it('opens SourceLens citations in a right-side drawer and closes with Escape', async () => {
     mocks.fetchCopilotCitation.mockResolvedValue({
       id: 'citation-1',

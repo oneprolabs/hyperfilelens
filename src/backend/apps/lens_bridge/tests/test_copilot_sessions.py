@@ -210,21 +210,21 @@ class LensSessionCreateSerializerTests(SimpleTestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("attachment_uuids", serializer.errors)
 
-    def test_run_accepts_source_lens_reasoning_depths(self):
+    def test_run_accepts_deep_thinking(self):
         serializer = LensRunCreateSerializer(
-            data={"question": "Question", "agent_rounds": "fast"}
+            data={"question": "Question", "deep_thinking": True}
         )
 
         self.assertTrue(serializer.is_valid(), serializer.errors)
-        self.assertEqual(serializer.validated_data["agent_rounds"], "fast")
+        self.assertTrue(serializer.validated_data["deep_thinking"])
 
-    def test_run_rejects_an_unknown_reasoning_depth(self):
+    def test_run_rejects_an_invalid_deep_thinking_value(self):
         serializer = LensRunCreateSerializer(
-            data={"question": "Question", "agent_rounds": "turbo"}
+            data={"question": "Question", "deep_thinking": "turbo"}
         )
 
         self.assertFalse(serializer.is_valid())
-        self.assertIn("agent_rounds", serializer.errors)
+        self.assertIn("deep_thinking", serializer.errors)
 
     def test_run_accepts_a_retry_reference(self):
         retry_run_uuid = uuid.uuid4()
@@ -1638,7 +1638,7 @@ class CopilotSessionApiTests(TestCase):
         )
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")
-    def test_create_run_forwards_the_selected_reasoning_depth(self, request_json):
+    def test_create_run_forwards_deep_thinking(self, request_json):
         self._mark_session_ready()
         new_run_uuid = uuid.uuid4()
         request_json.return_value = {
@@ -1655,7 +1655,7 @@ class CopilotSessionApiTests(TestCase):
             {
                 "question": "Look at this quickly",
                 "idempotency_key": "fast-request",
-                "agent_rounds": "fast",
+                "deep_thinking": True,
             },
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
@@ -1666,10 +1666,10 @@ class CopilotSessionApiTests(TestCase):
             session_link=self.session,
             idempotency_key="fast-request",
         )
-        self.assertEqual(submission.agent_rounds, "fast")
+        self.assertTrue(submission.deep_thinking)
         self.assertEqual(
-            request_json.call_args.kwargs["json_body"]["agent_rounds"],
-            "fast",
+            request_json.call_args.kwargs["json_body"]["deep_thinking"],
+            True,
         )
 
     @patch("apps.lens_bridge.api.views.sl_client.request_json")

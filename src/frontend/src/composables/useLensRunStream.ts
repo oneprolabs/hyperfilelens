@@ -477,7 +477,8 @@ class SessionRunStreamController {
     const timeout = window.setTimeout(() => {
       if (this.controller !== controller) return
       if (!this.streamFinished) {
-        this.state.streamError = this.state.streamError || 'Response timed out. Try again.'
+        // Reconcile with SL and let the existing session poller reconnect.
+        // A client connection deadline says nothing about the Run outcome.
         this.markStreamFinished()
       }
     }, timeoutMs)
