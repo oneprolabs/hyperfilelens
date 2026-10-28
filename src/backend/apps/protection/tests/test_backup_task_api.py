@@ -63,6 +63,38 @@ from common.errors import AppError
 
 @override_settings(SECURE_SSL_REDIRECT=False)
 class ProtectionBackupTaskApiTests(TestCase):
+    @patch("apps.subscription.services.interface.enforce_license_quota")
+    def test_usage_unavailable_result_preserves_safe_quota_diagnostics(self, quota_check):
+        quota_check.side_effect = AppError(
+            code="SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE",
+            status=503,
+            diagnostic="Quota usage cannot be measured completely.",
+            meta={
+                "scope": "organization",
+                "quota_type": "max_storage_bytes",
+                "blocking_repository_ids": [7],
+                "blocking_repositories_truncated": False,
+                "secret": "not-public",
+            },
+        )
+        response = self.client.post(
+            "/api/v1/protection/backup-tasks/",
+            {"source_ids": [f"agent:{self.agent.id}"], "trigger_type": "manual"},
+            format="json",
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        result = response.data["results"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["error_code"], "SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE")
+        self.assertEqual(result["error_meta"], {
+            "scope": "organization",
+            "quota_type": "max_storage_bytes",
+            "blocking_repository_ids": [7],
+            "blocking_repositories_truncated": False,
+        })
+        self.assertFalse(Task.objects.filter(task_type=Task.Type.BACKUP).exists())
+
     def setUp(self):
         from common.extension_spi import clear_providers_for_tests, restore_providers_for_tests
 

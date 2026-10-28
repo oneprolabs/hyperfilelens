@@ -180,6 +180,15 @@ def _should_raise_backup_admission_error(
     return True
 
 
+def _backup_admission_error_meta(exc: Exception) -> dict:
+    if not isinstance(exc, AppError) or exc.code != "SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE":
+        return {}
+    allowed = ("scope", "quota_type")
+    if (exc.meta or {}).get("scope") == "organization":
+        allowed += ("blocking_repository_ids", "blocking_repositories_truncated")
+    return {"error_meta": {key: exc.meta[key] for key in allowed if key in (exc.meta or {})}}
+
+
 logger = logging.getLogger(__name__)
 
 _KOPIA_TASK_SPAN = _KOPIA_TASK_END - BACKUP_TRANSFER_START
@@ -954,6 +963,7 @@ def start_backup_tasks(
                             else "failed"
                         ),
                         **({"error_code": error_code or exc.code} if error_code or isinstance(exc, AppError) else {}),
+                        **_backup_admission_error_meta(exc),
                         "message": diagnostic if error_code else (_validation_message(exc) if isinstance(exc, ValidationError) else str(exc)),
                     }
                 )
@@ -1181,6 +1191,7 @@ def start_backup_tasks(
                             else "failed"
                         ),
                         **({"error_code": exc.code} if isinstance(exc, AppError) else {}),
+                        **_backup_admission_error_meta(exc),
                         "message": (
                             _validation_message(exc)
                             if isinstance(exc, ValidationError)

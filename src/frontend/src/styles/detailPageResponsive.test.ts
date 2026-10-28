@@ -15,10 +15,10 @@ describe('responsive detail rows', () => {
     expect(styles).toContain('.hfl-empty-mark {')
     expect(styles).toContain('align-self: flex-start')
     expect(compactCapacityCell).toContain('<span v-else class="hfl-empty-mark">{{ emptyLabel }}</span>')
-    const stackedRepositoryUsageRows = repositoryPage.match(
-      /class="hfl-detail-row__value hfl-detail-row__value--stacked"/g,
+    const centeredRepositoryUsageRows = repositoryPage.match(
+      /class="hfl-detail-row__value">\s*<RepositoryUsageCell/g,
     )
-    expect(stackedRepositoryUsageRows?.length).toBeGreaterThanOrEqual(3)
+    expect(centeredRepositoryUsageRows?.length).toBeGreaterThanOrEqual(3)
     expect(repositoryPage).toContain('<RepositoryUsageCell')
     expect(repositoryPage).toContain('variant="detail"')
   })

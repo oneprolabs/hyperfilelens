@@ -25,6 +25,7 @@ import {
 } from '../../lib/s3PlatformDisplay'
 import S3PlatformBrandIcon from '../../components/S3PlatformBrandIcon.vue'
 import RepositoryUsageCell from '../../components/RepositoryUsageCell.vue'
+import RepositoryUsageSection from '../../components/RepositoryUsageSection.vue'
 import RepositoryBackingStorageTooltip from '../../components/RepositoryBackingStorageTooltip.vue'
 import RepositoryCapacityConflictAlert from '../../components/RepositoryCapacityConflictAlert.vue'
 import RepositoryLifecycleStatus from '../../components/RepositoryLifecycleStatus.vue'
@@ -45,6 +46,7 @@ import {
   listStorageRepositories,
   listStorageRepositoryAssociatedSources,
   listStorageRepositoryTasks,
+  syncStorageRepositoryUsage,
   deleteStorageRepository,
   preflightStorageRepositoryCleanup,
   retryStorageRepositoryInitialization,
@@ -159,6 +161,7 @@ export type RepositoryRow = {
   health_error_code?: string
   health_error_message?: string
   usage_probe_status?: string
+  usage_last_error?: string | null
   capacity_probe_status?: string
   usage_last_success_at?: string | null
   capacity_last_success_at?: string | null
@@ -258,6 +261,7 @@ type ApiRepository = {
   health_error_code?: string
   health_error_message?: string
   usage_probe_status?: string
+  usage_last_error?: string | null
   capacity_probe_status?: string
   usage_last_success_at?: string | null
   capacity_last_success_at?: string | null
@@ -432,12 +436,11 @@ function normalizeLifecycleStatus(raw: string): RepoLifecycleStatus {
 }
 
 function normalizeRepositoryUsageProbeStatus(repository: ApiRepository, kind: RepoKind) {
-  const status = String(repository.usage_probe_status || 'pending').toLowerCase()
-  if (kind === 's3' && status === 'pending' && Number(repository.estimated_usage_bytes || 0) > 0) {
-    // S3 usage existed before probe status tracking was introduced.
+  const status = String(repository.usage_probe_status || '').trim().toLowerCase()
+  if (kind === 's3' && !status && Number(repository.estimated_usage_bytes || 0) > 0) {
     return 'success'
   }
-  return status
+  return status || 'pending'
 }
 
 function normalizeHealth(raw: string | undefined | null, statusHint?: string): RepoHealth {
@@ -540,6 +543,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       health_error_code: r.health_error_code || '',
       health_error_message: r.health_error_message || '',
       usage_probe_status: normalizeRepositoryUsageProbeStatus(r, kind),
+      usage_last_error: r.usage_last_error ?? null,
       capacity_probe_status: r.capacity_probe_status || 'pending',
       usage_last_success_at: r.usage_last_success_at ?? null,
       capacity_last_success_at: r.capacity_last_success_at ?? null,
@@ -596,6 +600,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
       health_error_code: r.health_error_code || '',
       health_error_message: r.health_error_message || '',
       usage_probe_status: r.usage_probe_status || 'pending',
+      usage_last_error: r.usage_last_error ?? null,
       capacity_probe_status: r.capacity_probe_status || 'pending',
       usage_last_success_at: r.usage_last_success_at ?? null,
       capacity_last_success_at: r.capacity_last_success_at ?? null,
@@ -646,6 +651,7 @@ function mapApiToRow(r: ApiRepository): RepositoryRow {
     health_error_code: r.health_error_code || '',
     health_error_message: r.health_error_message || '',
     usage_probe_status: r.usage_probe_status || 'pending',
+    usage_last_error: r.usage_last_error ?? null,
     capacity_probe_status: r.capacity_probe_status || 'pending',
     usage_last_success_at: r.usage_last_success_at ?? null,
     capacity_last_success_at: r.capacity_last_success_at ?? null,
@@ -749,6 +755,17 @@ const detailDistinctS3Endpoints = computed(() => {
   return distinctS3EndpointPair(config?.external_endpoint, config?.internal_endpoint)
 })
 const detailActiveTab = ref('basic')
+const usageRefreshInProgress = ref(false)
+const usageRefreshError = ref('')
+let usageRefreshPollTimer: ReturnType<typeof setTimeout> | undefined
+let usageRefreshRevision = 0
+
+watch(drawerDetailOpen, (open) => {
+  if (open) return
+  stopUsageRefreshPolling()
+  usageRefreshInProgress.value = false
+  usageRefreshError.value = ''
+}, { flush: 'sync' })
 const associatedSources = ref<StorageRepositoryAssociatedSource[]>([])
 const associatedSourcesLoading = ref(false)
 const associatedSourcesPage = ref(1)
@@ -1426,7 +1443,10 @@ const modalTitle = computed(() =>
 )
 
 function openDetail(row: RepositoryRow) {
+  stopUsageRefreshPolling()
   detailRow.value = row
+  usageRefreshInProgress.value = false
+  usageRefreshError.value = ''
   detailActiveTab.value = 'basic'
   resetAssociatedSources()
   resetRepositoryTasks()
@@ -1446,6 +1466,75 @@ function onDrawerClosed() {
   resetAssociatedSources()
   resetRepositoryTasks()
   detailRow.value = null
+  stopUsageRefreshPolling()
+  usageRefreshInProgress.value = false
+  usageRefreshError.value = ''
+}
+
+function stopUsageRefreshPolling() {
+  usageRefreshRevision += 1
+  if (usageRefreshPollTimer != null) window.clearTimeout(usageRefreshPollTimer)
+  usageRefreshPollTimer = undefined
+}
+
+function updateRepositoryUsageRow(repository: ApiRepository) {
+  const updated = mapApiToRow(repository)
+  const index = rows.value.findIndex((row) => row.id === updated.id)
+  if (index >= 0) rows.value[index] = { ...rows.value[index], ...updated }
+  if (detailRow.value?.id === updated.id) detailRow.value = { ...detailRow.value, ...updated }
+  return updated
+}
+
+async function refreshRepositoryUsage() {
+  const repository = detailRow.value
+  if (!repository || usageRefreshInProgress.value) return
+  usageRefreshInProgress.value = true
+  usageRefreshError.value = ''
+  stopUsageRefreshPolling()
+  const revision = usageRefreshRevision
+  const isCurrent = () => revision === usageRefreshRevision && detailRow.value?.id === repository.id
+  try {
+    const previous = await getStorageRepository(repository.id)
+    if (!isCurrent()) return
+    await syncStorageRepositoryUsage(repository.id, true)
+    if (!isCurrent()) return
+    let attempts = 0
+    const poll = async () => {
+      if (!isCurrent()) return
+      try {
+        const latest = await getStorageRepository(repository.id)
+        if (!isCurrent()) return
+        const measured = latest.metrics_last_attempt_at
+          && latest.metrics_last_attempt_at !== previous.metrics_last_attempt_at
+        const updated = measured ? updateRepositoryUsageRow(latest as ApiRepository) : null
+        const status = String(updated?.usage_probe_status || '').toLowerCase()
+        if (status === 'success') {
+          usageRefreshInProgress.value = false
+          ElMessage.success({ message: t('repositoriesPage.usageRefreshSucceeded'), grouping: true })
+          return
+        }
+        if (status === 'failed') {
+          usageRefreshInProgress.value = false
+          usageRefreshError.value = updated?.usage_last_error || t('repositoriesPage.usageRefreshFailed')
+          return
+        }
+      } catch {
+        if (!isCurrent()) return
+      }
+      attempts += 1
+      if (attempts >= 15) {
+        usageRefreshInProgress.value = false
+        usageRefreshError.value = t('repositoriesPage.usageRefreshTimeout')
+        return
+      }
+      usageRefreshPollTimer = window.setTimeout(() => void poll(), 2000)
+    }
+    usageRefreshPollTimer = window.setTimeout(() => void poll(), 1000)
+  } catch (error) {
+    if (!isCurrent()) return
+    usageRefreshInProgress.value = false
+    usageRefreshError.value = apiErrorMessage(error)
+  }
 }
 
 function resetRepositoryTasks() {
@@ -1998,13 +2087,9 @@ function backingStorageSourceLabel(row: RepositoryRow) {
 function backingStoragePopoverRows(row: RepositoryRow) {
   const storage = backingStorageParts(row)
   const status = String(row.capacity_probe_status || 'pending')
-  const available = row.kind === 'nas' && !hasBoundProxy(row)
-    ? t('repositoriesPage.capacityUnavailable')
-    : status === 'pending'
-      ? t('repositoriesPage.waitingForFirstCheck')
-      : status === 'failed'
-        ? t('repositoriesPage.capacityUnavailable')
-        : fmtBytes(storage.available)
+  const available = backingStorageDisplayUnavailable(row)
+    ? backingStorageDisplayLabel(row)
+    : fmtBytes(storage.available)
   if (row.kind === 'nas') {
     const rows = [
       { label: t('repositoriesPage.storageType'), value: t('repositoriesPage.storageTypeNas') },
@@ -2012,7 +2097,7 @@ function backingStoragePopoverRows(row: RepositoryRow) {
       hasBoundProxy(row)
         ? { label: t('repositoriesPage.accessedThrough'), value: boundProxyNodeLabel(row) || DETAIL_EMPTY }
         : { label: t('repositoriesPage.accessMode'), value: t('repositoriesPage.accessModeDirect') },
-      { label: t('repositoriesPage.available'), value: available },
+      { label: t('repositoriesPage.availableSpace'), value: available },
     ]
     if (hasBoundProxy(row) && status === 'success') {
       rows.push(
@@ -2029,7 +2114,7 @@ function backingStoragePopoverRows(row: RepositoryRow) {
     { label: t('repositoriesPage.storageType'), value: t('repositoriesPage.storageTypeProxyDisk') },
     { label: t('repositoriesPage.detailFieldHostingProxyNode'), value: proxyNodeLabel(row) || DETAIL_EMPTY },
     { label: t('repositoriesPage.filesystem'), value: row.storage_mount_point || localDiskBaseDirectory(row) || DETAIL_EMPTY },
-    { label: t('repositoriesPage.available'), value: available },
+    { label: t('repositoriesPage.availableSpace'), value: available },
   ]
   if (status === 'success') {
     rows.push(
@@ -2054,20 +2139,16 @@ function backingStorageLastChecked(row: RepositoryRow) {
 }
 
 function backingStorageDisplayLabel(row: RepositoryRow) {
-  if (row.kind === 'nas' && !hasBoundProxy(row)) return t('repositoriesPage.capacityUnavailable')
+  if (row.kind === 'nas' && !hasBoundProxy(row)) return t('repositoriesPage.backingStorageNotCollected')
   const status = String(row.capacity_probe_status || 'pending')
-  if (status === 'failed') return t('repositoriesPage.capacityUnavailable')
-  if (status === 'pending') return t('repositoriesPage.metricsPending')
+  if (status === 'failed') return t('repositoriesPage.backingStorageTemporarilyUnavailable')
+  if (status !== 'success') return t('repositoriesPage.backingStorageNotYetCollected')
   return backingStorageAvailableLabel(row)
 }
 
 function backingStorageDisplayUnavailable(row: RepositoryRow) {
   return row.kind === 'nas' && !hasBoundProxy(row)
     || String(row.capacity_probe_status || 'pending') !== 'success'
-}
-
-function repoCapacityProbeFailed(row: RepositoryRow) {
-  return String(row.capacity_probe_status || 'pending') === 'failed'
 }
 
 function applySearch() {
@@ -2561,6 +2642,7 @@ onBeforeUnmount(() => {
   repositoryCreatePollTimer = null
   unbindDrawerResize()
   stopRepositoryTasksPolling()
+  stopUsageRefreshPolling()
 })
 
 function lifecycleTagType(s: RepoLifecycleStatus | string) {
@@ -3004,9 +3086,13 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                   :used-bytes="repoUsageParts(row).used"
                   :limit-bytes="repositoryLimitBytes(row)"
                   :probe-status="row.usage_probe_status"
+                  :last-success-at="row.usage_last_success_at"
+                  :refreshing="usageRefreshInProgress && detailRow?.id === row.id"
+                  interactive
                   :format-bytes="fmtBytes"
                   :warning="repositoryCapacityWarning(row)"
                   :storage-available-bytes="backingStorageParts(row).available"
+                  @inspect="openDetail(row)"
                 />
               </template>
             </el-table-column>
@@ -3023,29 +3109,10 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 >
                   <div class="table-stack-cell hfl-table-no-tooltip">
                     <span
-                      v-if="row.kind === 'nas' && !hasBoundProxy(row)"
-                      class="table-stack-cell__primary hfl-empty-mark"
-                    >
-                      {{ t('repositoriesPage.capacityUnavailable') }}
-                    </span>
-                    <span
-                      v-else-if="repoCapacityProbeFailed(row)"
-                      class="table-stack-cell__primary hfl-empty-mark"
-                    >
-                      {{ t('repositoriesPage.capacityUnavailable') }}
-                    </span>
-                    <span
-                      v-else-if="row.capacity_probe_status === 'pending'"
-                      class="table-stack-cell__primary hfl-empty-mark"
-                    >
-                      {{ t('repositoriesPage.metricsPending') }}
-                    </span>
-                    <span
-                      v-else
                       class="table-stack-cell__primary"
-                      :class="{ 'hfl-empty-mark': backingStorageAvailableLabel(row) === DETAIL_EMPTY }"
+                      :class="{ 'hfl-empty-mark': backingStorageDisplayUnavailable(row) || backingStorageDisplayLabel(row) === DETAIL_EMPTY }"
                     >
-                      {{ backingStorageAvailableLabel(row) }}
+                      {{ backingStorageDisplayLabel(row) }}
                     </span>
                     <span class="table-stack-cell__secondary">{{ backingStorageSourceLabel(row) }}</span>
                   </div>
@@ -3392,61 +3459,57 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 </div>
               </section>
 
-              <section class="hfl-detail-section">
-                <h4 class="hfl-detail-section__title">
-                  {{ t('repositoriesPage.detailFieldRepositoryUsage') }}
-                </h4>
-                <div class="hfl-detail-grid">
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.estimatedRepositoryData') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                      <RepositoryUsageCell
-                        :used-bytes="repoUsageParts(detailRow).used"
-                        :limit-bytes="0"
-                        :probe-status="detailRow.usage_probe_status"
-                        :format-bytes="fmtBytes"
-                        variant="detail"
-                        :show-supporting="false"
-                      />
-                    </span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.configuredLimit') }}</span>
-                    <span class="hfl-detail-row__value">{{ s3QuotaLimitLabel(detailRow) }}</span>
-                  </div>
-                  <div
-                    v-if="repositoryUsagePercent(detailRow) != null"
-                    class="hfl-detail-row"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageOfLimit') }}</span>
-                    <span class="hfl-detail-row__value">{{ repositoryUsagePercent(detailRow) }}%</span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.quotaMonitoring') }}</span>
-                    <span class="hfl-detail-row__value repo-detail__tag-group">
-                      <HflBooleanStatusTag
-                        :value="quotaMonitoringEnabled(detailRow)"
-                        :label="quotaMonitoringLabel(detailRow)"
-                      />
-                      <ElTag
-                        v-if="quotaMonitoringThresholdLabel(detailRow)"
-                        type="info"
-                        size="small"
-                        effect="plain"
-                      >
-                        {{ quotaMonitoringThresholdLabel(detailRow) }}
-                      </ElTag>
-                    </span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageLastUpdated') }}</span>
-                    <span
-                      class="hfl-detail-row__value"
-                      :class="detailEmptyValueClass(formatLastCheckedAt(detailRow.usage_last_success_at || detailRow.last_checked_at))"
-                    >{{ formatLastCheckedAt(detailRow.usage_last_success_at || detailRow.last_checked_at) }}</span>
-                  </div>
+              <RepositoryUsageSection
+                :status="detailRow.usage_probe_status"
+                :refreshing="usageRefreshInProgress"
+                :error="usageRefreshError || detailRow.usage_last_error"
+                :last-success="formatLastCheckedAt(detailRow.usage_last_success_at)"
+                @refresh="refreshRepositoryUsage"
+              >
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.estimatedRepositoryData') }}</span>
+                  <span class="hfl-detail-row__value">
+                    <RepositoryUsageCell
+                      :used-bytes="repoUsageParts(detailRow).used"
+                      :limit-bytes="0"
+                      :probe-status="detailRow.usage_probe_status"
+                      :last-success-at="detailRow.usage_last_success_at"
+                      :refreshing="usageRefreshInProgress"
+                      :format-bytes="fmtBytes"
+                      variant="detail"
+                      :show-supporting="false"
+                    />
+                  </span>
                 </div>
-              </section>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.configuredLimit') }}</span>
+                  <span class="hfl-detail-row__value">{{ s3QuotaLimitLabel(detailRow) }}</span>
+                </div>
+                <div
+                  v-if="repositoryUsagePercent(detailRow) != null"
+                  class="hfl-detail-row"
+                >
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageOfLimit') }}</span>
+                  <span class="hfl-detail-row__value">{{ repositoryUsagePercent(detailRow) }}%</span>
+                </div>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.quotaMonitoring') }}</span>
+                  <span class="hfl-detail-row__value repo-detail__tag-group">
+                    <HflBooleanStatusTag
+                      :value="quotaMonitoringEnabled(detailRow)"
+                      :label="quotaMonitoringLabel(detailRow)"
+                    />
+                    <ElTag
+                      v-if="quotaMonitoringThresholdLabel(detailRow)"
+                      type="info"
+                      size="small"
+                      effect="plain"
+                    >
+                      {{ quotaMonitoringThresholdLabel(detailRow) }}
+                    </ElTag>
+                  </span>
+                </div>
+              </RepositoryUsageSection>
             </div>
 
             <div
@@ -3634,59 +3697,55 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 </div>
               </section>
 
-              <section class="hfl-detail-section">
-                <h4 class="hfl-detail-section__title">
-                  {{ t('repositoriesPage.detailFieldRepositoryUsage') }}
-                </h4>
-                <div class="hfl-detail-grid">
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.estimatedRepositoryData') }}</span>
-                    <span class="hfl-detail-row__value hfl-detail-row__value--stacked">
-                      <RepositoryUsageCell
-                        :used-bytes="repoUsageParts(detailRow).used"
-                        :limit-bytes="0"
-                        :probe-status="detailRow.usage_probe_status"
-                        :format-bytes="fmtBytes"
-                        variant="detail"
-                        :show-supporting="false"
-                      />
-                    </span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.configuredLimit') }}</span>
-                    <span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
-                  </div>
-                  <div
-                    v-if="repositoryUsagePercent(detailRow) != null"
-                    class="hfl-detail-row"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageOfLimit') }}</span>
-                    <span class="hfl-detail-row__value">{{ repositoryUsagePercent(detailRow) }}%</span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.quotaMonitoring') }}</span>
-                    <span class="hfl-detail-row__value repo-detail__tag-group">
-                      <HflBooleanStatusTag
-                        :value="quotaMonitoringEnabled(detailRow)"
-                        :label="quotaMonitoringLabel(detailRow)"
-                      />
-                      <ElTag
-                        v-if="quotaMonitoringThresholdLabel(detailRow)"
-                        type="info"
-                        size="small"
-                        effect="plain"
-                      >{{ t('repositoriesPage.alertAtValue', { value: detailRow.config.quota_alert_threshold }) }}</ElTag>
-                    </span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageLastUpdated') }}</span>
-                    <span
-                      class="hfl-detail-row__value"
-                      :class="detailEmptyValueClass(formatLastCheckedAt(detailRow.usage_last_success_at || detailRow.last_checked_at))"
-                    >{{ formatLastCheckedAt(detailRow.usage_last_success_at || detailRow.last_checked_at) }}</span>
-                  </div>
+              <RepositoryUsageSection
+                :status="detailRow.usage_probe_status"
+                :refreshing="usageRefreshInProgress"
+                :error="usageRefreshError || detailRow.usage_last_error"
+                :last-success="formatLastCheckedAt(detailRow.usage_last_success_at)"
+                @refresh="refreshRepositoryUsage"
+              >
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.estimatedRepositoryData') }}</span>
+                  <span class="hfl-detail-row__value">
+                    <RepositoryUsageCell
+                      :used-bytes="repoUsageParts(detailRow).used"
+                      :limit-bytes="0"
+                      :probe-status="detailRow.usage_probe_status"
+                      :last-success-at="detailRow.usage_last_success_at"
+                      :refreshing="usageRefreshInProgress"
+                      :format-bytes="fmtBytes"
+                      variant="detail"
+                      :show-supporting="false"
+                    />
+                  </span>
                 </div>
-              </section>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.configuredLimit') }}</span>
+                  <span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
+                </div>
+                <div
+                  v-if="repositoryUsagePercent(detailRow) != null"
+                  class="hfl-detail-row"
+                >
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageOfLimit') }}</span>
+                  <span class="hfl-detail-row__value">{{ repositoryUsagePercent(detailRow) }}%</span>
+                </div>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.quotaMonitoring') }}</span>
+                  <span class="hfl-detail-row__value repo-detail__tag-group">
+                    <HflBooleanStatusTag
+                      :value="quotaMonitoringEnabled(detailRow)"
+                      :label="quotaMonitoringLabel(detailRow)"
+                    />
+                    <ElTag
+                      v-if="quotaMonitoringThresholdLabel(detailRow)"
+                      type="info"
+                      size="small"
+                      effect="plain"
+                    >{{ t('repositoriesPage.alertAtValue', { value: detailRow.config.quota_alert_threshold }) }}</ElTag>
+                  </span>
+                </div>
+              </RepositoryUsageSection>
 
               <RepositoryCapacityConflictAlert
                 v-if="repositoryCapacityWarning(detailRow)"
@@ -3854,46 +3913,46 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
                 </div>
               </section>
 
-              <section class="hfl-detail-section">
-                <h4 class="hfl-detail-section__title">
-                  {{ t('repositoriesPage.detailFieldRepositoryUsage') }}
-                </h4>
-                <div class="hfl-detail-grid">
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.estimatedRepositoryData') }}</span><span class="hfl-detail-row__value hfl-detail-row__value--stacked"><RepositoryUsageCell
-                      :used-bytes="repoUsageParts(detailRow).used"
-                      :limit-bytes="0"
-                      :probe-status="detailRow.usage_probe_status"
-                      :format-bytes="fmtBytes"
-                      variant="detail"
-                      :show-supporting="false"
-                    /></span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.configuredLimit') }}</span><span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
-                  </div>
-                  <div
-                    v-if="repositoryUsagePercent(detailRow) != null"
-                    class="hfl-detail-row"
-                  >
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageOfLimit') }}</span><span class="hfl-detail-row__value">{{ repositoryUsagePercent(detailRow) }}%</span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.quotaMonitoring') }}</span><span class="hfl-detail-row__value repo-detail__tag-group"><HflBooleanStatusTag
-                      :value="quotaMonitoringEnabled(detailRow)"
-                      :label="quotaMonitoringLabel(detailRow)"
-                    /><ElTag
-                      v-if="quotaMonitoringThresholdLabel(detailRow)"
-                      type="info"
-                      size="small"
-                      effect="plain"
-                    >{{ t('repositoriesPage.alertAtValue', { value: detailRow.config.quota_alert_threshold }) }}</ElTag></span>
-                  </div>
-                  <div class="hfl-detail-row">
-                    <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageLastUpdated') }}</span><span class="hfl-detail-row__value">{{ formatLastCheckedAt(detailRow.usage_last_success_at || detailRow.last_checked_at) }}</span>
-                  </div>
+              <RepositoryUsageSection
+                :status="detailRow.usage_probe_status"
+                :refreshing="usageRefreshInProgress"
+                :error="usageRefreshError || detailRow.usage_last_error"
+                :last-success="formatLastCheckedAt(detailRow.usage_last_success_at)"
+                @refresh="refreshRepositoryUsage"
+              >
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.estimatedRepositoryData') }}</span><span class="hfl-detail-row__value"><RepositoryUsageCell
+                    :used-bytes="repoUsageParts(detailRow).used"
+                    :limit-bytes="0"
+                    :probe-status="detailRow.usage_probe_status"
+                    :last-success-at="detailRow.usage_last_success_at"
+                    :refreshing="usageRefreshInProgress"
+                    :format-bytes="fmtBytes"
+                    variant="detail"
+                    :show-supporting="false"
+                  /></span>
                 </div>
-              </section>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.configuredLimit') }}</span><span class="hfl-detail-row__value">{{ storageLimitLabel(detailRow) }}</span>
+                </div>
+                <div
+                  v-if="repositoryUsagePercent(detailRow) != null"
+                  class="hfl-detail-row"
+                >
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.usageOfLimit') }}</span><span class="hfl-detail-row__value">{{ repositoryUsagePercent(detailRow) }}%</span>
+                </div>
+                <div class="hfl-detail-row">
+                  <span class="hfl-detail-row__label">{{ t('repositoriesPage.quotaMonitoring') }}</span><span class="hfl-detail-row__value repo-detail__tag-group"><HflBooleanStatusTag
+                    :value="quotaMonitoringEnabled(detailRow)"
+                    :label="quotaMonitoringLabel(detailRow)"
+                  /><ElTag
+                    v-if="quotaMonitoringThresholdLabel(detailRow)"
+                    type="info"
+                    size="small"
+                    effect="plain"
+                  >{{ t('repositoriesPage.alertAtValue', { value: detailRow.config.quota_alert_threshold }) }}</ElTag></span>
+                </div>
+              </RepositoryUsageSection>
 
               <RepositoryCapacityConflictAlert
                 v-if="repositoryCapacityWarning(detailRow)"
@@ -4829,13 +4888,13 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
   line-height: 1.45;
 }
 
-.repo-storage-detail .hfl-detail-section__title {
+.repo-storage-detail :deep(.hfl-detail-section__title) {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.repo-storage-detail .hfl-detail-section__title::before {
+.repo-storage-detail :deep(.hfl-detail-section__title)::before {
   width: 3px;
   height: 14px;
   border-radius: 999px;

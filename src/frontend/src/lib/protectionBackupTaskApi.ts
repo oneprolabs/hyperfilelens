@@ -26,6 +26,12 @@ export type StartBackupTaskResultItem = {
   source_snapshot_status: string | null
   status: 'created' | 'skipped' | 'conflict' | 'failed'
   error_code?: string | null
+  error_meta?: {
+    scope?: string
+    quota_type?: string
+    blocking_repository_ids?: number[]
+    blocking_repositories_truncated?: boolean
+  }
   message: string
 }
 

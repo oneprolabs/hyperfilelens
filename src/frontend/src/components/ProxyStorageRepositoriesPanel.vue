@@ -131,9 +131,9 @@ function repositoryCapacityWarning(repository: NodeBindingsRepository) {
 }
 
 function repositoryUsageProbeStatus(repository: NodeBindingsRepository) {
-  const status = String(repository.usage_probe_status || 'pending').toLowerCase()
-  if (status === 'pending' && nonNegativeBytes(repository.estimated_usage_bytes) > 0) return 'success'
-  return status
+  const status = String(repository.usage_probe_status || '').trim().toLowerCase()
+  if (!status && nonNegativeBytes(repository.estimated_usage_bytes) > 0) return 'success'
+  return status || 'pending'
 }
 
 function repositoryHealthType(repository: NodeBindingsRepository): 'success' | 'danger' | 'warning' | 'info' {
@@ -457,6 +457,7 @@ watch(
               :used-bytes="Number(row.estimated_usage_bytes || 0)"
               :limit-bytes="Number(row.planned_limit_bytes || 0)"
               :probe-status="repositoryUsageProbeStatus(row)"
+              :last-success-at="row.usage_last_success_at"
               :format-bytes="formatNodeBytes"
               :warning="repositoryCapacityWarning(row)"
               :storage-available-bytes="Number(row.storage_available_bytes || 0)"
