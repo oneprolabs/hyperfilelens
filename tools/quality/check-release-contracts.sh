@@ -374,9 +374,16 @@ PY
 
 sourcelens_common="${ROOT}/tools/sourcelens/common.sh"
 sourcelens_build_body="$(sed -n '/^sourcelens_build_app_images()/,/^}/p' "${sourcelens_common}")"
-grep -F 'sourcelens_prepare_official_app_images' <<<"${sourcelens_build_body}" >/dev/null
-if grep -F 'compose build' <<<"${sourcelens_build_body}" >/dev/null; then
-	printf 'ERROR: HFL must not rebuild SourceLens application images\n' >&2
+grep -F 'local -a build_args=(build)' <<<"${sourcelens_build_body}" >/dev/null
+grep -F '"${SOURCELENS_COMPOSE[@]}"' <<<"${sourcelens_build_body}" >/dev/null
+grep -F 'https://deb.debian.org/debian' <<<"${sourcelens_build_body}" >/dev/null
+grep -F 'https://pypi.org/simple' <<<"${sourcelens_build_body}" >/dev/null
+if grep -F 'sourcelens_prepare_official_app_images' <<<"${sourcelens_build_body}" >/dev/null; then
+	printf 'ERROR: ordinary SourceLens builds must use the checked-out source\n' >&2
+	exit 1
+fi
+if grep -F 'mirrors.tuna.tsinghua.edu.cn' <<<"${sourcelens_build_body}" >/dev/null; then
+	printf 'ERROR: SourceLens build must not enable a third-party mirror by default\n' >&2
 	exit 1
 fi
 
