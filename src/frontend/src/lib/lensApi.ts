@@ -336,8 +336,8 @@ export type LensAssistant = {
   }>
   agent_model_ref?: string | null
   multimodal_model_ref?: string | null
+  deep_thinking?: boolean
   supports_document_attachments?: boolean
-  agent_rounds?: string
   knowledge_source_id?: number | null
   knowledge_source_name?: string | null
   knowledge_source_status?: string | null
@@ -1814,7 +1814,7 @@ export async function createCopilotRun(
   idempotencyKey?: string,
   attachmentUuids: string[] = [],
   retryOfRunUuid?: string,
-  agentRounds?: string,
+  deepThinking = false,
 ): Promise<LensRun> {
   const raw = await api(lensUrl(`copilot/sessions/${sessionId}/runs/`), {
     method: 'POST',
@@ -1824,7 +1824,7 @@ export async function createCopilotRun(
       ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
       ...(attachmentUuids.length ? { attachment_uuids: attachmentUuids } : {}),
       ...(retryOfRunUuid ? { retry_of_run_uuid: retryOfRunUuid } : {}),
-      ...(agentRounds ? { agent_rounds: agentRounds } : {}),
+      deep_thinking: deepThinking,
     }),
   })
   return lensPayload<LensRun>(raw)

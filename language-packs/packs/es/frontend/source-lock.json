@@ -9741,4 +9741,19 @@
   "ops.alertsCenter.policies.targetSummaryAll": "3b171d9dbfd9097174b867d23906fe6a392ca63144e4ff9f8f86fb7451803a31",
   "ops.alertsCenter.policies.targetSummarySelected": "9a687d99e03b4270b7b4804bac1bfc5bd7239c402c63dfcb400d9a8e67d9047e",
   "ops.alertsCenter.policies.targetSummaryEmpty": "a2100ed4d667437008ebebfa7ca6e7cef07f2fc8431a4f926428cf7581d095fd"
+,
+  "insight.copilot.deepThinking": "95dc37c7efd34f56ddf6618d55275f992fd28736505cbe79f833ef8a1d619fee",
+  "insight.copilot.deepThinkingHint": "3510ac6b796184c65d472c13fb6afe8cd6b7c309f569092afafb2b82fba49e97",
+  "insight.copilot.answerReview": "583862de0395e2fca552abcf12e24b69c3b44d550ccb9a741656642016f196d9",
+  "insight.copilot.reviewSupported": "5656e9b4c8d971bc3462b698dbe79008b2830e8c3d0e4b4cf6719ca8b6dfc213",
+  "insight.copilot.reviewUnsupported": "8a77853de2fb7539ffa3300cd2521de4c64c3c2b0ca85341a48dd7aff6fefcb8",
+  "insight.copilot.reviewInconclusive": "0bde0fb38b6ef1e48680ad9c9bd9571fc0086f8d32f64ff8c0b3edd47bef80c9",
+  "insight.copilot.reviewNotRequested": "622686930bdbf0f41ebe7f5e318380b0a20275a2b161eb232a2cc9d7b5c62c61",
+  "insight.copilot.reviewEvidenceComplete": "129da79e451610bd7fa0f63b3429b71815a436ccf84c9e5fb69beeb32be0711f",
+  "insight.copilot.reviewEvidenceIncomplete": "3f028af050f10f9f00e1fe0e3bcecdbfb7a46f70ea549bb94c39d7da290dee56",
+  "insight.copilot.reviewMaterialIncomplete": "3330e52e8e70f0896ebdafc09c8870db84512a9c096ca85feec769cfac6a1016",
+  "insight.copilot.reviewUnavailable": "e68d19080d0f9a4b9404b9e86dfce036e44834797413cc74a5ec77cad1e4817a",
+  "insight.copilot.reviewWarningInconclusive": "50f9fd250dcc9e83b8938c7340e1f76deb84fadbb61dcda8c5ceb53d986c9793",
+  "insight.copilot.outcomePartial": "84c6d3eb3e6050aebcc99ea9389086ae0bb92a5e5e351bd28cb7b15b5cd1a63a",
+  "insight.copilot.outcomeBlocked": "ad0b82d72507269aced5a6f276695b54f17e83163d7c51b3c5a2a6b9de85ce9a"
 }

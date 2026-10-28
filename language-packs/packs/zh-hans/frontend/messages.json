@@ -4048,7 +4048,21 @@
       "clarificationTitle": "还需要一些信息",
       "clarificationPlaceholder": "补充继续处理所需的详细信息…",
       "clarificationSubmit": "继续",
-      "clarificationSubmitting": "正在继续…"
+      "clarificationSubmitting": "正在继续…",
+      "deepThinking": "深度思考",
+      "deepThinkingHint": "使用更深入的推理和独立答案审查，回答可能需要更长时间。",
+      "answerReview": "答案审查",
+      "reviewSupported": "已通过",
+      "reviewUnsupported": "未通过",
+      "reviewInconclusive": "无法确定",
+      "reviewNotRequested": "未请求",
+      "reviewEvidenceComplete": "数据源覆盖完整。",
+      "reviewEvidenceIncomplete": "数据源覆盖不完整。",
+      "reviewMaterialIncomplete": "审查所需证据不完整。",
+      "reviewUnavailable": "答案审查暂不可用。",
+      "reviewWarningInconclusive": "答案审查无法得出结论。",
+      "outcomePartial": "此回答仅部分完成。",
+      "outcomeBlocked": "此回答无法完成。"
     },
     "aiSettings": {
       "btnAdd": "添加",

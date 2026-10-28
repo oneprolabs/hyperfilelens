@@ -151,7 +151,7 @@ Default up/restart workflow:
                       the external stack
 
 SourceLens options (enabled by default for up/restart):
-  --no-sourcelens             Skip SourceLens clone, build, and start
+  --no-sourcelens             Skip SourceLens source verification, image preparation, and start
   --sourcelens-ref REF        SourceLens release tag in vX.Y.Z form
   --sourcelens-git-url URL    Override the SourceLens repository URL
                               (env: SOURCELENS_GIT_URL)
@@ -1388,7 +1388,7 @@ print_dev_target() {
 	fi
 	if [[ "${WITH_SOURCELENS}" -eq 1 ]]; then
 		sourcelens_mode="$(read_env_value_or SOURCELENS_MODE bundled "${ROOT}/.env" | tr 'A-Z' 'a-z')"
-		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.61.3}"
+		sourcelens_ref="${SOURCELENS_GIT_REF:-v0.63.4}"
 		target_value "SourceLens" "${sourcelens_mode} / ${sourcelens_ref}"
 	else
 		target_value "SourceLens" "disabled"
@@ -1467,7 +1467,7 @@ print_urls() {
 	fi
 
 	if [[ "${WITH_SOURCELENS}" -eq 1 && "${sourcelens_mode}" == "bundled" ]]; then
-		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.61.3}"
+		source_lens_display="${sourcelens_mode} / ${SOURCELENS_GIT_REF:-v0.63.4}"
 		if [[ -f "${sl_env}" ]]; then
 			sl_email="$(read_env_value_or DJANGO_SUPERUSER_EMAIL admin@example.com "${sl_env}")"
 			sl_pass="$(read_env_value_or DJANGO_SUPERUSER_PASSWORD adminpassword "${sl_env}")"

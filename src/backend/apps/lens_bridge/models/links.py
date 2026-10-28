@@ -705,7 +705,7 @@ class LensSessionLink(OrganizationScopedModel):
         CODE_ANALYSIS = "code_analysis", "Code Analysis"
 
     class AnalysisMode(models.TextChoices):
-        """Product-level analysis choices mapped to SourceLens agent rounds."""
+        """Product-level analysis choices mapped to SourceLens thinking mode."""
 
         FAST = "fast", "Fast"
         STANDARD = "standard", "Standard"
@@ -987,6 +987,9 @@ class LensRunSubmission(OrganizationScopedModel):
     # Blank means SourceLens should use the assistant's own reasoning depth.
     # A database default lets the previous API insert submissions that omit it.
     agent_rounds = models.CharField(max_length=16, blank=True, default="")
+    # Nullable so submissions accepted before the SourceLens upgrade can still
+    # recover using their original agent_rounds choice.
+    deep_thinking = models.BooleanField(null=True, blank=True, default=None)
     status = models.CharField(
         max_length=16,
         choices=Status.choices,

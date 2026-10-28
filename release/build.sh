@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build a HyperFileLens release install package (air-gap delivery).
-# Run from repository root with Docker and Go; SourceLens builds also require Git and Docker Compose.
+# Run from repository root with Docker and Go; SourceLens bundling also requires Git.
 #
 # Usage:
 #   ./release/build.sh
@@ -286,13 +286,13 @@ Kopia artifacts (tools/kopia/defaults.env; default: build patched source):
   --kopia-ref REF                 Kopia release ref in vX.Y.Z form
 
   --pull                           Re-check registry and pull runtime images (default: use local if present)
-  --no-cache                       Rebuild HFL and SourceLens Docker layers without BuildKit cache
+  --no-cache                       Rebuild HFL Docker layers without BuildKit cache
 
 SourceLens bundle (tools/sourcelens/defaults.env; default: enabled):
-  --no-sourcelens                  Skip SourceLens clone/build/bundle
+  --no-sourcelens                  Skip SourceLens source verification and bundle
   --sourcelens-ref REF             SourceLens release tag in vX.Y.Z form
   --sourcelens-git-url URL         Override SourceLens repository URL (env: SOURCELENS_GIT_URL)
-  --force-build                    Rebuild SourceLens images even when the build stamp matches
+  --force-build                    Refresh pinned SourceLens images even when already present
 
 Output options:
   --log-file FILE                  Append runtime logs to FILE

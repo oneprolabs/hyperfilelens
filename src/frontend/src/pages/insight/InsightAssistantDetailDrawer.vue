@@ -187,15 +187,11 @@ const statusLabel = computed(() => {
   return status || DETAIL_EMPTY
 })
 
-const analysisDepthLabel = computed(() => {
-  const value = String(activeRow.value?.agent_rounds || 'balanced')
-  if (value === 'flash') return t('insight.assistants.roundsFlash')
-  if (value === 'fast') return t('insight.assistants.roundsFast')
-  if (value === 'balanced') return t('insight.assistants.roundsBalanced')
-  if (value === 'deep') return t('insight.assistants.roundsDeep')
-  if (value === 'max') return t('insight.assistants.roundsMax')
-  return value
-})
+const deepThinkingLabel = computed(() =>
+  activeRow.value?.deep_thinking
+    ? t('insight.copilot.deepThinking')
+    : t('common.disabled'),
+)
 
 const organizationName = computed(() => {
   const fromDetail = String(activeRow.value?.organization_name || '').trim()
@@ -419,13 +415,8 @@ onUnmounted(() => {
                 </span>
               </div>
               <div class="hfl-detail-row">
-                <span class="hfl-detail-row__label">{{ t('insight.assistants.fieldAgentRounds') }}</span>
-                <span class="hfl-detail-row__value">
-                  <ElTag
-                    size="small"
-                    effect="plain"
-                  >{{ analysisDepthLabel }}</ElTag>
-                </span>
+                <span class="hfl-detail-row__label">{{ t('insight.copilot.deepThinking') }}</span>
+                <span class="hfl-detail-row__value">{{ deepThinkingLabel }}</span>
               </div>
             </div>
           </section>
@@ -629,6 +620,5 @@ onUnmounted(() => {
         </div>
       </template>
     </div>
-
   </ElDrawer>
 </template>

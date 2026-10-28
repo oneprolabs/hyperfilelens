@@ -18,17 +18,18 @@ usage() {
 	cat <<'USAGE'
 Usage: ./dev/sourcelens.sh <command> [options]
 
-SourceLens source is only an image build input. Runtime containers always use
-images and never bind-mount the SourceLens source cache.
+SourceLens source is used only to verify the selected release and stage runtime
+assets. Runtime containers always use original upstream images and never
+bind-mount the SourceLens source cache.
 
 Commands:
-  up        Sync source, build images if missing, start SourceLens compose stack
+  up        Verify source, prepare upstream images, start SourceLens compose stack
   down      Stop SourceLens compose stack
-  prepare   Sync source + runtime tree + images (no compose up)
-  gateway   Sync source + build images + publish the Gateway LensNode bundle only
+  prepare   Verify source + runtime tree + upstream images (no compose up)
+  gateway   Verify source + prepare images + publish the Gateway LensNode bundle only
 
 Options:
-  --force-build       Rebuild SourceLens app images even when present locally
+  --force-build       Refresh pinned upstream SourceLens images even when present locally
   --pull              Refresh runtime images, with valid local fallback
   --offline           Forbid registry and SourceLens Git network access
   --pull-timeout SECONDS  Per-attempt Docker pull timeout
@@ -48,7 +49,7 @@ Options:
 
 Examples:
   ./dev/sourcelens.sh up
-  ./dev/sourcelens.sh prepare --sourcelens-ref v0.61.3
+  ./dev/sourcelens.sh prepare --sourcelens-ref v0.63.4
   ./dev/sourcelens.sh up --apt-mirror https://mirrors.tuna.tsinghua.edu.cn --pip-index-url https://pypi.tuna.tsinghua.edu.cn/simple --pip-trusted-host pypi.tuna.tsinghua.edu.cn --npm-registry https://registry.npmmirror.com
 USAGE
 }
