@@ -85,6 +85,14 @@ export type TaskRow = {
   recovery_attempt: number
   replaces_task_uuid?: string | null
   replacement_task_uuid?: string | null
+  execution_history?: Array<{
+    task_uuid: string
+    status: string
+    started_at: string | null
+    finished_at: string | null
+    created_at: string
+  }>
+  execution_history_next_cursor?: number | null
   trigger_type: string
   group_uuid?: string | null
   request_payload?: unknown
@@ -165,8 +173,10 @@ export async function listTasks(params?: Record<string, string | number | undefi
   return paged<TaskRow>(await api<unknown>(withQuery(`${base}/`, params), init))
 }
 
-export async function getTask(taskUuid: string, init?: RequestInit) {
-  return unwrapApiPayload<TaskRow>(await api<unknown>(`${base}/${taskUuid}/`, init))
+export async function getTask(taskUuid: string, init?: RequestInit, historyBefore?: number) {
+  return unwrapApiPayload<TaskRow>(await api<unknown>(
+    withQuery(`${base}/${taskUuid}/`, { history_before: historyBefore }), init,
+  ))
 }
 
 export async function taskStatistics(

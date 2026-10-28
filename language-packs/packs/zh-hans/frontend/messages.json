@@ -7191,7 +7191,9 @@
         "proxy": "Proxy",
         "gateway": "Gateway",
         "source": "Agent"
-      }
+      },
+      "executionHistory": "执行记录",
+      "earlierRecords": "更早记录"
     },
     "alertsCenter": {
       "common": {

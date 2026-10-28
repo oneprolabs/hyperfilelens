@@ -1736,7 +1736,6 @@ function repositoryTaskLabel(scope: 'operation' | 'status' | 'trigger', value?: 
     'status:timeout': 'repositoriesPage.taskStatusTimeout',
     'status:cancelled': 'repositoriesPage.taskStatusCancelled',
     'trigger:system': 'repositoriesPage.taskTriggerSystem',
-    'trigger:retry': 'repositoriesPage.taskTriggerRetry',
     'trigger:manual': 'repositoriesPage.taskTriggerManual',
   }
   const key = keys[`${scope}:${value}`] || ''

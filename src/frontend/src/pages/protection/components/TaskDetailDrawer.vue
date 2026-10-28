@@ -73,7 +73,7 @@ const props = withDefaults(defineProps<{
   readOnly?: boolean
   resourceListMode?: 'default' | 'target_repositories'
   /** Cross-tenant / alternate detail loader (defaults to tenant getTask). */
-  fetchTask?: (taskUuid: string, init?: TaskFetchInit) => Promise<TaskRow>
+  fetchTask?: (taskUuid: string, init?: TaskFetchInit, historyBefore?: number) => Promise<TaskRow>
   /** Cross-tenant / alternate events loader (defaults to tenant listTaskEvents). */
   fetchTaskEvents?: (
     taskUuid: string,
@@ -96,8 +96,9 @@ const emit = defineEmits<{
   'task-updated': [task: TaskRow]
 }>()
 
-function loadTask(taskUuid: string, init?: TaskFetchInit) {
-  return props.fetchTask ? props.fetchTask(taskUuid, init) : getTask(taskUuid, init)
+function loadTask(taskUuid: string, init?: TaskFetchInit, historyBefore?: number) {
+  const fetch = props.fetchTask || getTask
+  return historyBefore == null ? fetch(taskUuid, init) : fetch(taskUuid, init, historyBefore)
 }
 
 function loadTaskEvents(
@@ -126,6 +127,12 @@ let statusRefreshInFlight = false
 let detailRequestId = 0
 const detailEvents = ref<TaskEventRow[]>([])
 const detailRefreshing = ref(false)
+const historyLoading = ref(false)
+const executionHistory = ref<NonNullable<TaskRow['execution_history']>>([])
+const historyNextCursor = ref<number | null>(null)
+let historyTaskUuid: string | null = null
+let historyRequestId = 0
+let historyInitialized = false
 const detailLoadError = ref('')
 const actionBusy = ref(false)
 const taskOwner = ref('')
@@ -422,6 +429,7 @@ const {
 } = useRepositoryTaskCancellation(activeTask, {
   fetchTask: (taskUuid, init) => loadTask(taskUuid, init),
   onUpdate: async (task) => {
+    syncExecutionHistory(task)
     activeTask.value = task
     emit('task-updated', task)
   },
@@ -819,16 +827,52 @@ async function copyTaskUuid() {
   }
 }
 
+function resetExecutionHistory(taskUuid: string | null = null) {
+  historyRequestId += 1
+  historyTaskUuid = taskUuid
+  historyInitialized = false
+  historyLoading.value = false
+  executionHistory.value = []
+  historyNextCursor.value = null
+}
+
+function syncExecutionHistory(task: TaskRow) {
+  if (historyTaskUuid !== task.task_uuid) resetExecutionHistory(task.task_uuid)
+  const incoming = task.execution_history || []
+  const updates = new Map(incoming.map(row => [row.task_uuid, row]))
+  const current = executionHistory.value.find(row => row.task_uuid === task.task_uuid)
+  // Action responses can omit history; still refresh the selected execution.
+  if (current && !updates.has(task.task_uuid)) {
+    updates.set(task.task_uuid, {
+      ...current, status: task.status,
+      started_at: task.started_at ?? current.started_at,
+      finished_at: task.finished_at ?? null,
+    })
+  }
+  const existing = new Set(executionHistory.value.map(row => row.task_uuid))
+  executionHistory.value = [
+    ...executionHistory.value.map(row => updates.get(row.task_uuid) || row),
+    ...incoming.filter(row => !existing.has(row.task_uuid)),
+  ]
+  // A status refresh updates known outcomes, not the user's paging position.
+  if (!historyInitialized) {
+    historyNextCursor.value = task.execution_history_next_cursor ?? null
+    historyInitialized = true
+  }
+}
+
 async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
   const requestId = ++detailRequestId
+  if (historyTaskUuid !== uuid) resetExecutionHistory(uuid)
   stopRepositoryCancellation()
   detailRefreshing.value = true
   detailLoadError.value = ''
   try {
     const task = await loadTask(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
+    syncExecutionHistory(task)
     activeTask.value = task
     resetDrawerScroll()
     taskOwner.value = t('ops.task.emptyMark')
@@ -874,6 +918,7 @@ async function refreshRunningTaskStatus() {
     const task = await loadTask(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid
       || activeTask.value?.task_uuid !== uuid || detailRefreshing.value || actionBusy.value) return
+    syncExecutionHistory(task)
     activeTask.value = task
     emit('task-updated', task)
     syncRepositoryCancellation(task)
@@ -954,6 +999,7 @@ async function cancelActiveTask() {
     } else {
       updated = await cancelTask(task.task_uuid, reason)
     }
+    syncExecutionHistory(updated)
     activeTask.value = updated
     emit('task-updated', updated)
     const events = await loadTaskEvents(updated.task_uuid, { page: 1, page_size: 300 })
@@ -973,6 +1019,31 @@ async function cancelActiveTask() {
   }
 }
 
+async function loadOlderExecutions() {
+  const task = activeTask.value
+  const cursor = historyNextCursor.value
+  if (!task || cursor == null || historyLoading.value || !props.modelValue
+    || task.task_uuid !== historyTaskUuid || task.task_uuid !== props.taskUuid) return
+  const requestId = historyRequestId
+  historyLoading.value = true
+  try {
+    const page = await loadTask(task.task_uuid, undefined, cursor)
+    if (requestId !== historyRequestId || !props.modelValue) return
+    const existing = new Set(executionHistory.value.map(row => row.task_uuid))
+    executionHistory.value = [
+      ...(page.execution_history || []).filter(row => !existing.has(row.task_uuid)),
+      ...executionHistory.value,
+    ]
+    historyNextCursor.value = page.execution_history_next_cursor ?? null
+  } catch (error) {
+    if (requestId === historyRequestId && props.modelValue) {
+      ElMessage.error(apiErrorMessageI18n(error, t))
+    }
+  } finally {
+    if (requestId === historyRequestId) historyLoading.value = false
+  }
+}
+
 function refreshActiveTask() {
   if (!activeTask.value?.task_uuid) return
   void loadTaskDetail(activeTask.value.task_uuid)
@@ -980,6 +1051,7 @@ function refreshActiveTask() {
 
 function closeDetail() {
   detailRequestId += 1
+  resetExecutionHistory()
   stopLiveTaskTimers()
   stopRepositoryCancellation()
   activeTask.value = null
@@ -995,6 +1067,7 @@ function closeDetail() {
 
 onBeforeUnmount(() => {
   detailRequestId += 1
+  historyRequestId += 1
   stopLiveTaskTimers()
   repositoryResourceController?.abort()
 })
@@ -1004,6 +1077,7 @@ watch(
   ([open, taskUuid]) => {
     if (!open) {
       detailRequestId += 1
+      resetExecutionHistory()
       stopLiveTaskTimers()
     }
     if (open && taskUuid) void loadTaskDetail(taskUuid)
@@ -1144,7 +1218,10 @@ watch(
               </div>
             </div>
           </div>
-          <div class="hfl-task-drawer__metric">
+          <div
+            v-if="activeTask.task_type !== 'repository_operation'"
+            class="hfl-task-drawer__metric"
+          >
             <RotateCcw
               :size="18"
               class="hfl-task-drawer__metric-icon hfl-task-drawer__metric-icon--indigo"
@@ -1215,6 +1292,40 @@ watch(
             </div>
           </div>
         </div>
+      </section>
+
+      <section
+        v-if="executionHistory.length > 1 || historyNextCursor != null"
+        class="hfl-task-drawer__execution-history"
+      >
+        <h3 class="hfl-task-drawer__hero-section-title">
+          {{ t('ops.task.executionHistory') }}
+        </h3>
+        <ElButton
+          v-if="historyNextCursor != null"
+          link
+          type="primary"
+          :loading="historyLoading"
+          :disabled="historyLoading"
+          @click="loadOlderExecutions"
+        >
+          {{ t('ops.task.earlierRecords') }}
+        </ElButton>
+        <ul>
+          <li
+            v-for="execution in executionHistory"
+            :key="execution.task_uuid"
+          >
+            <ElButton
+              link
+              type="primary"
+              @click="emit('open-task', execution.task_uuid)"
+            >
+              {{ formatTime(execution.started_at || execution.created_at) }}
+            </ElButton>
+            <TaskStatusTag :status="execution.status" />
+          </li>
+        </ul>
       </section>
 
       <ElAlert
@@ -2041,6 +2152,20 @@ watch(
   border: 1px solid rgb(226 232 240);
   border-radius: 10px;
   background: white;
+}
+
+.hfl-task-drawer__execution-history ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hfl-task-drawer__execution-history li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
 }
 
 .hfl-task-drawer__hero {
@@ -2895,12 +3020,6 @@ watch(
   border-color: rgb(216 180 254);
   background: rgb(250 245 255);
   color: rgb(147 51 234);
-}
-
-.hfl-task-drawer__trigger-pill--retry {
-  border-color: rgb(254 215 170);
-  background: rgb(255 247 237);
-  color: rgb(234 88 12);
 }
 
 .hfl-task-drawer__trigger-pill--api {

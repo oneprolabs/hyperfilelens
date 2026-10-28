@@ -7191,7 +7191,9 @@
         "proxy": "Proxy",
         "gateway": "Gateway",
         "source": "Agent"
-      }
+      },
+      "executionHistory": "Historial de ejecución",
+      "earlierRecords": "Registros anteriores"
     },
     "alertsCenter": {
       "common": {

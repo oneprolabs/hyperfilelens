@@ -590,7 +590,7 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
             organization_id=completed.organization_id,
             task_type=completed.task_type,
             display_name=completed.display_name,
-            trigger_type=Task.TriggerType.RETRY,
+            trigger_type=completed.trigger_type,
             normalize_trigger_type=False,
             request_payload=completed.request_payload,
             resources=list(completed.resources.values(

@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task, TaskDependency, TaskEvent, TaskResource, TaskStep
+from apps.task.trigger import task_trigger_source
 from apps.task.signals import (
     task_cancelled,
     task_failed,
@@ -187,6 +188,10 @@ def create_task(
             raise ValidationError(
                 {"replaces_task": "The interrupted task already has a replacement."}
             )
+        trigger_type = task_trigger_source(replaces_task)
+    elif trigger_type == Task.TriggerType.RETRY:
+        # Compatibility for internal callers; retry is never a new source.
+        trigger_type = Task.TriggerType.MANUAL
 
     resource_defs = resources or []
     primary_resources = [

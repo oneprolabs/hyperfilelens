@@ -954,6 +954,8 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
                 repository_operation__repository_id=repository.id,
             )
             .select_related(
+                "replaces_task",
+                "replacement_task",
                 "repository_operation__execution_target",
                 "repository_operation__triggered_by_task",
             )
@@ -971,6 +973,10 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
             raise ValidationError(
                 {"search_field": "search_field must be one of: name, uuid."}
             )
+        from apps.task.selectors.interface import collapse_repository_task_replacements
+        queryset = collapse_repository_task_replacements(
+            queryset, search=search, search_field=search_field, status=task_status,
+        )
         if operation_type:
             queryset = queryset.filter(
                 repository_operation__operation_type=operation_type

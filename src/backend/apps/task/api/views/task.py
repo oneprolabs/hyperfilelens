@@ -22,6 +22,7 @@ from apps.task.api.serializers import (
     TaskSerializer,
     TaskStepSerializer,
 )
+from apps.task.api.serializers.task import task_detail_serializer_context
 from apps.task.constants import RESTORE_TASK_TYPES
 from apps.task.models import Task
 from apps.task.selectors.interface import (
@@ -95,6 +96,12 @@ class TaskViewSet(viewsets.ModelViewSet):
             finished_after=parse_datetime(params.get("finished_after") or ""),
             finished_before=parse_datetime(params.get("finished_before") or ""),
             terminal_only=(params.get("terminal_only") or "").strip().lower() == "true",
+            collapse_replacements=(
+                self.action == "list"
+                and not params.get("finished_after")
+                and not params.get("finished_before")
+                and (params.get("terminal_only") or "").strip().lower() != "true"
+            ),
         )
         return filter_task_queryset(self.request, queryset)
 
@@ -120,6 +127,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
+        if self.action == "retrieve":
+            context.update(task_detail_serializer_context(self.request))
         if self.action == "create":
             context["organization_id"] = self._organization_id()
         return context

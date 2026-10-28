@@ -4547,6 +4547,8 @@ export const en = {
       createTitle: 'Create System Task',
       detailTitle: 'Task Details',
       basicData: 'Basic Data',
+      executionHistory: 'Execution History',
+      earlierRecords: 'Earlier records',
       ownerLabel: 'Owner',
       duration: 'Duration',
       executionTime: 'Execution Time',

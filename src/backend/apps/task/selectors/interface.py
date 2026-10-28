@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -7,6 +8,31 @@ from django.db.models import Count, Q, QuerySet
 from django.utils import timezone
 
 from apps.task.models import Task, TaskEvent, TaskStep
+
+
+def collapse_repository_task_replacements(
+    queryset: QuerySet[Task],
+    *,
+    search: str | None = None,
+    search_field: str | None = None,
+    status: str | None = None,
+) -> QuerySet[Task]:
+    """Fold default rows, preserving exact UUID and explicit outcome searches."""
+    if status in {
+        Task.Status.FAILED, Task.Status.TIMEOUT, Task.Status.CANCELLED, Task.Status.SUCCESS,
+    }:
+        return queryset
+    if search and search_field != "name":
+        try:
+            UUID(search.strip())
+        except ValueError:
+            pass
+        else:
+            return queryset
+    return queryset.exclude(
+        task_type=Task.Type.REPOSITORY_OPERATION,
+        replacement_task__isnull=False,
+    )
 
 
 def list_tasks(
@@ -26,6 +52,7 @@ def list_tasks(
     finished_after: datetime | None = None,
     finished_before: datetime | None = None,
     terminal_only: bool = False,
+    collapse_replacements: bool = False,
 ) -> QuerySet[Task]:
     queryset = (
         Task.objects.filter(organization_id=organization_id)
@@ -100,6 +127,10 @@ def list_tasks(
                 Task.Status.TIMEOUT,
             ]
         )
+    if collapse_replacements:
+        queryset = collapse_repository_task_replacements(
+            queryset, search=search, search_field=search_field, status=status,
+        )
     return queryset
 
 
@@ -120,6 +151,55 @@ def get_task(*, organization_id: int, task_uuid: UUID | str) -> Task | None:
         )
         .first()
     )
+
+
+@dataclass
+class ExecutionHistoryPage:
+    records: list[Task]
+    next_cursor: int | None = None
+
+
+EXECUTION_HISTORY_PAGE_SIZE = 20
+
+
+def repository_execution_history(
+    *, task: Task, before_id: int | None = None,
+) -> ExecutionHistoryPage:
+    """Read a bounded page of the linked chain in one PostgreSQL query.
+
+    UNION deduplicates visited nodes, including malformed cyclic links. Each
+    recursive step is fenced to the same organization, repository and type.
+    The cursor uses immutable IDs, so new executions do not shift older pages.
+    """
+    if task.task_type != Task.Type.REPOSITORY_OPERATION:
+        return ExecutionHistoryPage([])
+    sql = """
+        WITH RECURSIVE executions(id, replaces_task_id) AS (
+            SELECT id, replaces_task_id FROM task WHERE id = %s
+            UNION
+            SELECT candidate.id, candidate.replaces_task_id
+            FROM task candidate
+            JOIN executions previous
+              ON candidate.id = previous.replaces_task_id
+              OR candidate.replaces_task_id = previous.id
+            JOIN storage_repository_task operation ON operation.task_id = candidate.id
+            WHERE candidate.organization_id IS NOT DISTINCT FROM %s
+              AND candidate.task_type = %s AND operation.repository_id = %s
+        )
+        SELECT t.id, t.task_uuid, t.status, t.started_at, t.finished_at, t.created_at
+        FROM task t JOIN executions e ON e.id = t.id
+        WHERE (%s IS NULL OR t.id < %s)
+        ORDER BY t.id DESC LIMIT %s
+    """
+    records = list(Task.objects.using(task._state.db).raw(sql, [
+        task.pk, task.organization_id, task.task_type,
+        task.repository_operation.repository_id,
+        before_id, before_id, EXECUTION_HISTORY_PAGE_SIZE + 1,
+    ]))
+    has_more = len(records) > EXECUTION_HISTORY_PAGE_SIZE
+    records = records[:EXECUTION_HISTORY_PAGE_SIZE]
+    next_cursor = records[-1].id if has_more else None
+    return ExecutionHistoryPage(list(reversed(records)), next_cursor)
 
 
 def list_task_steps(*, task: Task) -> QuerySet[TaskStep]:

@@ -513,7 +513,7 @@ class RepositoryOperationRecoveryTests(TestCase):
             CONTROL_PLANE_RESTART_INTERRUPTED,
         )
         self.assertEqual(replacement.status, Task.Status.PENDING)
-        self.assertEqual(replacement.trigger_type, Task.TriggerType.RETRY)
+        self.assertEqual(replacement.trigger_type, repository_task.task.trigger_type)
         self.assertEqual(replacement.recovery_attempt, 1)
         self.assertEqual(
             replacement.repository_operation.operation_type,
