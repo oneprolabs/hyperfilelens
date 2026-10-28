@@ -736,7 +736,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-444-/),
       [],
       originalRunUuid,
-      'balanced',
+      false,
     )
     wrapper.unmount()
   })
@@ -800,7 +800,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-445-/),
       [],
       undefined,
-      'balanced',
+      false,
     )
     wrapper.unmount()
   })
@@ -854,7 +854,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-444-/),
       ['00000000-0000-4000-8000-000000000001'],
       undefined,
-      'balanced',
+      false,
     )
     wrapper.unmount()
   })
@@ -920,7 +920,7 @@ describe('InsightCopilot question submission', () => {
       expect.stringMatching(/^copilot-444-/),
       ['00000000-0000-4000-8000-000000000001'],
       undefined,
-      'balanced',
+      false,
     )
     expect(wrapper.get('.copilot-input-field').element).toHaveProperty(
       'value',
