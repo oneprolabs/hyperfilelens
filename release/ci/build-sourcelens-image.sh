@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mirror one pinned upstream SourceLens component to the HFL registry namespace.
+# Build one HFL-bundled SourceLens component and push it to the HFL registry namespace.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

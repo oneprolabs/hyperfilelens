@@ -1227,71 +1227,6 @@ sourcelens_tag_app_images_latest() {
 	done
 }
 
-sourcelens_expected_image_digest() {
-	local component=$1
-	python3 - "${SOURCELENS_RUNTIME_CONTRACT_FILE}" "${component}" "${SOURCELENS_GIT_REF}" <<'PY'
-import json
-import pathlib
-import sys
-
-runtime = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-if str(runtime.get("git_ref") or "") != sys.argv[3]:
-    raise SystemExit(0)
-image = (runtime.get("images") or {}).get(sys.argv[2]) or {}
-print(str(image.get("digest") or ""))
-PY
-}
-
-sourcelens_image_matches_digest() {
-	local image=$1 expected=$2 actual
-	[[ "${expected}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
-	actual="$(docker image inspect "${image}" \
-		--format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null || true)"
-	while IFS= read -r digest; do
-		[[ "${digest}" == *"@${expected}" ]] && return 0
-	done <<<"${actual}"
-	return 1
-}
-
-sourcelens_prepare_official_app_images() {
-	local force=${1:-0}
-	local requested_services="${SOURCELENS_BUILD_SERVICES:-backend-api frontend lensnode}"
-	local service component upstream_ref distribution_ref latest_ref expected
-	for service in ${requested_services}; do
-		case "${service}" in
-		backend-api) component=backend ;;
-		frontend) component=frontend ;;
-		lensnode) component=lensnode ;;
-		*) sourcelens_die "unsupported SourceLens service: ${service}" 2 ;;
-		esac
-		upstream_ref="$(sourcelens_upstream_image_ref "${component}")"
-		distribution_ref="$(sourcelens_distribution_image_ref "${component}")"
-		latest_ref="$(sourcelens_distribution_image_ref "${component}" latest)"
-		expected="$(sourcelens_expected_image_digest "${component}")"
-		if [[ "${force}" -eq 0 ]] && sourcelens_image_matches_digest "${upstream_ref}" "${expected}"; then
-			sourcelens_log "Using verified upstream SourceLens image ${upstream_ref}"
-		else
-			sourcelens_ensure_runtime_image "${upstream_ref}" "${force}"
-			[[ -z "${expected}" ]] || sourcelens_image_matches_digest "${upstream_ref}" "${expected}" \
-				|| sourcelens_die "upstream SourceLens image ${upstream_ref} does not match locked digest ${expected}"
-		fi
-		docker tag "${upstream_ref}" "${distribution_ref}"
-		docker tag "${upstream_ref}" "${latest_ref}"
-		sourcelens_log "Tagged original SourceLens image ${upstream_ref} -> ${distribution_ref}"
-	done
-}
-
-sourcelens_verify_locked_app_images() {
-	local component expected image
-	for component in backend frontend lensnode; do
-		expected="$(sourcelens_expected_image_digest "${component}")"
-		[[ -z "${expected}" ]] && continue
-		image="$(sourcelens_distribution_image_ref "${component}")"
-		sourcelens_image_matches_digest "${image}" "${expected}" \
-			|| sourcelens_die "SourceLens image ${image} does not match locked digest ${expected}"
-	done
-}
-
 sourcelens_tag_lensnode_alias() {
 	local lensnode_ref
 	lensnode_ref="$(sourcelens_lensnode_image_ref)"
@@ -1398,10 +1333,95 @@ sourcelens_publish_gateway_lensnode_bundle() {
 sourcelens_build_app_images() {
 	local force=${1:-0}
 	local no_cache=${2:-0}
-	# no_cache is retained in the helper signature for release-script
-	# compatibility; original SL images are never rebuilt by HFL.
-	: "${no_cache}"
-	sourcelens_prepare_official_app_images "${force}"
+	local requested_services="${SOURCELENS_BUILD_SERVICES:-backend-api frontend lensnode}"
+	local full_build=1
+	if [[ "${requested_services}" != "backend-api frontend lensnode" ]]; then
+		full_build=0
+		local service
+		for service in ${requested_services}; do
+			case "${service}" in
+			backend-api | frontend | lensnode) ;;
+			*) sourcelens_die "unsupported SourceLens build service: ${service}" 2 ;;
+			esac
+		done
+	fi
+	sourcelens_ensure_compose
+	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 ]] && sourcelens_build_skippable; then
+		sourcelens_log "SourceLens app images already built for source stamp $(sourcelens_read_built_commit); skipping compose build"
+		sourcelens_tag_lensnode_alias
+		return 0
+	fi
+	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 \
+		&& "$(sourcelens_read_built_commit)" == "$(sourcelens_current_build_stamp)" ]] \
+		&& sourcelens_upstream_images_ready; then
+		sourcelens_log "SourceLens upstream images match the build stamp; applying normalized distribution tags"
+		sourcelens_tag_app_images_latest
+		sourcelens_tag_lensnode_alias
+		return 0
+	fi
+	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 ]] && sourcelens_app_images_ready; then
+		sourcelens_log "SourceLens app images present but source commit changed; rebuilding"
+	fi
+
+	local src="${SOURCELENS_BUILD_SOURCE}"
+	local version="${SOURCELENS_VERSION}"
+	local debian_apt_mirror_url="https://deb.debian.org/debian"
+	local pip_index_url="${SOURCELENS_PIP_INDEX_URL:-https://pypi.org/simple}"
+	local pip_trusted_host="${SOURCELENS_PIP_TRUSTED_HOST:-pypi.org}"
+
+	if [[ -n "${SOURCELENS_APT_MIRROR:-}" ]]; then
+		debian_apt_mirror_url="$(sourcelens_normalize_apt_mirror_url debian "${SOURCELENS_APT_MIRROR}" "${SOURCELENS_DOCKER_PLATFORM}")"
+	fi
+	sourcelens_restore_source_dockerfiles "${src}"
+	sourcelens_restore_compose_file "${src}"
+	sourcelens_patch_dockerfile_uv_network "${src}" "${SOURCELENS_UV_HTTP_TIMEOUT}" \
+		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}" "${SOURCELENS_UV_VERSION}"
+	sourcelens_patch_dockerfile_pip_resilience "${src}" \
+		"${SOURCELENS_PIP_RETRY_MAX}" "${SOURCELENS_PIP_RETRY_DELAY}"
+	sourcelens_patch_frontend_dockerfile_npm_registry "${src}"
+	sourcelens_patch_frontend_dockerfile_source_maps "${src}"
+	sourcelens_patch_compose_lensnode_apt_mirror "${src}" "${debian_apt_mirror_url}"
+	sourcelens_patch_compose_build_sources "${src}" \
+		"${debian_apt_mirror_url}" "${debian_apt_mirror_url}" \
+		"${pip_index_url}" "${pip_trusted_host}"
+	sourcelens_patch_compose_uv_network "${src}" "${SOURCELENS_UV_HTTP_TIMEOUT}" \
+		"${SOURCELENS_UV_CONCURRENT_DOWNLOADS}" "${SOURCELENS_UV_VERSION}"
+	sourcelens_patch_compose_npm_registry "${src}" "${SOURCELENS_NPM_REGISTRY}"
+	sourcelens_log "Building SourceLens Docker images (APP_VERSION=${version}, base images from docker.io like HFL)..."
+	(
+		cd "${src}"
+		export APP_VERSION="${version}"
+		export DOCKER_DEFAULT_PLATFORM="${SOURCELENS_DOCKER_PLATFORM}"
+		sourcelens_log "Using SourceLens Docker platform: ${DOCKER_DEFAULT_PLATFORM}"
+		export APT_MIRROR_URL="${debian_apt_mirror_url}"
+		export DEBIAN_APT_MIRROR_URL="${debian_apt_mirror_url}"
+		sourcelens_log "Using SourceLens Debian apt source: ${APT_MIRROR_URL}"
+		export PIP_INDEX_URL="${pip_index_url}"
+		export PIP_TRUSTED_HOST="${pip_trusted_host}"
+		export UV_HTTP_TIMEOUT="${SOURCELENS_UV_HTTP_TIMEOUT}"
+		export UV_CONCURRENT_DOWNLOADS="${SOURCELENS_UV_CONCURRENT_DOWNLOADS}"
+		export UV_VERSION="${SOURCELENS_UV_VERSION}"
+		export NPM_REGISTRY="${SOURCELENS_NPM_REGISTRY}"
+		sourcelens_log "Using SourceLens pip index: ${PIP_INDEX_URL} (uv=${UV_VERSION})"
+		sourcelens_log "Using SourceLens pip resilience: BuildKit uv/pip cache + retry max=${SOURCELENS_PIP_RETRY_MAX} delay=${SOURCELENS_PIP_RETRY_DELAY}s"
+		sourcelens_log "Using SourceLens uv network: timeout=${UV_HTTP_TIMEOUT}s concurrent=${UV_CONCURRENT_DOWNLOADS} (uv retries=default)"
+		sourcelens_log "Using SourceLens npm registry: ${NPM_REGISTRY}"
+		local -a build_args=(build)
+		[[ "${no_cache}" -eq 1 ]] && build_args+=(--no-cache)
+		# shellcheck disable=SC2206
+		local -a services=(${requested_services})
+		build_args+=("${services[@]}")
+		hfl_run_native_command env \
+			DOCKER_BUILDKIT=1 \
+			BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}" \
+			"${SOURCELENS_COMPOSE[@]}" \
+			-f "${SOURCELENS_BUILD_COMPOSE_FILE}" "${build_args[@]}"
+	)
+	if [[ "${full_build}" -eq 0 ]]; then
+		sourcelens_log "Built requested SourceLens service(s): ${requested_services}"
+		return 0
+	fi
+	sourcelens_tag_app_images_latest
 	sourcelens_tag_lensnode_alias
 	sourcelens_write_built_commit "$(sourcelens_current_build_stamp)"
 }

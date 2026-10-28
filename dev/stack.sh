@@ -151,7 +151,7 @@ Default up/restart workflow:
                       the external stack
 
 SourceLens options (enabled by default for up/restart):
-  --no-sourcelens             Skip SourceLens source verification, image preparation, and start
+  --no-sourcelens             Skip SourceLens clone, build, and start
   --sourcelens-ref REF        SourceLens release tag in vX.Y.Z form
   --sourcelens-git-url URL    Override the SourceLens repository URL
                               (env: SOURCELENS_GIT_URL)

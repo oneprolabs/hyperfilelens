@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Mirror the pinned upstream SourceLens images and stage offline runtime files
-# into a release package. HFL never rebuilds or patches SourceLens application code.
+# Build SourceLens container images and stage offline runtime files into a release package.
 # Invoked from release/build.sh when BUILD_SOURCELENS=1.
 set -euo pipefail
 export COPYFILE_DISABLE=1
@@ -39,8 +38,8 @@ Usage: ./release/build-sourcelens.sh --pkg-root DIR --images-dir DIR [options]
   --pkg-root DIR       Release package staging root (hyperfilelens-<version>/)
   --images-dir DIR     images/ directory inside the package root
   --pull               Pull nginx:stable-alpine even when present locally
-  --no-cache           Retained for CLI compatibility; upstream images are not rebuilt
-  --force-build        Refresh pinned upstream images even when present locally
+  --no-cache           Rebuild SourceLens Docker layers without BuildKit cache
+  --force-build        Rebuild SourceLens images even when the build stamp matches
   --prebuilt           Package normalized images already loaded in Docker
   --runtime-only       Stage runtime configuration without image archives or Gateway payload
   --sourcelens-git-url URL  Override SOURCELENS_GIT_URL
@@ -401,7 +400,6 @@ main() {
 	if [[ "${PREBUILT}" -eq 1 ]]; then
 		sourcelens_app_images_ready \
 			|| die "--prebuilt requires normalized SourceLens backend, frontend, and LensNode images"
-		sourcelens_verify_locked_app_images
 		sourcelens_tag_lensnode_alias
 		log "Using prebuilt SourceLens application images"
 	else
