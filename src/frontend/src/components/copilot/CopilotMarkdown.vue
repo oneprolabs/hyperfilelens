@@ -99,7 +99,7 @@ function renderMindmap(source: string): string {
   const text = (node: MindmapNode) => node.lines.map((line, index) => `<tspan x="${node.labelX}" dy="${index ? 20 : -((node.lines.length - 1) * 20) / 2}">${escapeHtml(line)}</tspan>`).join('')
   const links = all.filter((node) => node.depth > 0).map((node) => { const parent = all.find((candidate) => candidate.path === node.parent); if (!parent) return ''; const start = parent.dotX!; const end = node.labelX! - 10; const middle = (start + end) / 2; return `<path class="copilot-md-mindmap-link" data-mindmap-link="${node.path}" d="M${start},${parent.y} C${middle},${parent.y} ${middle},${node.y} ${end},${node.y}" stroke="${branchColor(node)}"/>` }).join('')
   const nodes = all.map((node) => `<g class="copilot-md-mindmap-node" data-mindmap-toggle="true" data-mindmap-path="${node.path}" data-mindmap-parent="${node.parent}" data-mindmap-has-children="${node.hasChildren}" data-mindmap-collapsed="false" role="treeitem" tabindex="0" aria-expanded="${node.hasChildren}" aria-label="${escapeHtml(node.label)}">${node.hasChildren ? `<circle cx="${node.dotX}" cy="${node.y}" r="${node.depth ? 6 : 7}" stroke="${branchColor(node)}" fill="white"/>` : ''}<text x="${node.labelX}" y="${node.y}" fill="currentColor" dominant-baseline="middle">${text(node)}</text></g>`).join('')
-  return `<div class="copilot-md-mindmap-wrap" data-mindmap-root><div class="copilot-md-mindmap-canvas" role="group" aria-label="${escapeHtml(root.label)}"><svg class="copilot-md-mindmap" role="tree" viewBox="0 0 ${width} ${height}" data-mindmap-width="${width}" data-mindmap-height="${height}" preserveAspectRatio="xMinYMin meet" aria-label="${escapeHtml(root.label)}"><g class="copilot-md-mindmap-links">${links}</g><g class="copilot-md-mindmap-nodes">${nodes}</g></svg><pre class="copilot-md-mindmap-code" aria-hidden="true"><code>${escapeHtml(source)}</code></pre></div><div class="copilot-md-mindmap-toolbar" role="toolbar" aria-label="${escapeHtml(t('insight.copilot.mindmapControls'))}"><button type="button" data-mindmap-action="zoom-out" aria-label="${escapeHtml(t('insight.copilot.mindmapZoomOut'))}" title="${escapeHtml(t('insight.copilot.mindmapZoomOut'))}">−</button><button type="button" data-mindmap-action="zoom-in" aria-label="${escapeHtml(t('insight.copilot.mindmapZoomIn'))}" title="${escapeHtml(t('insight.copilot.mindmapZoomIn'))}">+</button><button type="button" data-mindmap-action="fit" aria-label="${escapeHtml(t('insight.copilot.mindmapFit'))}" title="${escapeHtml(t('insight.copilot.mindmapFit'))}">${escapeHtml(t('insight.copilot.mindmapFit'))}</button><button type="button" data-mindmap-action="fullscreen" aria-label="${escapeHtml(t('insight.copilot.mindmapFullscreen'))}" title="${escapeHtml(t('insight.copilot.mindmapFullscreen'))}">□</button><button type="button" data-mindmap-action="code" aria-label="${escapeHtml(t('insight.copilot.mindmapSource'))}" title="${escapeHtml(t('insight.copilot.mindmapSource'))}">&lt;/&gt;</button></div></div>`
+  return `<div class="copilot-md-mindmap-wrap" data-mindmap-root><div class="copilot-md-mindmap-canvas" role="group" aria-label="${escapeHtml(root.label)}"><svg class="copilot-md-mindmap" role="tree" viewBox="0 0 ${width} ${height}" data-mindmap-width="${width}" data-mindmap-height="${height}" preserveAspectRatio="xMinYMin meet" aria-label="${escapeHtml(root.label)}"><g class="copilot-md-mindmap-links">${links}</g><g class="copilot-md-mindmap-nodes">${nodes}</g></svg><pre class="copilot-md-mindmap-code" aria-hidden="true"><code>${escapeHtml(source)}</code></pre></div><div class="copilot-md-mindmap-toolbar" role="toolbar" aria-label="${escapeHtml(t('insight.copilot.mindmapControls'))}"><button type="button" data-mindmap-action="zoom-out" aria-label="${escapeHtml(t('insight.copilot.mindmapZoomOut'))}">−</button><button type="button" data-mindmap-action="zoom-in" aria-label="${escapeHtml(t('insight.copilot.mindmapZoomIn'))}">+</button><button type="button" data-mindmap-action="fit" aria-label="${escapeHtml(t('insight.copilot.mindmapFit'))}">${escapeHtml(t('insight.copilot.mindmapFit'))}</button><button type="button" data-mindmap-action="fullscreen" aria-label="${escapeHtml(t('insight.copilot.mindmapFullscreen'))}">□</button><button type="button" data-mindmap-action="code" aria-label="${escapeHtml(t('insight.copilot.mindmapSource'))}">&lt;/&gt;</button></div></div>`
 }
 
 const renderer = new marked.Renderer()
@@ -128,7 +128,7 @@ renderer.code = ({ text, lang }: Tokens.Code) => {
     : ''
   const className = language ? ` class="hljs language-${escapeHtml(language)}"` : ''
   const copyLabel = escapeHtml(t('common.copy'))
-  return `<div class="copilot-md-code-block"><div class="copilot-md-code-header">${languageLabel}<button type="button" class="copilot-md-code-copy" aria-label="${copyLabel}" title="${copyLabel}"></button></div><pre class="copilot-md-pre"><code${className}>${highlighted}</code></pre></div>`
+  return `<div class="copilot-md-code-block"><div class="copilot-md-code-header">${languageLabel}<button type="button" class="copilot-md-code-copy" aria-label="${copyLabel}"></button></div><pre class="copilot-md-pre"><code${className}>${highlighted}</code></pre></div>`
 }
 
 renderer.table = function ({ header, rows, align }: Tokens.Table) {
@@ -266,14 +266,12 @@ async function handleMarkdownInteraction(event: MouseEvent | KeyboardEvent) {
     return
   }
   const copiedLabel = t('common.copied')
-  button.title = copiedLabel
   button.setAttribute('aria-label', copiedLabel)
   button.dataset.copied = 'true'
   const existingTimer = copyResetTimers.get(button)
   if (existingTimer) clearTimeout(existingTimer)
   copyResetTimers.set(button, setTimeout(() => {
     const copyLabel = t('common.copy')
-    button.title = copyLabel
     button.setAttribute('aria-label', copyLabel)
     delete button.dataset.copied
     copyResetTimers.delete(button)

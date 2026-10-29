@@ -62,6 +62,8 @@ describe('Copilot context summary', () => {
   it('shows only source, snapshot time, gateway, and Chat creation time in that order', () => {
     const row = session()
     const wrapper = mountBar(row)
+    expect(wrapper.get('.copilot-context-bar').findAll('[title]')).toHaveLength(0)
+    expect(wrapper.get('.copilot-context-bar__title').attributes('aria-label')).toContain(row.title)
     const summary = wrapper.get('.copilot-context-bar__summary')
     expect(summary.findAll('.copilot-context-bar__field').map((field) => field.text())).toEqual([
       'Backup Source:zjb',

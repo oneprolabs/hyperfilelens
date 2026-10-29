@@ -138,7 +138,6 @@ function confirm() {
             <span class="copilot-ks-picker-card__sep">·</span>
             <span
               class="copilot-ks-picker-card__path"
-              :title="row.source_path"
             >{{ row.source_path }}</span>
           </span>
           <span class="copilot-ks-picker-card__tags">

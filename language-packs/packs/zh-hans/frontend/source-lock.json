@@ -9742,8 +9742,10 @@
   "ops.alertsCenter.policies.targetSummarySelected": "9a687d99e03b4270b7b4804bac1bfc5bd7239c402c63dfcb400d9a8e67d9047e",
   "ops.alertsCenter.policies.targetSummaryEmpty": "a2100ed4d667437008ebebfa7ca6e7cef07f2fc8431a4f926428cf7581d095fd"
 ,
-  "insight.copilot.deepThinking": "95dc37c7efd34f56ddf6618d55275f992fd28736505cbe79f833ef8a1d619fee",
+  "insight.copilot.deepThinking": "0f11626bdc3bc8862924febf792a8943f43634e3772bb942d10b1b946659452d",
   "insight.copilot.deepThinkingHint": "3510ac6b796184c65d472c13fb6afe8cd6b7c309f569092afafb2b82fba49e97",
+  "insight.copilot.showCitationsHint": "07cd97f0b263b06886080fedd52b225b8cf00c26ee3819933e4989135710c10b",
+  "insight.copilot.showCitations": "b31436f4ca37e78c81c02264ff337b6267c8bbefea330c53d8240cc878136c92",
   "insight.copilot.answerReview": "583862de0395e2fca552abcf12e24b69c3b44d550ccb9a741656642016f196d9",
   "insight.copilot.reviewSupported": "5656e9b4c8d971bc3462b698dbe79008b2830e8c3d0e4b4cf6719ca8b6dfc213",
   "insight.copilot.reviewUnsupported": "8a77853de2fb7539ffa3300cd2521de4c64c3c2b0ca85341a48dd7aff6fefcb8",

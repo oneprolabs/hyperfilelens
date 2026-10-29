@@ -147,11 +147,10 @@ const conversionWarnings = computed(() => conversionWarningsForDisplay(conversio
           class="copilot-context-bar__icon"
           aria-hidden="true"
         />
-        <h1 :title="session.title">
+        <h1>
           <button
             type="button"
             class="copilot-context-bar__title"
-            :title="`${session.title}: ${t('insight.copilot.chatDetailsTitle')}`"
             :aria-label="`${session.title}: ${t('insight.copilot.chatDetailsTitle')}`"
             aria-haspopup="dialog"
             :aria-expanded="detailsOpen"
@@ -173,7 +172,6 @@ const conversionWarnings = computed(() => conversionWarningsForDisplay(conversio
         v-if="session.lifecycle_status === 'ready'"
         type="button"
         class="copilot-context-bar__settings"
-        :title="t('insight.copilot.executionSettingsTitle')"
         @click="emit('edit-execution')"
       >
         <Settings2

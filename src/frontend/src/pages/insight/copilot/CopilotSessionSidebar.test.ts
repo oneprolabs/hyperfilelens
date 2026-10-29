@@ -61,6 +61,13 @@ function mountSidebar(row: SessionRow) {
 }
 
 describe('CopilotSessionSidebar pin actions', () => {
+  it.each(['ready', 'provisioning', 'failed'])('keeps %s Chat rows free of native hover tooltips', (status) => {
+    const wrapper = mountSidebar(session(status))
+    expect(wrapper.findAll('[title]')).toHaveLength(0)
+    expect(wrapper.get('.copilot-session-item__more').attributes('aria-label')).toContain('Quarterly review')
+    wrapper.unmount()
+  })
+
   it('retains Chat history without New Chat or New Chat From actions for a reader', async () => {
     const wrapper = mountSidebar(session('ready'))
     await wrapper.setProps({ canCreateChat: false })
@@ -171,9 +178,7 @@ describe('CopilotSessionSidebar pin actions', () => {
     const share = wrapper.find('.copilot-session-menu__share')
 
     expect(share.attributes('disabled')).toBe('true')
-    expect(share.attributes('title')).toBe(
-      'Share becomes available after the session has a completed answer.',
-    )
+    expect(share.attributes('title')).toBeUndefined()
   })
 
   it('retains HFL retry for a failed chat', () => {

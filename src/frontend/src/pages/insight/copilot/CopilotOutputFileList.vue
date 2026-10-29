@@ -78,7 +78,6 @@ async function downloadFile(file: LensRunOutputFile) {
       v-for="file in orderedFiles"
       :key="file.uuid"
       class="copilot-output-file"
-      :title="fileLabel(file)"
     >
       <FileText
         :size="20"
@@ -89,7 +88,6 @@ async function downloadFile(file: LensRunOutputFile) {
         <button
           type="button"
           class="copilot-output-file__action"
-          :title="t('insight.copilot.outputFileDownload')"
           :aria-label="t('insight.copilot.outputFileDownload')"
           :disabled="!file.url"
           @click="downloadFile(file)"
@@ -100,7 +98,6 @@ async function downloadFile(file: LensRunOutputFile) {
           v-if="isPreviewable(file)"
           type="button"
           class="copilot-output-file__preview"
-          :title="t('insight.copilot.outputFilePreview')"
           :aria-label="t('insight.copilot.outputFilePreview')"
           @click="previewFile = file"
         >

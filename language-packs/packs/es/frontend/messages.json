@@ -4051,6 +4051,8 @@
       "clarificationSubmitting": "Continuando…",
       "deepThinking": "Pensamiento profundo",
       "deepThinkingHint": "Usa un razonamiento más profundo y una revisión independiente de la respuesta. Puede tardar más.",
+      "showCitations": "Mostrar citas",
+      "showCitationsHint": "Muestra las citas de las respuestas. Tu elección se guarda en este navegador.",
       "answerReview": "Revisión de la respuesta",
       "reviewSupported": "Compatible",
       "reviewUnsupported": "No compatible",

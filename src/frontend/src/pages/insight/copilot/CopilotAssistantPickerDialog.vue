@@ -164,7 +164,6 @@ function confirm() {
               </span>
               <span
                 class="copilot-assistant-picker-card__title"
-                :title="displayName(row)"
               >
                 {{ displayName(row) }}
               </span>
@@ -188,7 +187,6 @@ function confirm() {
                 <span
                   class="copilot-assistant-picker-card__value"
                   :class="{ 'copilot-assistant-picker-card__value--empty': ksName(row) === DETAIL_EMPTY }"
-                  :title="ksName(row) === DETAIL_EMPTY ? undefined : ksName(row)"
                 >
                   {{ ksName(row) }}
                 </span>
@@ -200,7 +198,6 @@ function confirm() {
                 <span
                   class="copilot-assistant-picker-card__value"
                   :class="{ 'copilot-assistant-picker-card__value--empty': gatewayName(row) === DETAIL_EMPTY }"
-                  :title="gatewayName(row) === DETAIL_EMPTY ? undefined : gatewayName(row)"
                 >
                   {{ gatewayName(row) }}
                 </span>
@@ -214,7 +211,6 @@ function confirm() {
                 <span
                   class="copilot-assistant-picker-card__value copilot-assistant-picker-card__value--mono"
                   :class="{ 'copilot-assistant-picker-card__value--empty': directoryPath(row) === DETAIL_EMPTY }"
-                  :title="directoryPath(row) === DETAIL_EMPTY ? undefined : directoryPath(row)"
                 >
                   {{ directoryPath(row) }}
                 </span>

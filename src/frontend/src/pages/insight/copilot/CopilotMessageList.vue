@@ -43,8 +43,10 @@ const props = withDefaults(defineProps<{
   sharedRunIds?: string[]
   /** Admin / audit viewers: hide write actions (retry, feedback, share, clarification). */
   readOnly?: boolean
+  showCitations?: boolean
 }>(), {
   readOnly: false,
+  showCitations: true,
 })
 
 const emit = defineEmits<{
@@ -464,7 +466,7 @@ const displayMessages = computed(() =>
                 :files="msg.outputFiles"
               />
               <CopilotMessageCitations
-                v-if="msg.role === 'assistant' && msg.citations?.length"
+                v-if="showCitations && msg.role === 'assistant' && msg.citations?.length"
                 :session-id="sessionId"
                 :run-id="msg.runId"
                 :citations="msg.citations"
@@ -511,7 +513,6 @@ const displayMessages = computed(() =>
                 <button
                   type="button"
                   class="message-action-btn"
-                  :title="t('common.copy')"
                   :aria-label="t('common.copy')"
                   @click="copyText(msg.text || '')"
                 >
@@ -521,7 +522,6 @@ const displayMessages = computed(() =>
                   v-if="showWriteActions() && msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
-                  :title="t('insight.copilot.downloadPdf')"
                   :aria-label="t('insight.copilot.downloadPdf')"
                   :disabled="pdfDownloading.has(msg.runId)"
                   @click="downloadMessagePdf(msg)"
@@ -533,7 +533,6 @@ const displayMessages = computed(() =>
                   type="button"
                   class="message-action-btn"
                   :class="{ 'is-positive': feedbackForMessage(msg) === 'positive' }"
-                  :title="t('insight.copilot.likeAnswer')"
                   :aria-label="t('insight.copilot.likeAnswer')"
                   :aria-pressed="feedbackForMessage(msg) === 'positive'"
                   :disabled="feedbackIsUpdating(msg)"
@@ -546,7 +545,6 @@ const displayMessages = computed(() =>
                   type="button"
                   class="message-action-btn"
                   :class="{ 'is-negative': feedbackForMessage(msg) === 'negative' }"
-                  :title="t('insight.copilot.dislikeAnswer')"
                   :aria-label="t('insight.copilot.dislikeAnswer')"
                   :aria-pressed="feedbackForMessage(msg) === 'negative'"
                   :disabled="feedbackIsUpdating(msg)"
@@ -559,7 +557,6 @@ const displayMessages = computed(() =>
                   type="button"
                   class="message-action-btn"
                   :class="{ 'is-shared': Boolean(msg.runId && sharedRunIds?.includes(msg.runId)) }"
-                  :title="t('insight.copilot.share')"
                   :aria-label="t('insight.copilot.share')"
                   @click="emit('shareAnswer', msg)"
                 >
@@ -569,7 +566,6 @@ const displayMessages = computed(() =>
                   v-if="showWriteActions() && msg.runId && msg.completedAt"
                   type="button"
                   class="message-action-btn"
-                  :title="t('insight.copilot.regenerateAnswer')"
                   :aria-label="t('insight.copilot.regenerateAnswer')"
                   :disabled="!questionForMessage(msg) || starterDisabled"
                   @click="retryForMessage(msg)"
@@ -676,7 +672,6 @@ const displayMessages = computed(() =>
       type="button"
       class="scroll-to-latest"
       :aria-label="t('insight.copilot.scrollToLatest')"
-      :title="t('insight.copilot.scrollToLatest')"
       @click="scrollToBottom"
     >
       <ArrowDown

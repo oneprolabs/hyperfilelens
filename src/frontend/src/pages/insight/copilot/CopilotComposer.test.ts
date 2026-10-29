@@ -45,6 +45,49 @@ function attachment(status: 'uploading' | 'ready'): CopilotComposerAttachment {
 }
 
 describe('CopilotComposer attachments', () => {
+  it('places the full-width input above a separate compact action row', async () => {
+    const wrapper = mountComposer()
+    const shell = wrapper.get('.copilot-input-shell')
+    const input = wrapper.get('textarea').element
+    const toolbar = wrapper.get('.copilot-composer-toolbar')
+    expect(input.parentElement).toBe(shell.element)
+    expect(input.nextElementSibling).toBe(toolbar.element)
+    expect(toolbar.find('textarea').exists()).toBe(false)
+    expect(toolbar.findAll('button').map(button => button.attributes('aria-label') || button.text()))
+      .toEqual([
+        en.insight.copilot.attach,
+        'Show Citations',
+        'Deep Thinking',
+        en.insight.copilot.send,
+      ])
+    expect(toolbar.element.lastElementChild).toBe(wrapper.get('.copilot-send-btn').element)
+
+    await wrapper.setProps({ sending: true, canStop: true })
+    expect(toolbar.element.lastElementChild).toBe(wrapper.get('.copilot-send-btn--stop').element)
+    wrapper.unmount()
+  })
+
+  it('toggles citation display without sending a Run or changing deep thinking', async () => {
+    const wrapper = mountComposer()
+    const toggle = wrapper.get('.copilot-citations-toggle')
+    expect(toggle.text()).toBe('Show Citations')
+    expect(wrapper.findAll('[title]')).toHaveLength(0)
+    expect(wrapper.get('.copilot-attach-btn').attributes('aria-label')).toBe(en.insight.copilot.attach)
+    expect(wrapper.get('.copilot-send-btn').attributes('aria-label')).toBe(en.insight.copilot.send)
+    expect(toggle.attributes('aria-pressed')).toBe('true')
+    await toggle.trigger('click')
+    expect(wrapper.emitted('update:showCitations')).toEqual([[false]])
+    expect(wrapper.emitted('send')).toBeUndefined()
+    expect(wrapper.emitted('update:deepThinking')).toBeUndefined()
+
+    await wrapper.setProps({ showCitations: false, sending: true, disabled: true })
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+    expect(toggle.attributes('disabled')).toBeUndefined()
+    await toggle.trigger('click')
+    expect(wrapper.emitted('update:showCitations')?.at(-1)).toEqual([true])
+    wrapper.unmount()
+  })
+
   it('uses the SourceLens placeholder and AI disclaimer copy', () => {
     const wrapper = mountComposer()
 
@@ -164,8 +207,24 @@ describe('CopilotComposer attachments', () => {
     const wrapper = mountComposer()
 
     const toggle = wrapper.get('.deep-thinking-toggle')
-    expect(toggle.attributes('aria-checked')).toBe('false')
+    expect(toggle.text()).toBe('Deep Thinking')
+    expect(toggle.attributes('aria-pressed')).toBe('false')
+    expect(toggle.attributes('role')).toBeUndefined()
+    expect(wrapper.find('.deep-thinking-toggle__track').exists()).toBe(false)
+    expect(toggle.classes()).toContain('copilot-option-toggle')
+    expect(wrapper.get('.copilot-citations-toggle').classes()).toContain('copilot-option-toggle')
     await toggle.trigger('click')
     expect(wrapper.emitted('update:deepThinking')?.at(-1)).toEqual([true])
+
+    await wrapper.setProps({ deepThinking: true })
+    expect(toggle.attributes('aria-pressed')).toBe('true')
+    await toggle.trigger('click')
+    expect(wrapper.emitted('update:deepThinking')?.at(-1)).toEqual([false])
+
+    await wrapper.setProps({ disabled: true })
+    expect(toggle.attributes('disabled')).toBeDefined()
+    await toggle.trigger('click')
+    expect(wrapper.emitted('update:deepThinking')).toHaveLength(2)
+    wrapper.unmount()
   })
 })
