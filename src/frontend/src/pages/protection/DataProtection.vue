@@ -19531,40 +19531,23 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
 }
 
 .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled) {
-  --color-border: oklch(87% 0.065 274.039);
-  --color-text-title: oklch(51.1% 0.262 276.966);
-  --el-button-border-color: oklch(87% 0.065 274.039);
-  --el-button-bg-color: #fff;
-  --el-button-text-color: oklch(51.1% 0.262 276.966);
-  border-color: oklch(87% 0.065 274.039);
-  border-radius: 6px;
-  background: #fff;
-  color: oklch(51.1% 0.262 276.966);
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 5%);
-}
-
-.dp-flow-step3-action-btn--browse.el-button:not(.is-disabled) .dp-flow-step3-action-btn__icon {
-  color: oklch(58.5% 0.233 277.117);
-}
-
-.dp-flow-step3-action-btn--browse.el-button.is-disabled,
-.dp-flow-step3-action-btn--browse.el-button.is-disabled:hover,
-.dp-flow-step3-action-btn--browse.el-button.is-disabled:focus,
-.dp-flow-step3-action-btn--browse.el-button.is-disabled:active {
-  border-color: oklch(92.9% 0.013 255.508);
-  background: oklch(98.4% 0.003 247.858);
-  color: oklch(70.4% 0.04 256.788);
-  opacity: 0.7;
+  --color-border: var(--color-primary);
+  --color-text-title: var(--color-primary);
+  --el-button-border-color: var(--color-primary);
+  --el-button-bg-color: var(--el-fill-color-blank);
+  --el-button-text-color: var(--color-primary);
+  border-color: var(--color-primary);
+  background: var(--el-fill-color-blank);
+  color: var(--color-primary);
   box-shadow: none;
-  cursor: not-allowed;
 }
 
-.dp-flow-step3-action-btn--browse.el-button.is-disabled .dp-flow-step3-action-btn__icon {
-  color: oklch(70.4% 0.04 256.788);
+.dp-flow-step3-action-btn--browse .dp-flow-step3-action-btn__icon {
+  color: currentColor;
 }
 
 .dp-flow-step3-action-btn--browse.el-button:focus-visible {
-  outline: 2px solid rgb(99 102 241 / 28%);
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
@@ -21130,13 +21113,24 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
 #app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):hover,
 #app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):focus,
 #app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):active {
-  border-color: oklch(78.5% 0.115 274.713) !important;
-  background: oklch(96.2% 0.018 272.314) !important;
-  color: oklch(51.1% 0.262 276.966) !important;
+  border-color: var(--color-primary-hover, var(--color-primary)) !important;
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--el-fill-color-blank)) !important;
+  color: var(--color-primary-hover, var(--color-primary)) !important;
 }
 
-#app .dp-flow-step3-action-btn--browse.el-button:not(.is-disabled):hover {
-  border-color: var(--color-primary-hover, #4e3fd4) !important;
+#app .dp-flow-step3-action-btn--browse.el-button.is-disabled,
+#app .dp-flow-step3-action-btn--browse.el-button.is-disabled:hover,
+#app .dp-flow-step3-action-btn--browse.el-button.is-disabled:focus,
+#app .dp-flow-step3-action-btn--browse.el-button.is-disabled:active {
+  border-color: var(--el-button-disabled-border-color) !important;
+  background: var(--el-button-disabled-bg-color) !important;
+  color: var(--el-button-disabled-text-color) !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+}
+
+#app .dp-flow-step3-action-btn--browse.el-button.is-disabled .dp-flow-step3-action-btn__icon {
+  color: var(--el-button-disabled-text-color) !important;
 }
 
 .restore-already-running-dialog .el-message-box__message {
