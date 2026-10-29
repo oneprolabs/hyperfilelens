@@ -188,7 +188,6 @@ onBeforeUnmount(() => {
         v-else
         type="button"
         class="copilot-message-document"
-        :title="fileLabel(item)"
         @click="downloadAttachment(item)"
       >
         <FileText

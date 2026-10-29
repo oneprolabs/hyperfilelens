@@ -4051,6 +4051,8 @@
       "clarificationSubmitting": "正在继续…",
       "deepThinking": "深度思考",
       "deepThinkingHint": "使用更深入的推理和独立答案审查，回答可能需要更长时间。",
+      "showCitations": "显示引用",
+      "showCitationsHint": "显示回答中的来源引用，设置会在此浏览器中保留。",
       "answerReview": "答案审查",
       "reviewSupported": "已通过",
       "reviewUnsupported": "未通过",

@@ -10,6 +10,7 @@ import { en } from '../../locales/en'
 import InsightCopilot from './InsightCopilot.vue'
 import CopilotComposer from './copilot/CopilotComposer.vue'
 import CopilotMessageList from './copilot/CopilotMessageList.vue'
+import { CHAT_PREFERENCES_KEY } from './copilot/useChatComposerPreferences'
 import { fetchCopilotReadiness, listCopilotGatewayOptions } from '../../lib/lensApi'
 
 const canUseChat = ref(true)
@@ -51,6 +52,7 @@ vi.mock('../../composables/useResponsiveLayout', () => ({
 
 vi.mock('../../composables/useAuth', () => ({
   currentUser: ref({ id: 7, username: 'copilot-user', email: 'copilot@example.com' }),
+  getEffectiveOrgKey: () => 'org-a',
 }))
 
 vi.mock('../../lib/lensApi', () => ({
@@ -195,6 +197,7 @@ function mountCopilot(
 describe('InsightCopilot question submission', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.removeItem(CHAT_PREFERENCES_KEY)
     canUseChat.value = true
     mocks.routerReplace.mockResolvedValue(undefined)
     mocks.listCopilotSessions.mockResolvedValue([sessionRow()])
@@ -238,6 +241,7 @@ describe('InsightCopilot question submission', () => {
   afterEach(() => {
     visibilityRestores.splice(0).forEach(restore => restore())
     vi.useRealTimers()
+    localStorage.removeItem(CHAT_PREFERENCES_KEY)
   })
 
   it('does not request creation-only catalogs or navigate to New Chat for a read-only empty history', async () => {
@@ -397,6 +401,57 @@ describe('InsightCopilot question submission', () => {
     await vi.waitFor(() => expect(dialog.props('runUuid')).toBeNull(), { timeout: 5000 })
     expect(dialog.props('session').id).toBe(444)
     wrapper.unmount()
+  })
+
+  it('matches SourceLens defaults for a new standard Chat: citations on and deep thinking off', async () => {
+    mocks.listCopilotSessions.mockResolvedValue([{ ...sessionRow(), analysis_mode: 'standard' }])
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n)
+    await flushPromises()
+
+    expect(wrapper.getComponent(CopilotComposer).props('deepThinking')).toBe(false)
+    expect(wrapper.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('false')
+    expect(wrapper.get('.copilot-citations-toggle').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.getComponent(CopilotMessageList).props('showCitations')).toBe(true)
+    expect(mocks.createCopilotRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('keeps both choices independent across Chat switches and restores them after remounting', async () => {
+    mocks.listCopilotSessions.mockResolvedValue([
+      sessionRow(null, 'ready', 444, '2026-08-11T08:00:00Z'),
+      sessionRow(null, 'ready', 445, '2026-08-11T07:00:00Z'),
+    ])
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n, UnreadProbeSidebar)
+    await flushPromises()
+    const list = wrapper.getComponent(CopilotMessageList)
+    expect(list.props('showCitations')).toBe(true)
+
+    await wrapper.get('.copilot-citations-toggle').trigger('click')
+    await wrapper.get('.deep-thinking-toggle').trigger('click')
+    expect(list.props('showCitations')).toBe(false)
+    expect(wrapper.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('true')
+    expect(JSON.parse(localStorage.getItem(CHAT_PREFERENCES_KEY)!)).toEqual([
+      expect.objectContaining({ userId: 7, orgKey: 'org-a', chatId: 444, showCitations: false, deepThinking: true }),
+    ])
+    await wrapper.get('[data-session="445"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.getComponent(CopilotMessageList).props('showCitations')).toBe(true)
+    expect(wrapper.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('false')
+    await wrapper.get('[data-session="444"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.getComponent(CopilotMessageList).props('showCitations')).toBe(false)
+    expect(wrapper.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('true')
+    expect(mocks.createCopilotRun).not.toHaveBeenCalled()
+    wrapper.unmount()
+
+    const restored = mountCopilot(i18n)
+    await flushPromises()
+    expect(restored.getComponent(CopilotMessageList).props('showCitations')).toBe(false)
+    expect(restored.get('.copilot-citations-toggle').attributes('aria-pressed')).toBe('false')
+    expect(restored.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('true')
+    restored.unmount()
   })
 
   it('reserves the measured composer height below the conversation', async () => {
@@ -562,6 +617,10 @@ describe('InsightCopilot question submission', () => {
   })
 
   it('confirms force deletion for a blocked private Chat cleanup', async () => {
+    localStorage.setItem(CHAT_PREFERENCES_KEY, JSON.stringify([{
+      userId: 7, orgKey: 'org-a', chatId: 444,
+      showCitations: false, deepThinking: true, updatedAt: Date.now(),
+    }]))
     mocks.listCopilotSessions.mockResolvedValue([{
       ...sessionRow(null, 'deleting'),
       cleanup_intent: 'delete_session',
@@ -596,6 +655,7 @@ describe('InsightCopilot question submission', () => {
     dialog.vm.$emit('confirm')
     await flushPromises()
     expect(mocks.forceDeleteCopilotSession).toHaveBeenCalledWith(444)
+    expect(localStorage.getItem(CHAT_PREFERENCES_KEY)).toBeNull()
     wrapper.unmount()
   })
 
@@ -663,6 +723,61 @@ describe('InsightCopilot question submission', () => {
     expect(wrapper.find('.thinking-panel-live').exists()).toBe(false)
     expect(wrapper.get('.copilot-input-field').attributes('disabled')).toBeUndefined()
     expect(wrapper.find('.copilot-send-btn--stop').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it.each([
+    { mode: 'standard', selected: true, status: 'queued' },
+    { mode: 'standard', selected: true, status: 'done' },
+    { mode: 'deep', selected: false, status: 'queued' },
+    { mode: 'deep', selected: false, status: 'done' },
+  ])('preserves deep thinking=$selected in a $mode Chat after a $status Run is sent and synchronized', async ({ mode, selected, status }) => {
+    mocks.listCopilotSessions.mockResolvedValue([{ ...sessionRow(), analysis_mode: mode }])
+    mocks.createCopilotRun.mockResolvedValue({ uuid: 'thinking-run', status })
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n)
+    await flushPromises()
+
+    const toggle = wrapper.get('.deep-thinking-toggle')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-pressed')).toBe(String(selected))
+
+    await wrapper.get('textarea').setValue('Analyze this backup')
+    await wrapper.get('.copilot-send-btn').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createCopilotRun).toHaveBeenCalledWith(
+      444, 'Analyze this backup', expect.any(String), [], undefined, selected,
+    )
+    expect(mocks.syncCopilotSession).toHaveBeenCalledTimes(2)
+    expect(toggle.attributes('aria-pressed')).toBe(String(selected))
+
+    await wrapper.get('textarea').setValue('Analyze the next file')
+    await wrapper.get('.copilot-send-btn').trigger('click')
+    await flushPromises()
+    expect(mocks.createCopilotRun).toHaveBeenLastCalledWith(
+      444, 'Analyze the next file', expect.any(String), [], undefined, selected,
+    )
+    wrapper.unmount()
+  })
+
+  it('still initializes deep thinking from the selected Chat when switching Chats', async () => {
+    mocks.listCopilotSessions.mockResolvedValue([
+      { ...sessionRow(null, 'ready', 444, '2026-08-11T08:00:00Z'), analysis_mode: 'standard' },
+      { ...sessionRow(null, 'ready', 445, '2026-08-11T07:00:00Z'), analysis_mode: 'deep' },
+    ])
+    const i18n = createI18n({ legacy: false, locale: 'en', messages: { en } })
+    const wrapper = mountCopilot(i18n, UnreadProbeSidebar)
+    await flushPromises()
+
+    expect(wrapper.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('false')
+    await wrapper.get('[data-session="445"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('true')
+
+    await wrapper.get('[data-session="444"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.deep-thinking-toggle').attributes('aria-pressed')).toBe('false')
     wrapper.unmount()
   })
 

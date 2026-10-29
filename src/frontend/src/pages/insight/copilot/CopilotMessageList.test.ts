@@ -147,6 +147,27 @@ describe('CopilotMessageList welcome message and live feedback', () => {
     outcomeWrapper.unmount()
   })
 
+  it('hides and restores citations without losing the answer or fetching source details', async () => {
+    const wrapper = mountList({
+      messages: [{
+        id: 'answer-with-citations',
+        role: 'assistant',
+        runId: 'run-1',
+        text: 'Answer with sources',
+        citations: [{ id: 'citation-1', path: 'src/example.ts' }],
+      }],
+    })
+    expect(wrapper.find('.message-citations').exists()).toBe(true)
+    await wrapper.setProps({ showCitations: false })
+    expect(wrapper.find('.message-citations').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Answer with sources')
+    expect(mocks.fetchCopilotCitation).not.toHaveBeenCalled()
+    await wrapper.setProps({ showCitations: true })
+    expect(wrapper.find('.message-citations').exists()).toBe(true)
+    expect(mocks.fetchCopilotCitation).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('opens SourceLens citations in a right-side drawer and closes with Escape', async () => {
     mocks.fetchCopilotCitation.mockResolvedValue({
       id: 'citation-1',

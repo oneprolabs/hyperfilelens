@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUp, FileText, LoaderCircle, Plus, Square, X } from 'lucide-vue-next'
+import { ArrowUp, FileText, LoaderCircle, Plus, Quote, Square, X } from 'lucide-vue-next'
 import type { CopilotComposerAttachment } from './types'
 import CopilotDeepThinkingToggle from './CopilotDeepThinkingToggle.vue'
 
@@ -19,7 +19,7 @@ const SOURCE_LENS_DOCUMENT_ATTACHMENTS = [
   '.xlsx',
 ]
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string
   attachments?: CopilotComposerAttachment[]
   sending?: boolean
@@ -28,11 +28,16 @@ const props = defineProps<{
   supportsImages?: boolean
   supportsDocuments?: boolean
   deepThinking?: boolean
-}>()
+  showCitations?: boolean
+}>(), {
+  attachments: () => [],
+  showCitations: true,
+})
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:deepThinking': [value: boolean]
+  'update:showCitations': [value: boolean]
   send: []
   stop: []
   attach: [files: File[]]
@@ -198,7 +203,6 @@ onBeforeUnmount(() => {
             type="button"
             class="copilot-attachment-card__remove"
             :aria-label="t('insight.copilot.attachmentRemove')"
-            :title="t('insight.copilot.attachmentRemove')"
             @click="emit('removeAttachment', item)"
           >
             <X :size="14" />
@@ -206,50 +210,62 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div class="copilot-input-row">
+      <textarea
+        ref="fieldRef"
+        :value="modelValue"
+        rows="1"
+        :placeholder="t('insight.copilot.inputPlaceholder')"
+        :aria-label="t('insight.copilot.inputPlaceholder')"
+        :disabled="disabled"
+        class="copilot-input-field"
+        @input="onInput"
+        @paste="onPaste"
+        @keydown.enter.exact.prevent="submit"
+      />
+
+      <div class="copilot-composer-toolbar">
         <button
           type="button"
           class="copilot-attach-btn"
           :disabled="!canAttach"
           :aria-label="t('insight.copilot.attach')"
-          :title="t('insight.copilot.attach')"
           @click="chooseAttachments"
         >
           <Plus
-            :size="20"
+            :size="16"
             :stroke-width="2.1"
           />
         </button>
 
-        <textarea
-          ref="fieldRef"
-          :value="modelValue"
-          rows="1"
-          :placeholder="t('insight.copilot.inputPlaceholder')"
-          :aria-label="t('insight.copilot.inputPlaceholder')"
-          :disabled="disabled"
-          class="copilot-input-field"
-          @input="onInput"
-          @paste="onPaste"
-          @keydown.enter.exact.prevent="submit"
-        />
-
-        <CopilotDeepThinkingToggle
-          :model-value="deepThinking || false"
-          :disabled="disabled"
-          @update:model-value="emit('update:deepThinking', $event)"
-        />
+        <div class="copilot-composer-options">
+          <button
+            type="button"
+            class="copilot-citations-toggle copilot-option-toggle"
+            :aria-pressed="showCitations"
+            @click="emit('update:showCitations', !showCitations)"
+          >
+            <Quote
+              :size="14"
+              aria-hidden="true"
+            />
+            <span>{{ t('insight.copilot.showCitations') }}</span>
+          </button>
+          <CopilotDeepThinkingToggle
+            :model-value="deepThinking || false"
+            :disabled="disabled"
+            @update:model-value="emit('update:deepThinking', $event)"
+          />
+        </div>
 
         <button
           v-if="sending"
           type="button"
           class="copilot-send-btn copilot-send-btn--stop"
           :disabled="!canStop"
-          :title="t('common.stop')"
           :aria-label="t('common.stop')"
           @click="emit('stop')"
         >
-          <Square :size="14" />
+          <Square :size="12" />
         </button>
         <button
           v-else
@@ -257,12 +273,11 @@ onBeforeUnmount(() => {
           class="copilot-send-btn"
           :class="{ 'is-active': canSend }"
           :disabled="!canSend"
-          :title="t('insight.copilot.send')"
           :aria-label="t('insight.copilot.send')"
           @click="submit"
         >
           <ArrowUp
-            :size="18"
+            :size="16"
             :stroke-width="2.25"
           />
         </button>
@@ -274,6 +289,8 @@ onBeforeUnmount(() => {
     </p>
   </footer>
 </template>
+
+<style scoped src="./copilotOptionToggle.css" />
 
 <style scoped>
 .copilot-composer {
@@ -293,7 +310,7 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 860px;
   flex-direction: column;
-  min-height: 58px;
+  min-height: 96px;
   margin: 0 auto;
   padding: 8px;
   pointer-events: auto;
@@ -412,18 +429,29 @@ onBeforeUnmount(() => {
   color: var(--color-text-primary);
 }
 
-.copilot-input-row {
+.copilot-composer-toolbar {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.copilot-composer-options {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .copilot-input-field {
-  flex: 1;
+  display: block;
+  width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   max-height: 200px;
-  padding: 9px 2px;
+  padding: 8px;
   margin: 0;
   border: none;
   outline: none;
@@ -446,9 +474,9 @@ onBeforeUnmount(() => {
 .copilot-attach-btn,
 .copilot-send-btn {
   display: inline-flex;
-  width: 44px;
-  height: 44px;
-  flex: 0 0 44px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   align-items: center;
   justify-content: center;
   padding: 0;

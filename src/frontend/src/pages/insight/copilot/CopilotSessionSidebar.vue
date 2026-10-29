@@ -206,12 +206,10 @@ function handleAction(command: string, row: SessionRow) {
               <span
                 v-if="editingId !== row.id"
                 class="copilot-session-item__title"
-                :title="sessionTitle(row)"
               >{{ sessionTitle(row) }}</span>
             </div>
             <span
               class="copilot-session-item__meta"
-              :title="sessionMeta(row)"
             >{{ sessionMeta(row) }}</span>
           </div>
 
@@ -226,27 +224,22 @@ function handleAction(command: string, row: SessionRow) {
               <span
                 v-if="sessionCleanupBlocked(row)"
                 class="copilot-session-item__state is-failed"
-                :title="t('insight.copilot.sessionRecoveryAttention')"
               ><AlertCircle :size="14" /></span>
               <span
                 v-else-if="row.lifecycle_status === 'provisioning' || sessionIsRecovering(row)"
                 class="copilot-session-item__state is-preparing"
-                :title="sessionIsRecovering(row) ? t('insight.copilot.sessionRecovering') : t('insight.copilot.sessionPreparing')"
               ><i /><i /><i /></span>
               <span
                 v-else-if="row.lifecycle_status === 'failed'"
                 class="copilot-session-item__state is-failed"
-                :title="t('insight.copilot.sessionPreparationFailed')"
               ><AlertCircle :size="14" /></span>
               <span
                 v-else-if="sessionIsRunning(row)"
                 class="copilot-session-item__state is-running"
-                :title="t('insight.copilot.sessionAnswering')"
               />
               <span
                 v-else-if="sessionHasUnread(row)"
                 class="copilot-session-item__state is-unread"
-                :title="t('insight.copilot.unreadAnswer')"
               />
             </span>
             <div class="copilot-session-item__actions">
@@ -286,7 +279,6 @@ function handleAction(command: string, row: SessionRow) {
                       command="share"
                       :icon="Share2"
                       :disabled="!sessionHasShareableAnswer(row)"
-                      :title="!sessionHasShareableAnswer(row) ? t('insight.copilot.shareUnavailable') : ''"
                     >
                       {{ t('insight.copilot.share') }}
                     </ElDropdownItem>

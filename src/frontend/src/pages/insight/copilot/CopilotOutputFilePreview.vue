@@ -225,7 +225,6 @@ onBeforeUnmount(() => {
             <button
               v-if="kind === 'html'"
               type="button"
-              :title="showSource ? t('insight.copilot.outputFilePreview') : t('insight.copilot.outputFileViewSource')"
               :aria-label="showSource ? t('insight.copilot.outputFilePreview') : t('insight.copilot.outputFileViewSource')"
               @click="showSource = !showSource"
             >
@@ -233,7 +232,6 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              :title="fullscreen ? t('insight.copilot.outputFileExitFullscreen') : t('insight.copilot.outputFileFullscreen')"
               :aria-label="fullscreen ? t('insight.copilot.outputFileExitFullscreen') : t('insight.copilot.outputFileFullscreen')"
               @click="toggleFullscreen"
             >
@@ -247,7 +245,6 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              :title="t('insight.copilot.outputFileDownload')"
               :aria-label="t('insight.copilot.outputFileDownload')"
               @click="download"
             >
@@ -255,7 +252,6 @@ onBeforeUnmount(() => {
             </button>
             <button
               type="button"
-              :title="t('common.close')"
               :aria-label="t('common.close')"
               @click="close"
             >

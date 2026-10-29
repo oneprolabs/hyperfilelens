@@ -48,6 +48,8 @@ import {
   type LensSessionLink,
 } from '../../lib/lensApi'
 import CopilotComposer from './copilot/CopilotComposer.vue'
+import { useChatComposerPreferences } from './copilot/useChatComposerPreferences'
+import { currentUser, getEffectiveOrgKey } from '../../composables/useAuth'
 import CopilotContextBar from './copilot/CopilotContextBar.vue'
 import CopilotEmptyState, { type CopilotEmptyPhase, type CopilotReadiness } from './copilot/CopilotEmptyState.vue'
 import CopilotLifecycleState from './copilot/CopilotLifecycleState.vue'
@@ -111,7 +113,6 @@ const sharedRunsBySession = ref<Record<number, string[]>>({})
 const executionSettingsOpen = ref(false)
 const messagesBySession = ref<Record<number, CopilotDisplayMessage[]>>({})
 const input = ref('')
-const deepThinking = ref(false)
 const composerAttachments = ref<CopilotComposerAttachment[]>([])
 const retryDraft = ref<CopilotRetryDraft | null>(null)
 const composerHeight = ref(176)
@@ -318,6 +319,12 @@ const chatReadyAssistants = computed(() => assistants.value.filter(isAssistantCh
 const activeSession = computed(() =>
   sessions.value.find((row) => row.id === activeSessionId.value) ?? null,
 )
+const { showCitations, deepThinking, forgetChatPreferences } = useChatComposerPreferences({
+  userId: () => currentUser.value?.id ?? null,
+  orgKey: () => getEffectiveOrgKey(),
+  chatId: () => activeSessionId.value,
+  defaultDeepThinking: () => activeSession.value?.analysis_mode === 'deep',
+})
 
 const activeAssistant = computed((): LensCopilotAssistant | null => {
   const session = activeSession.value
@@ -616,6 +623,7 @@ async function pollSessionLifecycle(sessionId: number) {
         refreshPollerSessions()
         const current = sessions.value.find((row) => row.id === sessionId)
         if (!current) {
+          forgetChatPreferences(sessionId)
           copilotStore.detachSessionStream(sessionId)
           const copy = { ...messagesBySession.value }
           delete copy[sessionId]
@@ -642,7 +650,10 @@ async function pollSessionLifecycle(sessionId: number) {
           }
           return
         }
-        if (current.lifecycle_status === 'deleted') return
+        if (current.lifecycle_status === 'deleted') {
+          forgetChatPreferences(sessionId)
+          return
+        }
         if (current.lifecycle_status === 'failed' && !sessionCleanupInProgress(current)) return
         const fingerprint = [
           current.lifecycle_status,
@@ -884,6 +895,7 @@ async function confirmDeleteSession() {
     deleteOpen.value = false
     deleteTarget.value = null
     if (deleteMode.value === 'force' || updated.lifecycle_status === 'deleted') {
+      forgetChatPreferences(row.id)
       copilotStore.detachSessionStream(row.id)
       sessions.value = sessions.value.filter((item) => item.id !== row.id)
       const copy = { ...messagesBySession.value }
@@ -1347,9 +1359,8 @@ async function refreshSharedRun(sessionId: number) {
 }
 
 watch(
-  () => [activeSessionId.value, activeSession.value?.analysis_mode],
-  ([sessionId, analysisMode]) => {
-    deepThinking.value = analysisMode === 'deep'
+  [() => activeSessionId.value, () => activeSession.value?.analysis_mode],
+  ([sessionId]) => {
     retryDraft.value = null
     if (typeof sessionId !== 'number') return
     void refreshSharedRun(sessionId)
@@ -1496,6 +1507,7 @@ onUnmounted(() => {
             ref="messageListRef"
             :session-id="activeSessionId ?? 0"
             :messages="activeMessages"
+            :show-citations="showCitations"
             :streaming="showLiveStream"
             :streaming-content="activeStream?.partialAnswer ?? ''"
             :streaming-thinking="activeStream?.thinkingSteps ?? []"
@@ -1516,6 +1528,7 @@ onUnmounted(() => {
 
           <CopilotComposer
             v-model="input"
+            v-model:show-citations="showCitations"
             :attachments="composerAttachments"
             :sending="runInProgress"
             :can-stop="runCanStop"

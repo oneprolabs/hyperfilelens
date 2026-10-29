@@ -325,14 +325,12 @@ onBeforeUnmount(() => {
               :href="shareUrl"
               target="_blank"
               rel="noopener"
-              :title="shareUrl"
             >
               <span>{{ shareUrl }}</span>
             </a>
             <button
               type="button"
               :aria-label="t('insight.copilot.shareCopyLink')"
-              :title="t('insight.copilot.shareCopyLink')"
               @click="copyLink"
             >
               <component
