@@ -83,6 +83,9 @@ def create_user_organization(request: Any, *, name: str) -> Organization:
     from apps.iam.services.role_seeding import seed_organization_roles
 
     seed_organization_roles(org)
+    from apps.alert.services.defaults import ensure_default_organization_alert_rules
+
+    ensure_default_organization_alert_rules(org)
     audit_services.write_audit_log_from_request(
         request,
         organization=org,

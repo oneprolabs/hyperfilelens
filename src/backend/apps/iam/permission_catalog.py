@@ -43,17 +43,17 @@ _RESOURCES = (
         "Members",
         ("view", "manage", "assign_role", "remove"),
     ),
-    ("configuration", "roles", "Roles", ("view", "manage", "delete")),
     (
         "configuration",
         "groups",
         "Groups",
         ("view", "manage", "delete", "manage_members", "manage_resources"),
     ),
+    ("configuration", "roles", "Roles", ("view", "manage", "delete")),
     (
         "configuration",
         "resources",
-        "Resource Directory",
+        "Resources",
         ("view", "access_all", "change_owner"),
     ),
     ("configuration", "subscriptions", "Subscription", ("view",)),
@@ -104,16 +104,16 @@ _RESOURCES = (
         ("view", "manage", "run", "cancel", "delete"),
     ),
     ("protection", "backup_data", "Backup Data", ("browse", "download", "delete")),
+    # Match tenant Insights nav order: AI Copilot → Request History → Data Gateways.
+    # AI Models belong to Admin Console; Insight Reports are not tenant-ready.
+    ("insights", "chats", "AI Copilot", ("view", "use", "share", "delete")),
+    ("insights", "usage", "Request History", ("view",)),
     (
         "insights",
         "private_data_gateways",
-        "Private Data Gateways",
+        "Data Gateways",
         ("view", "manage", "upgrade", "use", "delete"),
     ),
-    ("insights", "chats", "Chats", ("view", "use", "share", "delete")),
-    ("insights", "ai_models", "AI Models", ("view", "manage", "delete")),
-    ("insights", "reports", "Insight Reports", ("view", "manage", "delete")),
-    ("insights", "usage", "Insight Usage", ("view",)),
     ("operations", "host_monitoring", "Host Monitoring", ("view",)),
     ("operations", "tasks", "Tasks", ("view",)),
     ("operations", "events", "Events", ("view",)),
@@ -148,13 +148,13 @@ _NAMES = {
     "configuration.members.remove": "Remove Members",
     "configuration.groups.manage_members": "Manage Group Members",
     "configuration.groups.manage_resources": "Manage Group Resources",
-    "configuration.resources.access_all": "Access All Organization Resources",
-    "configuration.resources.change_owner": "Change Resource Owner",
+    "configuration.resources.access_all": "Access All Resources",
+    "configuration.resources.change_owner": "Change Owner",
     "protection.backup_configurations.run": "Run Backups",
     "protection.backup_configurations.cancel": "Cancel Backups",
     "protection.restore_plans.run": "Run Restores",
     "protection.restore_plans.cancel": "Cancel Restores",
-    "insights.chats.use": "Use Chat",
+    "insights.chats.use": "Use AI Copilot",
     "insights.chats.share": "Share Q&A",
 }
 GROUP_CONFIGURATION_ACTIONS = frozenset(
@@ -177,9 +177,6 @@ SENSITIVE_ACTIONS = frozenset(
         "protection.backup_data.download",
         "protection.backup_data.delete",
         "insights.chats.share",
-        "insights.ai_models.manage",
-        "insights.ai_models.delete",
-        "insights.reports.delete",
     }
 )
 
@@ -195,7 +192,6 @@ def _build_catalog() -> dict[str, Permission]:
                     module == "configuration"
                     and key not in GROUP_CONFIGURATION_ACTIONS
                     or key == "insights.usage.view"
-                    or resource == "ai_models"
                     or resource == "tags"
                     and action in ("manage", "delete")
                 )

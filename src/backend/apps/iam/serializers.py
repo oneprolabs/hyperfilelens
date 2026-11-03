@@ -32,21 +32,9 @@ class OrganizationSerializer(serializers.ModelSerializer):
         }
 
     def get_owner_email(self, obj):
-        from common.extension_spi import get_authz_provider
+        from apps.iam.services.organization_owner import resolve_organization_owner_email
 
-        provider = get_authz_provider()
-        if provider is not None:
-            email = provider.resolve_owner_email(obj)
-            if email:
-                return email
-        # Community: sole / first active affiliation.
-        owner = (
-            obj.memberships.filter(is_active=True)
-            .select_related("user")
-            .order_by("id")
-            .first()
-        )
-        return owner.user.email if owner else None
+        return resolve_organization_owner_email(obj)
 
     def get_member_count(self, obj):
         count = getattr(obj, "member_count", None)

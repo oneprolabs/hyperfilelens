@@ -24,6 +24,12 @@ export type AlertPolicy = {
   notification_channel_ids?: number[]
   notificationChannels?: Array<{ id: number; name: string; type: string; enabled: boolean }>
   notification_channels?: Array<{ id: number; name: string; type: string; enabled: boolean }>
+  defaultKey?: string | null
+  default_key?: string | null
+  isDefault?: boolean
+  is_default?: boolean
+  defaultModified?: boolean
+  default_modified?: boolean
   createdAt?: string
   created_at?: string
   updatedAt?: string
@@ -156,6 +162,46 @@ export async function bulkDeletePolicies(ids: string[]) {
 export async function duplicatePolicy(id: string) {
   return unwrapApiPayload<AlertPolicy>(
     await api<unknown>(`${base}/policies/${id}/duplicate/`, { method: 'POST', body: '{}' }),
+  )
+}
+
+export type RestoreDefaultPolicyAction = 'create' | 'restore'
+
+export type RestoreDefaultPolicyPreviewItem = {
+  default_key: string
+  name: string
+  action: RestoreDefaultPolicyAction
+}
+
+export type RestoreDefaultPolicyPreview = {
+  items: RestoreDefaultPolicyPreviewItem[]
+  created: number
+  restored: number
+  unchanged: number
+  total: number
+}
+
+export async function previewRestoreDefaultPolicies() {
+  return unwrapApiPayload<RestoreDefaultPolicyPreview>(
+    await api<unknown>(`${base}/policies/restore-defaults-preview/`),
+  )
+}
+
+export async function restoreDefaultPolicies() {
+  return unwrapApiPayload<{ created: number; restored: number; unchanged: number; total: number }>(
+    await api<unknown>(`${base}/policies/restore-defaults/`, {
+      method: 'POST',
+      body: '{}',
+    }),
+  )
+}
+
+export async function restoreDefaultPolicy(id: string) {
+  return unwrapApiPayload<{ policy: AlertPolicy }>(
+    await api<unknown>(`${base}/policies/${id}/restore-default/`, {
+      method: 'POST',
+      body: '{}',
+    }),
   )
 }
 

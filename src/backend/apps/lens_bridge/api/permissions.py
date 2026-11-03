@@ -36,7 +36,7 @@ class CanUseInsights(IsOrgAuthorizedMember):
 
 
 class OrganizationModelPermission(permissions.BasePermission):
-    """Organization model configuration is not Chat use or Group authority."""
+    """Tenant model configuration belongs to Admin Console, not tenant roles."""
 
     def has_permission(self, request, view) -> bool:
         if get_authz_provider() is None:
@@ -47,13 +47,7 @@ class OrganizationModelPermission(permissions.BasePermission):
             return False
         if getattr(request, "hfl_support_readonly", False):
             return request.method in permissions.SAFE_METHODS
-        action = (
-            "view" if request.method in permissions.SAFE_METHODS
-            else "delete" if request.method == "DELETE" else "manage"
-        )
-        context = request_authorization(request, fresh=request.method not in permissions.SAFE_METHODS)
-        return bool(context and context.has_org_action(f"insights.ai_models.{action}") and
-                    context.fence_queryset(Organization.objects.filter(pk=membership.organization_id)).exists())
+        return False
 
 
 def lock_model_authority(request, view) -> None:

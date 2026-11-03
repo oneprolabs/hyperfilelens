@@ -15,6 +15,7 @@ import {
   Trash2,
 } from 'lucide-vue-next'
 import { ElAlert, ElMessage } from 'element-plus'
+import '../../components/backupSourceFlowActionDialog.css'
 import ModulePage from '../../components/ModulePage.vue'
 import OpsStatCard from '../../components/ops/OpsStatCard.vue'
 import HflStatusTag from '../../components/HflStatusTag.vue'
@@ -43,8 +44,11 @@ import {
   getPolicy,
   listPolicies,
   policyStatistics,
+  previewRestoreDefaultPolicies,
+  restoreDefaultPolicies,
   type AlertPolicy,
   type AlertPolicyResource,
+  type RestoreDefaultPolicyPreviewItem,
 } from '../../lib/alertApi'
 import DangerConfirmDialog, {
   type DangerConfirmItem,
@@ -122,6 +126,10 @@ const pendingDangerAction = ref<PendingPolicyDangerAction | null>(null)
 const dangerDialogOpen = ref(false)
 const dangerDialogLoading = ref(false)
 const dangerDialogSource = ref<'row' | 'drawer' | 'batch' | null>(null)
+const restoreDefaultsOpen = ref(false)
+const restoreDefaultsLoading = ref(false)
+const restoreDefaultsPreviewLoading = ref(false)
+const restoreDefaultsItems = ref<RestoreDefaultPolicyPreviewItem[]>([])
 
 function channelLabel(policy: AlertPolicy) {
   const list = policy.notificationChannels || policy.notification_channels || []
@@ -232,6 +240,74 @@ const drawerNotifyRows = computed(() => (
 
 function alertPolicyNameMeta(policy: AlertPolicy) {
   return policy.description?.trim() || ''
+}
+
+function isDefaultPolicy(policy: AlertPolicy) {
+  return Boolean(policy.isDefault ?? policy.is_default ?? policy.defaultKey ?? policy.default_key)
+}
+
+function defaultPolicyStateLabel(policy: AlertPolicy) {
+  if (!isDefaultPolicy(policy)) return t('ops.alertsCenter.common.custom')
+  if (policy.defaultModified || policy.default_modified) {
+    return t('ops.alertsCenter.common.defaultModified')
+  }
+  if (!policy.enabled) return t('ops.alertsCenter.common.defaultDisabled')
+  return t('ops.alertsCenter.common.default')
+}
+
+function restoreDefaultsActionLabel(action: RestoreDefaultPolicyPreviewItem['action']) {
+  return action === 'create'
+    ? t('ops.alertsCenter.common.restoreDefaultsActionCreate')
+    : t('ops.alertsCenter.common.restoreDefaultsActionRestore')
+}
+
+async function restoreAllDefaults() {
+  if (loading.value || restoreDefaultsLoading.value || restoreDefaultsPreviewLoading.value) return
+  restoreDefaultsPreviewLoading.value = true
+  try {
+    const preview = await previewRestoreDefaultPolicies()
+    if (!preview.items.length) {
+      ElMessage.info({
+        message: t('ops.alertsCenter.common.restoreDefaultsNothingToRestore'),
+        grouping: true,
+      })
+      return
+    }
+    restoreDefaultsItems.value = preview.items
+    restoreDefaultsOpen.value = true
+  } catch (error: unknown) {
+    ElMessage.error({ message: apiErrorMessageI18n(error, t), grouping: true })
+  } finally {
+    restoreDefaultsPreviewLoading.value = false
+  }
+}
+
+function closeRestoreDefaultsDialog() {
+  if (restoreDefaultsLoading.value) return
+  restoreDefaultsOpen.value = false
+  restoreDefaultsItems.value = []
+}
+
+async function confirmRestoreDefaults() {
+  if (!restoreDefaultsOpen.value || restoreDefaultsLoading.value || !restoreDefaultsItems.value.length) return
+  restoreDefaultsLoading.value = true
+  try {
+    const result = await restoreDefaultPolicies()
+    restoreDefaultsOpen.value = false
+    restoreDefaultsItems.value = []
+    await loadPolicies()
+    ElMessage.success({
+      message: t('ops.alertsCenter.common.restoreDefaultsSuccess', {
+        created: result.created,
+        restored: result.restored,
+      }),
+      grouping: true,
+    })
+  } catch (error: unknown) {
+    ElMessage.error({ message: apiErrorMessageI18n(error, t), grouping: true })
+  } finally {
+    restoreDefaultsLoading.value = false
+  }
 }
 
 async function loadPolicies() {
@@ -687,6 +763,19 @@ watch(
                 </el-dropdown-item>
                 <el-dropdown-item
                   divided
+                  :disabled="loading || restoreDefaultsPreviewLoading || restoreDefaultsLoading || !resourcePermissions.canCreate('alert_policy')"
+                  @click="restoreAllDefaults"
+                >
+                  <span class="el-dropdown-menu__item-content">
+                    <RefreshCw
+                      :size="14"
+                      class="shrink-0"
+                    />
+                    <span>{{ t('ops.alertsCenter.common.resetDefaultRules') }}</span>
+                  </span>
+                </el-dropdown-item>
+                <el-dropdown-item
+                  divided
                   class="el-dropdown-menu__item--danger"
                   :disabled="moreBatchDisabled"
                   @click="runBatchDelete"
@@ -811,6 +900,13 @@ watch(
                       >
                         {{ row.name }}
                       </button>
+                      <el-tag
+                        v-if="isDefaultPolicy(row)"
+                        size="small"
+                        effect="plain"
+                      >
+                        {{ defaultPolicyStateLabel(row) }}
+                      </el-tag>
                     </div>
                     <div
                       v-if="alertPolicyNameMeta(row)"
@@ -1216,11 +1312,86 @@ watch(
         show-icon
       />
     </DangerConfirmDialog>
+
+    <el-dialog
+      v-model="restoreDefaultsOpen"
+      class="hfl-flow-action-dialog hfl-flow-action-dialog--confirm alert-restore-defaults-dialog"
+      :title="t('ops.alertsCenter.common.restoreDefaultsTitle')"
+      width="min(760px, 92vw)"
+      align-center
+      append-to-body
+      destroy-on-close
+      :close-on-click-modal="!restoreDefaultsLoading"
+      :close-on-press-escape="!restoreDefaultsLoading"
+      :show-close="!restoreDefaultsLoading"
+      @closed="restoreDefaultsItems = []"
+    >
+      <div class="alert-restore-defaults-content">
+        <div class="alert-restore-defaults-table-wrap">
+          <table
+            class="hfl-dialog-resource-table alert-restore-defaults-table"
+            :aria-label="t('ops.alertsCenter.common.restoreDefaultsTitle')"
+          >
+            <thead>
+              <tr>
+                <th scope="col">
+                  {{ t('ops.alertsCenter.common.restoreDefaultsName') }}
+                </th>
+                <th scope="col">
+                  {{ t('ops.alertsCenter.common.restoreDefaultsAction') }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="item in restoreDefaultsItems"
+                :key="item.default_key"
+              >
+                <td>{{ item.name }}</td>
+                <td>{{ restoreDefaultsActionLabel(item.action) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <ElAlert
+          type="warning"
+          :title="t('ops.alertsCenter.common.restoreDefaultsMessage')"
+          :closable="false"
+        />
+      </div>
+      <template #footer>
+        <el-button
+          :disabled="restoreDefaultsLoading"
+          @click="closeRestoreDefaultsDialog"
+        >
+          {{ t('common.cancel') }}
+        </el-button>
+        <el-button
+          type="danger"
+          :loading="restoreDefaultsLoading"
+          :disabled="restoreDefaultsLoading || !restoreDefaultsItems.length"
+          @click="confirmRestoreDefaults"
+        >
+          {{ t('ops.alertsCenter.common.restoreDefaultsConfirm') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </ModulePage>
 </template>
 
 <style scoped>
 .alert-policy-delete-warning { margin-top: 12px; }
+.alert-restore-defaults-content { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
+.alert-restore-defaults-table-wrap { overflow: hidden; border: 1px solid var(--el-border-color-lighter); border-radius: 8px; }
+.alert-restore-defaults-table { table-layout: fixed; color: var(--el-text-color-regular); }
+.alert-restore-defaults-table th { font-size: 12px; font-weight: 500; }
+.alert-restore-defaults-table td { font-size: 13px; font-weight: 400; }
+.alert-restore-defaults-table th:last-child,
+.alert-restore-defaults-table td:last-child { width: 120px; text-align: right; }
+.alert-restore-defaults-table td:first-child { overflow-wrap: anywhere; }
+.alert-restore-defaults-content :deep(.el-alert__title) { font-size: 13px; font-weight: 400; line-height: 1.6; }
+:global(.alert-restore-defaults-dialog) { font-family: var(--font-sans, "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif); }
+:global(.alert-restore-defaults-dialog .el-dialog__header) { flex: 0 0 auto; }
 .hfl-alert-policy-table :deep(.el-table__body td.el-table__cell > .cell) {
   display: flex;
   min-height: 34px;

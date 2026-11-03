@@ -20,7 +20,11 @@ from apps.lens_bridge.models import LensOrgModelLink
 from apps.lens_bridge.services import org_models, sl_client
 from apps.lens_bridge.services.model_defaults import get_model_defaults
 from common.errors import AppError
-from common.platform_authz import INFRA_AI_MODELS_MANAGE
+from common.platform_authz import (
+    AI_ENGINE_AI_MODELS_MANAGE,
+    AI_ENGINE_AI_MODELS_DELETE,
+    AI_ENGINE_AI_MODELS_VIEW,
+)
 
 
 def _reject_client_config_reference(body: dict) -> None:
@@ -162,7 +166,13 @@ def _set_platform_default_model_ref(
 class PlatformOpsLensSettingsView(APIView):
     """Read and update platform-wide Agent and multimodal defaults."""
 
-    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
+    def get_permissions(self):
+        action = (
+            AI_ENGINE_AI_MODELS_VIEW
+            if self.request.method in {"GET", "HEAD", "OPTIONS"}
+            else AI_ENGINE_AI_MODELS_MANAGE
+        )
+        return [HasPlatformPermission.for_actions(action)()]
 
     def get(self, request):
         link = get_model_defaults(None)
@@ -201,7 +211,14 @@ class PlatformOpsLensSettingsView(APIView):
 class PlatformOpsLensModelProxyView(APIView):
     """Admin Console: AI models owned by the platform."""
 
-    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
+    def get_permissions(self):
+        if self.request.method in {"GET", "HEAD", "OPTIONS"}:
+            action = AI_ENGINE_AI_MODELS_VIEW
+        elif self.request.method == "DELETE":
+            action = AI_ENGINE_AI_MODELS_DELETE
+        else:
+            action = AI_ENGINE_AI_MODELS_MANAGE
+        return [HasPlatformPermission.for_actions(action)()]
 
     def get(self, request, config_uuid=None):
         url_name = getattr(request.resolver_match, "url_name", "")

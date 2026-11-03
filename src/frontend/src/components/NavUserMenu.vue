@@ -115,7 +115,7 @@ async function confirmLogout() {
     ref="popoverRef"
     trigger="click"
     placement="bottom-end"
-    :width="360"
+    :width="300"
     :show-arrow="false"
     :effect="theme === 'light' ? 'light' : 'dark'"
     popper-class="nav-dropdown-popover"
@@ -140,7 +140,7 @@ async function confirmLogout() {
     </template>
 
     <div class="nav-dropdown-panel">
-      <header class="nav-dropdown-panel__head">
+      <header class="nav-dropdown-panel__head nav-dropdown-panel__head--stacked">
         <h3 class="nav-dropdown-panel__title nav-user-menu__email">
           {{ email }}
         </h3>
@@ -243,15 +243,16 @@ async function confirmLogout() {
 }
 
 .nav-user-menu__email {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: block;
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .nav-user-menu__role {
-  flex: 0 0 auto;
-  align-self: center;
+  flex: 0 1 auto;
+  max-width: 100%;
 }
 
 .nav-user-trigger {

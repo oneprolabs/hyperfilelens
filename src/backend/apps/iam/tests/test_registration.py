@@ -265,6 +265,15 @@ class RegistrationServiceTests(APITestCase):
 
         self.assertEqual(org1.id, org2.id)
         self.assertEqual(membership1.id, membership2.id)
+        from apps.alert.models import AlertPolicy
+
+        self.assertEqual(
+            AlertPolicy.objects.filter(
+                organization=org1,
+                default_key__isnull=False,
+            ).count(),
+            7,
+        )
 
     def test_complete_user_registration_creates_unique_org_from_email(self):
         email = "unique-org@example.com"

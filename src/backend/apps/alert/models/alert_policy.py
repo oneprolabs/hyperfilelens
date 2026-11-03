@@ -21,6 +21,14 @@ class AlertPolicy(models.Model):
         null=True,
         blank=True,
     )
+    # Stable identifier for a product-provided rule.  A null value denotes a
+    # user-created policy; default rules remain ordinary editable policies.
+    default_key = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        db_index=True,
+    )
     owner_scope = models.CharField(
         max_length=16,
         choices=ResourceScope.choices,
@@ -62,6 +70,22 @@ class AlertPolicy(models.Model):
             models.Index(fields=["owner_scope", "enabled"], name="alert_pol_owner_en_idx"),
         ]
         constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "default_key"],
+                condition=(
+                    models.Q(owner_scope=ResourceScope.ORGANIZATION)
+                    & models.Q(default_key__isnull=False)
+                ),
+                name="alert_pol_org_default_key_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["default_key"],
+                condition=(
+                    models.Q(owner_scope=ResourceScope.PLATFORM)
+                    & models.Q(default_key__isnull=False)
+                ),
+                name="alert_pol_platform_default_key_uniq",
+            ),
             models.CheckConstraint(
                 condition=(
                     models.Q(owner_scope=ResourceScope.ORGANIZATION, organization__isnull=False)

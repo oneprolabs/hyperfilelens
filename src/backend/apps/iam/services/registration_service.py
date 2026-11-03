@@ -125,6 +125,9 @@ def provision_registered_user_tenant(user: User) -> tuple[Organization, Membersh
     from apps.iam.services.role_seeding import seed_organization_roles
 
     seed_organization_roles(org)
+    from apps.alert.services.defaults import ensure_default_organization_alert_rules
+
+    ensure_default_organization_alert_rules(org)
     return org, membership
 
 

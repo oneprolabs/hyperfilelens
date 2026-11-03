@@ -7,10 +7,19 @@ import logging
 from django.utils import timezone
 
 from apps.alert.models import AlertPolicy, AlertRecord
+from apps.alert.services.internal.alert_email import (
+    build_alert_email_model,
+    send_organization_alert_email,
+)
+from apps.configuration.services.runtime_settings import email_delivery_configured
+from apps.iam.models import Organization
+from apps.iam.services.organization_owner import resolve_organization_owner_user
 from apps.notification.constants import NotificationLogStatus as NotifyStatus
 from apps.notification.constants import NotificationLogType as NotifyType
 from apps.notification.models import NotificationChannel, NotificationDelivery, NotificationLog
 from apps.notification.services.interface import attempt_delivery
+from common.platform_staff import has_installation_identity
+from common.resource_scope import ResourceScope
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +62,125 @@ def _payload_for_alert(alert: AlertRecord, *, resolved: bool) -> dict:
     }
 
 
+def _mark_notified(
+    alert: AlertRecord,
+    *,
+    extra: dict | None = None,
+    touch_last_notification: bool = True,
+) -> None:
+    metadata = dict(alert.metadata or {})
+    if touch_last_notification:
+        metadata["last_notification_at"] = timezone.now().isoformat()
+    if extra:
+        metadata.update(extra)
+    alert.metadata = metadata
+    alert.save(update_fields=["metadata", "updated_at"])
+
+
+def _owner_fallback_eligible(alert: AlertRecord, policy: AlertPolicy | None) -> bool:
+    if policy is None or not policy.default_key:
+        return False
+    if alert.owner_scope != ResourceScope.ORGANIZATION or not alert.organization_id:
+        return False
+    return True
+
+
+def _send_owner_email_fallback(alert: AlertRecord, *, resolved: bool) -> None:
+    """Email the organization Owner for unbound org default rules."""
+    policy = _policy_for_alert(alert)
+    if not _owner_fallback_eligible(alert, policy):
+        return
+    if not email_delivery_configured():
+        logger.info(
+            "org default alert skip owner email: email service not configured alert=%s",
+            alert.id,
+        )
+        return
+
+    organization = Organization.objects.filter(id=alert.organization_id).first()
+    if organization is None:
+        return
+    owner = resolve_organization_owner_user(organization)
+    if owner is None:
+        logger.warning(
+            "org default alert skip owner email: no owner org=%s alert=%s",
+            organization.key,
+            alert.id,
+        )
+        return
+    if has_installation_identity(owner):
+        logger.info(
+            "org default alert skip owner email: owner is installation admin org=%s alert=%s",
+            organization.key,
+            alert.id,
+        )
+        return
+    recipient = str(getattr(owner, "email", "") or "").strip()
+    if not recipient:
+        logger.warning(
+            "org default alert skip owner email: no owner email org=%s alert=%s",
+            organization.key,
+            alert.id,
+        )
+        return
+
+    try:
+        email_model = build_alert_email_model(
+            title=str(alert.title or (policy.name if policy else "") or "Alert"),
+            severity=str(alert.severity or ""),
+            resolved=resolved,
+            organization_name=organization.name or "",
+            organization_key=organization.key or "",
+            rule_name=str((policy.name if policy else "") or alert.title or ""),
+            resource_type=str(alert.resource_type or ""),
+            resource_name=str(alert.resource_name or ""),
+            resource_id=str(alert.resource_id or ""),
+            message=str(alert.message or ""),
+            metadata=dict(alert.metadata or {}),
+            current_value=alert.current_value,
+            threshold_value=alert.threshold_value,
+            unit=str(alert.unit or ""),
+            first_triggered_at=alert.first_triggered_at or alert.created_at,
+            resolved_at=alert.resolved_at,
+        )
+        send_organization_alert_email(recipient=recipient, model=email_model)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "org default alert owner email failed alert=%s recipient=%s",
+            alert.id,
+            recipient,
+        )
+        _mark_notified(
+            alert,
+            extra={
+                "owner_email_fallback": {
+                    "status": "failed",
+                    "recipient": recipient,
+                    "resolved": resolved,
+                }
+            },
+            touch_last_notification=False,
+        )
+        return
+
+    _mark_notified(
+        alert,
+        extra={
+            "owner_email_fallback": {
+                "status": "sent",
+                "recipient": recipient,
+                "resolved": resolved,
+            }
+        },
+    )
+
+
 def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
     channel_ids = _channel_ids_for_alert(alert)
     if not channel_ids:
+        _send_owner_email_fallback(alert, resolved=resolved)
         return
+
     event_type = "alert.resolved" if resolved else "alert.firing"
     notification_type = NotifyType.RESOLVED if resolved else NotifyType.FIRING
     payload = _payload_for_alert(alert, resolved=resolved)
@@ -100,10 +224,7 @@ def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
             payload=payload,
         )
 
-    metadata = dict(alert.metadata or {})
-    metadata["last_notification_at"] = timezone.now().isoformat()
-    alert.metadata = metadata
-    alert.save(update_fields=["metadata", "updated_at"])
+    _mark_notified(alert)
 
 
 def send_notification(alert: AlertRecord) -> None:

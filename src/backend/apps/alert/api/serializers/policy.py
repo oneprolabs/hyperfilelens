@@ -20,6 +20,8 @@ _DEFAULT_EVALUATION_INTERVAL_SECONDS = 60
 class AlertPolicySerializer(serializers.ModelSerializer):
     notification_channels = serializers.SerializerMethodField(read_only=True)
     monitoring_resources = serializers.SerializerMethodField(read_only=True)
+    is_default = serializers.SerializerMethodField(read_only=True)
+    default_modified = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = AlertPolicy
@@ -39,6 +41,9 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             "notification_channel_ids",
             "notification_channels",
             "monitoring_resources",
+            "default_key",
+            "is_default",
+            "default_modified",
             "last_evaluated_at",
             "created_by",
             "created_at",
@@ -52,6 +57,9 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             "updated_at",
             "notification_channels",
             "monitoring_resources",
+            "default_key",
+            "is_default",
+            "default_modified",
             "last_evaluated_at",
         ]
 
@@ -391,6 +399,41 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             resource_type=obj.resource_type,
             resource_ids=obj.resource_ids or [],
             owner_scope=obj.owner_scope,
+        )
+
+    def get_is_default(self, obj: AlertPolicy) -> bool:
+        return bool(obj.default_key)
+
+    def get_default_modified(self, obj: AlertPolicy) -> bool:
+        if not obj.default_key:
+            return False
+        from apps.alert.services.defaults import default_catalog
+
+        definition = next(
+            (
+                item
+                for item in default_catalog(owner_scope=obj.owner_scope)
+                if item["default_key"] == obj.default_key
+            ),
+            None,
+        )
+        if definition is None:
+            return False
+        # Enabled/disabled is presented separately in the list.  Keep this
+        # flag focused on edits to the default rule definition itself.
+        return any(
+            getattr(obj, field) != definition[field]
+            for field in (
+                "name",
+                "description",
+                "type",
+                "severity",
+                "resource_type",
+                "scope",
+                "resource_ids",
+                "trigger_rule",
+                "recovery_rule",
+            )
         )
 
 

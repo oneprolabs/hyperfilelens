@@ -150,6 +150,86 @@ def test_policy_crud_and_record_actions(org_user_client):
 
 
 @pytest.mark.django_db
+def test_default_rules_are_restored_explicitly_without_touching_custom_rules(org_user_client):
+    client, org = org_user_client
+    headers = {"HTTP_X_ORG_KEY": org.key}
+
+    custom = AlertPolicy.objects.create(
+        organization=org,
+        name="Custom rule",
+        type=AlertType.TASK,
+        severity=AlertSeverity.WARNING,
+        enabled=False,
+        resource_type=ResourceType.TASK,
+        scope="all",
+        trigger_rule={"task_type": "backup", "event_type": "task_failed"},
+    )
+    preview = client.get(
+        "/api/v1/alerts/policies/restore-defaults-preview/",
+        **headers,
+    )
+    assert preview.status_code == 200, preview.content
+    assert preview.data["created"] == 7
+    assert preview.data["restored"] == 0
+    assert len(preview.data["items"]) == 7
+    assert {item["action"] for item in preview.data["items"]} == {"create"}
+
+    restore = client.post(
+        "/api/v1/alerts/policies/restore-defaults/",
+        {},
+        format="json",
+        **headers,
+    )
+    assert restore.status_code == 200, restore.content
+    assert restore.data["created"] == 7
+    assert AlertPolicy.objects.filter(organization=org, default_key__isnull=False).count() == 7
+    assert AlertPolicy.objects.get(pk=custom.pk).enabled is False
+
+    default = AlertPolicy.objects.get(
+        organization=org,
+        default_key="backup.task_failed",
+    )
+    default.enabled = False
+    default.name = "Changed by operator"
+    default.save(update_fields=["enabled", "name", "updated_at"])
+
+    preview_modified = client.get(
+        "/api/v1/alerts/policies/restore-defaults-preview/",
+        **headers,
+    )
+    assert preview_modified.status_code == 200, preview_modified.content
+    assert preview_modified.data["created"] == 0
+    assert preview_modified.data["restored"] == 1
+    assert preview_modified.data["items"] == [
+        {
+            "default_key": "backup.task_failed",
+            "name": "Backup Task Failed",
+            "action": "restore",
+        }
+    ]
+
+    single = client.post(
+        f"/api/v1/alerts/policies/{default.id}/restore-default/",
+        {},
+        format="json",
+        **headers,
+    )
+    assert single.status_code == 200, single.content
+    default.refresh_from_db()
+    assert default.enabled is True
+    assert default.name == "Backup Task Failed"
+    assert AlertPolicy.objects.get(pk=custom.pk).enabled is False
+
+    preview_clean = client.get(
+        "/api/v1/alerts/policies/restore-defaults-preview/",
+        **headers,
+    )
+    assert preview_clean.status_code == 200, preview_clean.content
+    assert preview_clean.data["items"] == []
+    assert preview_clean.data["unchanged"] == 7
+
+
+@pytest.mark.django_db
 def test_metric_policy_rejects_mismatched_node_role(org_user_client):
     client, org = org_user_client
     proxy = Node.objects.create(organization=org, name="proxy", role=NodeRole.PROXY)
