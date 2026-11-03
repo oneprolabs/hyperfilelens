@@ -313,6 +313,35 @@ export async function deletePlatformAlertPolicy(policyId: string) {
   )
 }
 
+export type RestorePlatformDefaultPolicyAction = 'create' | 'restore'
+
+export type RestorePlatformDefaultPolicyPreviewItem = {
+  default_key: string
+  name: string
+  action: RestorePlatformDefaultPolicyAction
+}
+
+export type RestorePlatformDefaultPolicyPreview = {
+  items: RestorePlatformDefaultPolicyPreviewItem[]
+  created: number
+  restored: number
+  unchanged: number
+  total: number
+}
+
+export async function previewRestorePlatformAlertDefaults() {
+  return get<RestorePlatformDefaultPolicyPreview>(
+    '/api/v1/alerts/platform-defaults/restore-preview/',
+  )
+}
+
+export async function restorePlatformAlertDefaults() {
+  return send<{ created: number; restored: number; unchanged: number; total: number }>(
+    '/api/v1/alerts/platform-defaults/restore/',
+    { method: 'POST', body: '{}' },
+  )
+}
+
 export async function fetchPlatformAlertMetadataResources(resourceType: string) {
   const data = await get<{ results: Array<{ id: string; name: string; status?: string }> }>(
     `/api/v1/platform-ops/platform/alert-policies/metadata/resources?resource_type=${encodeURIComponent(resourceType)}`,

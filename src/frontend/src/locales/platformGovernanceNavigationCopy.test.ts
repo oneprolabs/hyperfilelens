@@ -10,13 +10,19 @@ function readPack(lang: string, file: string) {
   ), 'utf8'))
 }
 
+function readMessage(messages: Record<string, unknown>, path: string) {
+  return path.split('.').reduce<unknown>((value, key) => (
+    value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined
+  ), messages)
+}
+
 describe('Admin Console governance navigation copy', () => {
   it.each(['zh-hans', 'es'])('keeps %s Platform Role editor and detail copy localized and current', (lang) => {
-    const messages = readPack(lang, 'messages.json')
+    const messages = readPack(lang, 'messages.json') as Record<string, unknown>
     const lock = readPack(lang, 'source-lock.json') as Record<string, string>
     for (const key of ['namePlaceholder', 'descriptionPlaceholder', 'permissionSearchPlaceholder', 'noPermissionsConfigured'] as const) {
       const path = `platformOps.roles.${key}`
-      const translated = messages[path] ?? messages.platformOps.roles[key]
+      const translated = readMessage(messages, path)
       expect(translated).toBeTypeOf('string')
       expect(translated.trim()).not.toBe('')
       expect(translated).not.toBe(en.platformOps.roles[key])
@@ -35,16 +41,17 @@ describe('Admin Console governance navigation copy', () => {
   })
 
   it.each(['zh-hans', 'es'])('keeps %s Add User card copy and source locks current', (lang) => {
-    const messages = readPack(lang, 'messages.json')
+    const messages = readPack(lang, 'messages.json') as Record<string, unknown>
     const lock = readPack(lang, 'source-lock.json') as Record<string, string>
     for (const key of [
       'userInformation', 'organizationAssignment', 'platformAccess',
       'noOrganizations', 'noPlatformRoles', 'addPlatformRole',
     ] as const) {
       const path = `platformOps.users.${key}`
-      expect(messages[path]).toBeTypeOf('string')
-      expect(messages[path]?.trim()).not.toBe('')
-      expect(messages[path]).not.toBe(en.platformOps.users[key])
+      const translated = readMessage(messages, path)
+      expect(translated).toBeTypeOf('string')
+      expect((translated as string)?.trim()).not.toBe('')
+      expect(translated).not.toBe(en.platformOps.users[key])
       expect(lock[path]).toBe(
         createHash('sha256').update(JSON.stringify(en.platformOps.users[key])).digest('hex'),
       )
@@ -62,7 +69,9 @@ describe('Admin Console governance navigation copy', () => {
   it.each(['zh-hans', 'es'])('keeps the %s member Name column copy and source lock current', (lang) => {
     const messages = readPack(lang, 'messages.json')
     const lock = readPack(lang, 'source-lock.json') as Record<string, string>
-    expect(messages['settings.membersPage.name']).toBe(messages.settings.groupsPage.name)
+    expect(readMessage(messages, 'settings.membersPage.name')).toBe(
+      readMessage(messages, 'settings.groupsPage.name'),
+    )
     expect(lock['settings.membersPage.name']).toBe(
       createHash('sha256').update(JSON.stringify(en.settings.membersPage.name)).digest('hex'),
     )

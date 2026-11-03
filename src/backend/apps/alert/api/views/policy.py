@@ -21,6 +21,12 @@ from apps.alert.api.views._org import require_org
 from apps.alert.selectors.interface import filter_policies, policies_for_org
 from apps.alert.selectors.stats import policy_statistics
 from apps.alert.services.internal.policy_bulk import bulk_delete_policies, bulk_set_policy_state
+from apps.alert.services.defaults import (
+    preview_restore_default_alert_rules,
+    restore_default_alert_rules,
+)
+from apps.alert.models import AlertPolicy
+from common.resource_scope import ResourceScope
 
 
 class _AlertPolicyViewSetBase(viewsets.ModelViewSet):
@@ -156,6 +162,7 @@ class _AlertPolicyViewSetBase(viewsets.ModelViewSet):
             policy.pk = None
             policy.id = uuid.uuid4()
             policy.name = f"{policy.name} Copy"
+            policy.default_key = None
             if request.user.is_authenticated:
                 policy.created_by = request.user.id
             policy.save()
@@ -174,6 +181,53 @@ class _AlertPolicyViewSetBase(viewsets.ModelViewSet):
                 metadata={"name": policy.name, "source": "duplicate"},
             )
         return Response(self.get_serializer(policy).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["get"], url_path="restore-defaults-preview")
+    def restore_defaults_preview(self, request):
+        org = require_org(request)
+        return Response(
+            preview_restore_default_alert_rules(
+                owner_scope=ResourceScope.ORGANIZATION,
+                organization=org,
+            )
+        )
+
+    @action(detail=False, methods=["post"], url_path="restore-defaults")
+    def restore_defaults(self, request):
+        org = require_org(request)
+        result = restore_default_alert_rules(
+            owner_scope=ResourceScope.ORGANIZATION,
+            organization=org,
+            created_by=request.user.id if request.user.is_authenticated else None,
+        )
+        write_audit_log(
+            organization=org,
+            user=request.user,
+            action="alert.policy.defaults.restore",
+            target_type="alert_policy_defaults",
+            target_id=str(org.id),
+            ip_address=request.META.get("REMOTE_ADDR"),
+            user_agent=str(request.META.get("HTTP_USER_AGENT", "") or ""),
+            metadata=result,
+        )
+        return Response(result)
+
+    @action(detail=True, methods=["post"], url_path="restore-default")
+    def restore_default(self, request, pk=None):
+        policy = self.get_object()
+        if not policy.default_key:
+            return Response(
+                {"detail": "This policy is not a default rule."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result = restore_default_alert_rules(
+            owner_scope=policy.owner_scope,
+            organization=policy.organization,
+            created_by=request.user.id if request.user.is_authenticated else None,
+            default_keys={policy.default_key},
+        )
+        restored = AlertPolicy.objects.get(pk=policy.pk)
+        return Response({**result, "policy": self.get_serializer(restored).data})
 
     @action(detail=False, methods=["get"])
     def stats(self, request):

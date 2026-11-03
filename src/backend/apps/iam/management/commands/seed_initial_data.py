@@ -92,12 +92,14 @@ class Command(BaseCommand):
             profile.is_installation_admin = True
             profile.save(update_fields=["is_installation_admin"])
         # Establish intrinsic installation authority before resolving EE Roles.
-        # A fresh installation must not create an ordinary preset Role.
         ensure_platform_role(user)
 
         if Organization.objects.exists():
             # Existing organizations are not adopted: global authority does not
             # make this account their member or Owner.
+            from apps.alert.services.defaults import ensure_default_platform_alert_rules
+
+            ensure_default_platform_alert_rules()
             seed_global_config()
             org = (
                 Membership.objects.filter(user=user, is_active=True)
@@ -140,6 +142,13 @@ class Command(BaseCommand):
         from apps.iam.services.role_seeding import seed_organization_roles
 
         seed_organization_roles(org)
+        from apps.alert.services.defaults import (
+            ensure_default_organization_alert_rules,
+            ensure_default_platform_alert_rules,
+        )
+
+        ensure_default_organization_alert_rules(org)
+        ensure_default_platform_alert_rules()
         seed_global_config()
 
         self.stdout.write(

@@ -44,7 +44,14 @@ from apps.instance_settings.services.product_website import (
     set_product_website_url,
 )
 from common.platform_audit import write_platform_audit_log
-from common.platform_authz import ADMIN_USERS_MANAGE, INFRA_AI_MODELS_MANAGE
+from common.platform_authz import (
+    AI_ENGINE_AI_MODELS_MANAGE,
+    AI_ENGINE_AI_MODELS_VIEW,
+    PLATFORM_AUTHENTICATION_MANAGE,
+    PLATFORM_EMAIL_SERVICE_MANAGE,
+    PLATFORM_EXTERNAL_ACCESS_MANAGE,
+    PLATFORM_RUNTIME_ENVIRONMENT_MANAGE,
+)
 from apps.lens_bridge import deploy as lens_deploy
 from apps.configuration.services import runtime_settings as runtime_settings_svc
 from apps.configuration.services.runtime_settings import (
@@ -137,7 +144,7 @@ def _google_redirect_uri() -> str:
 
 
 class PlatformOpsSettingsEmailView(APIView):
-    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_EMAIL_SERVICE_MANAGE)]
 
     def get(self, request):
         cfg = email_connection_kwargs()
@@ -230,7 +237,7 @@ class PlatformOpsSettingsEmailView(APIView):
 
 
 class PlatformOpsSettingsEmailTestView(APIView):
-    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_EMAIL_SERVICE_MANAGE)]
 
     def post(self, request):
         if not runtime_settings_svc.enterprise_identity_enabled():
@@ -349,7 +356,7 @@ def _identity_patch_requires_extension(data: dict) -> bool:
 
 
 class PlatformOpsSettingsIdentityView(APIView):
-    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_AUTHENTICATION_MANAGE)]
 
     def get(self, request):
         identity_enabled = runtime_settings_svc.enterprise_identity_enabled()
@@ -568,7 +575,13 @@ class PlatformOpsSettingsIdentityView(APIView):
 
 
 class PlatformOpsSettingsAiView(APIView):
-    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
+    def get_permissions(self):
+        action = (
+            AI_ENGINE_AI_MODELS_VIEW
+            if self.request.method in {"GET", "HEAD", "OPTIONS"}
+            else AI_ENGINE_AI_MODELS_MANAGE
+        )
+        return [HasPlatformPermission.for_actions(action)()]
 
     def get(self, request):
         return Response(
@@ -658,7 +671,7 @@ class PlatformOpsSettingsAiView(APIView):
 
 
 class PlatformOpsSettingsAiTestView(APIView):
-    permission_classes = [HasPlatformPermission.for_actions(INFRA_AI_MODELS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(AI_ENGINE_AI_MODELS_MANAGE)]
 
     def post(self, request):
         key = openai_api_key() or runtime_azure_key() or gemini_api_key()
@@ -668,7 +681,7 @@ class PlatformOpsSettingsAiTestView(APIView):
 
 
 class PlatformOpsSettingsDefaultsView(APIView):
-    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_RUNTIME_ENVIRONMENT_MANAGE)]
 
     def get(self, request):
         retention_default = get_config(storage_conf.CONFIG_KEY_RETENTION, default={})
@@ -709,7 +722,7 @@ class PlatformOpsSettingsDefaultsView(APIView):
 
 
 class PlatformOpsSettingsEnvironmentView(APIView):
-    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_RUNTIME_ENVIRONMENT_MANAGE)]
 
     def get(self, request):
         from apps.instance_settings.services.environment_payload import (
@@ -822,7 +835,7 @@ class PlatformOpsSettingsEnvironmentView(APIView):
 class PlatformOpsSettingsIntegrationsView(APIView):
     """Show deployment-managed service connections in Runtime Environment."""
 
-    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_RUNTIME_ENVIRONMENT_MANAGE)]
 
     def get(self, request):
         from apps.instance_settings.services.sourcelens_runtime import sourcelens_health_payload
@@ -859,7 +872,7 @@ class PlatformOpsSettingsIntegrationsView(APIView):
 class PlatformOpsSettingsExternalAccessView(APIView):
     """Configure external access and the independent product website link."""
 
-    permission_classes = [HasPlatformPermission.for_actions(ADMIN_USERS_MANAGE)]
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_EXTERNAL_ACCESS_MANAGE)]
 
     def get(self, request):
         return Response(

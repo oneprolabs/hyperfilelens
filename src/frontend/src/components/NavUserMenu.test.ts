@@ -12,6 +12,12 @@ import navUserMenuSource from './NavUserMenu.vue?raw'
 const mocks = vi.hoisted(() => ({
   fetchDeployProfile: vi.fn(),
   push: vi.fn(),
+  user: null as null | { value: Record<string, unknown> },
+  defaultUser: {
+    username: 'owner',
+    email: 'owner@example.test',
+    access_profile: { role: 'owner' },
+  },
 }))
 
 vi.mock('vue-router', () => ({
@@ -20,14 +26,9 @@ vi.mock('vue-router', () => ({
 
 vi.mock('../composables/useAuth', async () => {
   const { ref } = await import('vue')
+  mocks.user = ref({ ...mocks.defaultUser })
   return {
-    useAuth: () => ({
-      user: ref({
-        username: 'owner',
-        email: 'owner@example.test',
-        access_profile: { role: 'owner' },
-      }),
-    }),
+    useAuth: () => ({ user: mocks.user }),
   }
 })
 
@@ -70,6 +71,7 @@ function mountMenu() {
 describe('NavUserMenu product identity', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    if (mocks.user) mocks.user.value = { ...mocks.defaultUser }
   })
 
   it('shows the public Release version and Enterprise edition', async () => {
@@ -86,6 +88,30 @@ describe('NavUserMenu product identity', () => {
     )
     expect(wrapper.get('.nav-user-menu__email').text()).toBe('owner@example.test')
     expect(wrapper.get('.nav-user-menu__role').text()).toBe('Owner')
+    expect(wrapper.get('.nav-dropdown-panel__head').classes()).toContain(
+      'nav-dropdown-panel__head--stacked',
+    )
+  })
+
+  it('keeps long installation-admin emails fully visible above the role badge', async () => {
+    mocks.user!.value = {
+      username: 'admin@hyperfilelens.com',
+      email: 'admin@hyperfilelens.com',
+      access_profile: { authority_source: 'installation_admin', role: 'owner' },
+    }
+    mocks.fetchDeployProfile.mockResolvedValue({
+      product_version: '0.1.0',
+      edition: 'enterprise',
+    })
+
+    const wrapper = mountMenu()
+    await flushPromises()
+
+    expect(wrapper.get('.nav-user-menu__email').text()).toBe('admin@hyperfilelens.com')
+    expect(wrapper.get('.nav-user-menu__role').text()).toBe('Installation Administrator')
+    expect(wrapper.get('.nav-dropdown-panel__head').classes()).toContain(
+      'nav-dropdown-panel__head--stacked',
+    )
   })
 
   it('uses a localized development label when the valid profile has no version', async () => {
@@ -231,13 +257,13 @@ describe('NavUserMenu website refresh', () => {
 })
 
 describe('NavUserMenu responsive trigger', () => {
-  it('uses a 360px dropdown width', async () => {
+  it('uses a 300px dropdown width', async () => {
     mocks.fetchDeployProfile.mockResolvedValue(null)
 
     const wrapper = mountMenu()
     await flushPromises()
 
-    expect(wrapper.findComponent(HflPopoverStub).attributes('width')).toBe('360')
+    expect(wrapper.findComponent(HflPopoverStub).attributes('width')).toBe('300')
   })
 
   it('allows the trigger and label to shrink without clipping the page', () => {

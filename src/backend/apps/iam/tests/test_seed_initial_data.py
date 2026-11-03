@@ -120,11 +120,31 @@ class SeedInitialDataCommandTests(TestCase):
         self.assertEqual(authoritative_role(membership), Membership.Role.OWNER)
         self.assertTrue(membership.is_active)
         self.assertEqual(membership.organization.name, "HyperFileLens")
+        from apps.alert.models import AlertPolicy
+
+        self.assertEqual(
+            AlertPolicy.objects.filter(
+                organization=membership.organization,
+                default_key__isnull=False,
+            ).count(),
+            7,
+        )
+        from common.resource_scope import ResourceScope
+
+        self.assertEqual(
+            AlertPolicy.objects.filter(
+                owner_scope=ResourceScope.PLATFORM,
+                organization__isnull=True,
+                default_key__isnull=False,
+            ).count(),
+            3,
+        )
 
         profile = Profile.objects.get(user=user)
         self.assertTrue(profile.registration_completed)
 
-        # EE installation authority is intrinsic; no ordinary preset is seeded.
+        # EE installation authority is intrinsic; Platform Roles remain empty
+        # until an administrator creates or explicitly restores them.
         try:
             from apps.membership.models import PlatformRole, PlatformStaffRole
             from common.platform_authz import ADMIN_USERS_MANAGE, has_platform_permission
@@ -154,6 +174,18 @@ class SeedInitialDataCommandTests(TestCase):
 
         self.assertEqual(Organization.objects.count(), 1)
         self.assertEqual(Membership.objects.count(), 1)
+
+        from apps.alert.models import AlertPolicy
+        from common.resource_scope import ResourceScope
+
+        self.assertEqual(
+            AlertPolicy.objects.filter(
+                owner_scope=ResourceScope.PLATFORM,
+                organization__isnull=True,
+                default_key__isnull=False,
+            ).count(),
+            3,
+        )
 
         user = User.objects.get(email="admin@hyperfilelens.com")
         self.assertTrue(user.check_password("OperatorChangedPassword@123"))

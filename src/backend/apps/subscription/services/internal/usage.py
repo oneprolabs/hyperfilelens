@@ -121,7 +121,8 @@ def collect_usage_stats(*, organization_id: int) -> dict:
         from apps.alert.models import AlertPolicy
 
         alert_policies_count = AlertPolicy.objects.filter(
-            organization_id=organization_id
+            organization_id=organization_id,
+            default_key__isnull=True,
         ).count()
     except Exception:
         pass
@@ -579,7 +580,7 @@ def collect_instance_meter_usage(*, usage_key: str) -> int | float:
             _tenant_usage_queryset(
                 AlertPolicy.objects.all(),
 
-            ).count()
+            ).filter(default_key__isnull=True).count()
         )
     raise ValueError(f"Unsupported instance quota usage meter: {usage_key}")
 
@@ -707,6 +708,7 @@ def collect_usage_stats_by_organization(
 
     for row in (
         AlertPolicy.objects.filter(organization_id__in=org_ids)
+        .filter(default_key__isnull=True)
         .values("organization_id")
         .annotate(alert_policies_count=Count("id"))
     ):
