@@ -156,7 +156,6 @@ describe('Spanish language pack', () => {
       'settings.rolesPage.groups.insights',
       'settings.rolesPage.names.auditor',
       'settings.rolesPage.resourceLabels.configuration_roles',
-      'settings.rolesPage.resourceLabels.insights_chats',
       'platformOps.storageProviders.general',
       'platformOps.storageProviders.id',
     ]
