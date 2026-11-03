@@ -337,7 +337,6 @@
   "settings.rolesPage.groups.insights",
   "settings.rolesPage.names.auditor",
   "settings.rolesPage.resourceLabels.configuration_roles",
-  "settings.rolesPage.resourceLabels.insights_chats",
   "settings.subscription.limitGateways",
   "settings.subscription.planLimit"
 ]
