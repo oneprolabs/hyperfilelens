@@ -41,6 +41,8 @@ const props = withDefaults(
     itemStatusLabel?: string
     itemDetailsLabel?: string
     showItemDetails?: boolean
+    /** When true, details column is rendered before status (Name → Details → Status). */
+    itemDetailsBeforeStatus?: boolean
     confirmationContext?: string
     confirmMode?: DangerConfirmMode
     confirmKeyword?: string
@@ -71,6 +73,7 @@ const props = withDefaults(
     itemStatusLabel: undefined,
     itemDetailsLabel: undefined,
     showItemDetails: true,
+    itemDetailsBeforeStatus: false,
     confirmMode: 'single',
     confirmationContext: undefined,
     confirmKeyword: 'DELETE',
@@ -118,7 +121,9 @@ const usesItemLayout = computed(() => props.items !== undefined)
 const dialogWidth = computed(() => (
   props.width
   ?? (usesItemLayout.value
-    ? 'min(600px, calc(100vw - 32px))'
+    ? (props.itemDetailsBeforeStatus
+      ? 'min(720px, calc(100vw - 32px))'
+      : 'min(600px, calc(100vw - 32px))')
     : 'min(480px, calc(100vw - 32px))')
 ))
 const needsKeyword = computed(() => props.confirmMode === 'keyword')
@@ -279,6 +284,39 @@ async function onDialogBeforeClose(done: () => void) {
               </template>
             </ElTableColumn>
             <ElTableColumn
+              v-if="showItemDetails && itemDetailsBeforeStatus"
+              class-name="hfl-danger-confirm__details-col"
+              :label="itemDetailsLabel ?? t('common.dangerItemDetails')"
+              min-width="260"
+            >
+              <template #default="{ row: item }">
+                <div class="hfl-danger-confirm__item-details">
+                  <span
+                    v-if="item.description"
+                    class="hfl-danger-confirm__item-desc"
+                  >{{ item.description }}</span>
+                  <span
+                    v-if="item.hint"
+                    class="hfl-danger-confirm__item-hint"
+                  >{{ item.hint }}</span>
+                  <span
+                    v-if="item.warning"
+                    class="hfl-danger-confirm__item-warning"
+                  >
+                    <AlertTriangle
+                      :size="12"
+                      aria-hidden="true"
+                    />
+                    <span>{{ item.warning }}</span>
+                  </span>
+                  <span
+                    v-if="!item.description && !item.hint && !item.warning"
+                    class="hfl-danger-confirm__item-desc hfl-empty-mark"
+                  >—</span>
+                </div>
+              </template>
+            </ElTableColumn>
+            <ElTableColumn
               :label="itemStatusLabel ?? t('common.dangerItemStatus')"
               width="120"
             >
@@ -301,18 +339,21 @@ async function onDialogBeforeClose(done: () => void) {
               </template>
             </ElTableColumn>
             <ElTableColumn
-              v-if="showItemDetails"
+              v-if="showItemDetails && !itemDetailsBeforeStatus"
+              class-name="hfl-danger-confirm__details-col"
               :label="itemDetailsLabel ?? t('common.dangerItemDetails')"
               min-width="180"
             >
               <template #default="{ row: item }">
                 <div class="hfl-danger-confirm__item-details">
                   <span
-                    v-if="item.description || item.hint"
+                    v-if="item.description"
                     class="hfl-danger-confirm__item-desc"
-                    :data-table-overflow-title="item.description || item.hint"
-                    data-table-overflow-explicit-only
-                  >{{ item.description || item.hint }}</span>
+                  >{{ item.description }}</span>
+                  <span
+                    v-if="item.hint"
+                    class="hfl-danger-confirm__item-hint"
+                  >{{ item.hint }}</span>
                   <span
                     v-if="item.warning"
                     class="hfl-danger-confirm__item-warning"
@@ -335,9 +376,13 @@ async function onDialogBeforeClose(done: () => void) {
             <table class="hfl-dialog-resource-table hfl-danger-confirm__item-table">
               <colgroup>
                 <col class="hfl-danger-confirm__item-col-name">
+                <col
+                  v-if="showItemDetails && itemDetailsBeforeStatus"
+                  class="hfl-danger-confirm__item-col-details"
+                >
                 <col class="hfl-danger-confirm__item-col-status">
                 <col
-                  v-if="showItemDetails"
+                  v-if="showItemDetails && !itemDetailsBeforeStatus"
                   class="hfl-danger-confirm__item-col-details"
                 >
               </colgroup>
@@ -346,11 +391,17 @@ async function onDialogBeforeClose(done: () => void) {
                   <th scope="col">
                     {{ itemNameLabel ?? t('common.dangerItemName') }}
                   </th>
+                  <th
+                    v-if="showItemDetails && itemDetailsBeforeStatus"
+                    scope="col"
+                  >
+                    {{ itemDetailsLabel ?? t('common.dangerItemDetails') }}
+                  </th>
                   <th scope="col">
                     {{ itemStatusLabel ?? t('common.dangerItemStatus') }}
                   </th>
                   <th
-                    v-if="showItemDetails"
+                    v-if="showItemDetails && !itemDetailsBeforeStatus"
                     scope="col"
                   >
                     {{ itemDetailsLabel ?? t('common.dangerItemDetails') }}
@@ -372,6 +423,39 @@ async function onDialogBeforeClose(done: () => void) {
                       data-table-overflow-explicit-only
                     >{{ item.name }}</span>
                   </td>
+                  <td
+                    v-if="showItemDetails && itemDetailsBeforeStatus"
+                    class="hfl-danger-confirm__item-details-cell"
+                    :class="{
+                      'hfl-danger-confirm__item-details-cell--empty':
+                        !item.description && !item.hint && !item.warning,
+                    }"
+                  >
+                    <div class="hfl-danger-confirm__item-details">
+                      <span
+                        v-if="item.description"
+                        class="hfl-danger-confirm__item-desc"
+                      >{{ item.description }}</span>
+                      <span
+                        v-if="item.hint"
+                        class="hfl-danger-confirm__item-hint"
+                      >{{ item.hint }}</span>
+                      <span
+                        v-if="item.warning"
+                        class="hfl-danger-confirm__item-warning"
+                      >
+                        <AlertTriangle
+                          :size="12"
+                          aria-hidden="true"
+                        />
+                        <span>{{ item.warning }}</span>
+                      </span>
+                      <span
+                        v-if="!item.description && !item.hint && !item.warning"
+                        class="hfl-danger-confirm__item-desc hfl-empty-mark"
+                      >—</span>
+                    </div>
+                  </td>
                   <td class="hfl-danger-confirm__item-status-cell">
                     <ElTag
                       v-if="item.status"
@@ -390,7 +474,7 @@ async function onDialogBeforeClose(done: () => void) {
                     </ElTag>
                   </td>
                   <td
-                    v-if="showItemDetails"
+                    v-if="showItemDetails && !itemDetailsBeforeStatus"
                     class="hfl-danger-confirm__item-details-cell"
                     :class="{
                       'hfl-danger-confirm__item-details-cell--empty':
@@ -399,11 +483,13 @@ async function onDialogBeforeClose(done: () => void) {
                   >
                     <div class="hfl-danger-confirm__item-details">
                       <span
-                        v-if="item.description || item.hint"
+                        v-if="item.description"
                         class="hfl-danger-confirm__item-desc"
-                        :data-table-overflow-title="item.description || item.hint"
-                        data-table-overflow-explicit-only
-                      >{{ item.description || item.hint }}</span>
+                      >{{ item.description }}</span>
+                      <span
+                        v-if="item.hint"
+                        class="hfl-danger-confirm__item-hint"
+                      >{{ item.hint }}</span>
                       <span
                         v-if="item.warning"
                         class="hfl-danger-confirm__item-warning"
@@ -720,15 +806,34 @@ async function onDialogBeforeClose(done: () => void) {
   display: block;
   min-width: 0;
   font-size: 13px;
+  line-height: 1.4;
+  color: var(--el-text-color-primary, #111827);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.hfl-danger-confirm__item-hint {
+  display: block;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--el-text-color-secondary, #6b7280);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .hfl-danger-confirm__item-details {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
+}
+.hfl-danger-confirm__desktop-items :deep(.hfl-danger-confirm__details-col .cell) {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.4;
+}
+.hfl-danger-confirm__desktop-items :deep(.hfl-danger-confirm__details-col) {
+  vertical-align: middle;
 }
 .hfl-danger-confirm__item-warning {
   display: grid;

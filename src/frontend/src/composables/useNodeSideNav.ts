@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CreditCard } from 'lucide-vue-next'
+import { Gauge } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { resolveGovernanceMenu } from '../governance/resolveMenu'
 import { useTenantPermissions } from './useTenantPermissions'
@@ -15,7 +15,7 @@ export function useNodeSideNav() {
     const routes = resolveGovernanceRoutes()
     const children = [
       ...resolveGovernanceMenu(t),
-      { label: t('settings.nav.subscription'), to: '/node/subscription', icon: CreditCard },
+      { label: t('settings.nav.subscription'), to: '/node/subscription', icon: Gauge },
     ].filter(item => canViewConfigurationPage(item.to || '', routes, has))
     return children.length ? [{
       label: t('assetsPage.side.groupGovernance'),

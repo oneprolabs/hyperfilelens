@@ -338,5 +338,8 @@
   "settings.rolesPage.names.auditor",
   "settings.rolesPage.resourceLabels.configuration_roles",
   "settings.subscription.limitGateways",
-  "settings.subscription.planLimit"
+  "settings.subscription.planLimit",
+  "settings.subscription.requestUnitGb",
+  "settings.subscription.requestUnitMb",
+  "settings.subscription.requestUnitTb"
 ]

@@ -21,7 +21,7 @@ function mountMenus() {
         settings: {
           nav: {
             organizationHub: 'Organization',
-            subscription: 'Subscription',
+            subscription: 'Usage',
           },
         },
       },
@@ -47,7 +47,7 @@ describe('useNodeSideNav', () => {
       'Governance',
     ])
     expect(mountMenus().value[0]?.children?.map((item) => item.label)).toEqual([
-      'Subscription',
+      'Usage',
     ])
   })
 })

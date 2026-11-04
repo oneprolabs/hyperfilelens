@@ -226,5 +226,8 @@
   "repositoriesPage.protocolNfs",
   "repositoriesPage.protocolSmb",
   "repositoriesPage.storageTypeNas",
-  "searchPage.colId"
+  "searchPage.colId",
+  "settings.subscription.requestUnitGb",
+  "settings.subscription.requestUnitMb",
+  "settings.subscription.requestUnitTb"
 ]
