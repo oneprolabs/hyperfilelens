@@ -699,7 +699,7 @@ watch([quotaRequestPage, quotaRequestPageSize], () => {
                           </button>
                           <span
                             v-else
-                            class="subscription-requests__action-empty"
+                            class="subscription-requests__action-empty hfl-empty-mark"
                           >—</span>
                         </div>
                       </template>

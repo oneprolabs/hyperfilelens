@@ -294,10 +294,14 @@ async function onDialogBeforeClose(done: () => void) {
                   <span
                     v-if="item.description"
                     class="hfl-danger-confirm__item-desc"
+                    :data-table-overflow-title="item.description || item.hint"
+                    data-table-overflow-explicit-only
                   >{{ item.description }}</span>
                   <span
                     v-if="item.hint"
                     class="hfl-danger-confirm__item-hint"
+                    :data-table-overflow-title="item.description || item.hint"
+                    data-table-overflow-explicit-only
                   >{{ item.hint }}</span>
                   <span
                     v-if="item.warning"
@@ -435,10 +439,14 @@ async function onDialogBeforeClose(done: () => void) {
                       <span
                         v-if="item.description"
                         class="hfl-danger-confirm__item-desc"
+                        :data-table-overflow-title="item.description || item.hint"
+                        data-table-overflow-explicit-only
                       >{{ item.description }}</span>
                       <span
                         v-if="item.hint"
                         class="hfl-danger-confirm__item-hint"
+                        :data-table-overflow-title="item.description || item.hint"
+                        data-table-overflow-explicit-only
                       >{{ item.hint }}</span>
                       <span
                         v-if="item.warning"
@@ -485,10 +493,14 @@ async function onDialogBeforeClose(done: () => void) {
                       <span
                         v-if="item.description"
                         class="hfl-danger-confirm__item-desc"
+                        :data-table-overflow-title="item.description || item.hint"
+                        data-table-overflow-explicit-only
                       >{{ item.description }}</span>
                       <span
                         v-if="item.hint"
                         class="hfl-danger-confirm__item-hint"
+                        :data-table-overflow-title="item.description || item.hint"
+                        data-table-overflow-explicit-only
                       >{{ item.hint }}</span>
                       <span
                         v-if="item.warning"
