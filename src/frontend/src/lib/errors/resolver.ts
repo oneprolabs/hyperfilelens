@@ -54,7 +54,7 @@ function resolveSubscriptionQuotaMessage(
     return t
       ? interpolate(t('errors.codes.subscriptionQuotaExceededMeter', { meter }), { meter })
       : interpolate(
-          '{meter} quota is full for this organization. Contact your platform administrator to raise limits.',
+          '{meter} quota is full for this organization. Open Usage for details, or contact your platform administrator.',
           { meter },
         )
   }
@@ -62,6 +62,22 @@ function resolveSubscriptionQuotaMessage(
   return t
     ? t(ERROR_CODE_I18N_KEYS['SUBSCRIPTION.QUOTA_EXCEEDED'])
     : ERROR_CODE_FALLBACK_EN['SUBSCRIPTION.QUOTA_EXCEEDED']
+}
+
+/** Tenant Subscription deep link for organization-scoped quota increase requests. */
+export function resolveQuotaIncreaseRequestPath(
+  err: unknown,
+): { path: string, query: Record<string, string> } | null {
+  const normalized = normalizeThrownError(err)
+  const code = resolveErrorCode(err)
+  if (code !== 'SUBSCRIPTION.QUOTA_EXCEEDED') return null
+  const meta = metaFromError(normalized)
+  const scope = String(meta?.scope || 'organization').toLowerCase()
+  if (scope !== 'organization') return null
+  const meter = canonicalizeQuotaType(meta?.quota_type)
+  const query: Record<string, string> = {}
+  if (meter) query.request = meter
+  return { path: '/node/subscription', query }
 }
 
 function interpolate(template: string, params?: Record<string, unknown>): string {

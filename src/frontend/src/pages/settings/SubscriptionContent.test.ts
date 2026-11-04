@@ -14,9 +14,21 @@ const mocks = vi.hoisted(() => ({
   fetchLicenseHistory: vi.fn(),
   fetchMachineCode: vi.fn(),
   activateLicense: vi.fn(),
+  fetchQuotaIncreaseRequests: vi.fn(),
+  submitQuotaIncreaseRequest: vi.fn(),
+  routeQuery: {} as Record<string, unknown>,
+  routerReplace: vi.fn(),
 }))
 
 vi.mock('../../lib/subscriptionApi', () => mocks)
+vi.mock('vue-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('vue-router')>()
+  return {
+    ...actual,
+    useRoute: () => ({ query: mocks.routeQuery, path: '/node/subscription', params: {} }),
+    useRouter: () => ({ replace: mocks.routerReplace, push: vi.fn() }),
+  }
+})
 
 async function mountSubscription() {
   const i18n = createI18n({
@@ -34,7 +46,10 @@ async function mountSubscription() {
       },
       stubs: {
         HflTablePanel: {
-          template: '<div><slot /></div>',
+          template: '<div><slot /><slot name="table" :table-max-height="400" /><div class="hfl-list-footer"><slot name="footer" /></div></div>',
+        },
+        HflPagination: {
+          template: '<div class="hfl-pagination-stub" />',
         },
       },
     },
@@ -51,8 +66,11 @@ describe('SubscriptionContent effective quotas', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.routeQuery = {}
+    mocks.routerReplace.mockResolvedValue(undefined)
     mocks.fetchLicenseHistory.mockResolvedValue([])
     mocks.fetchMachineCode.mockResolvedValue({ machine_code: 'machine-code' })
+    mocks.fetchQuotaIncreaseRequests.mockResolvedValue({ results: [], count: 0 })
     mocks.fetchEffectiveQuotaUsage.mockResolvedValue({
       organization_id: 7,
       organization_key: 'tenant-seven',
@@ -356,7 +374,7 @@ describe('SubscriptionContent effective quotas', () => {
     if (endpoint === 'current') mocks.fetchCurrentLicense.mockRejectedValue({ status: 403 })
     else mocks.fetchEffectiveQuotaUsage.mockRejectedValue({ status: 403 })
     const wrapper = await mountSubscription()
-    expect(wrapper.text()).toContain("You do not have permission to view this organization's subscription.")
+    expect(wrapper.text()).toContain("You do not have permission to view this organization's usage.")
     expect(wrapper.text()).not.toContain('Quota information is temporarily unavailable.')
     expect(wrapper.text()).not.toContain('Unable to load effective organization quotas.')
     expect(wrapper.find('.subscription-quota-grid').exists()).toBe(false)

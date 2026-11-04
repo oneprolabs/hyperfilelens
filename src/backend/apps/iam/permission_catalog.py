@@ -56,7 +56,7 @@ _RESOURCES = (
         "Resources",
         ("view", "access_all", "change_owner"),
     ),
-    ("configuration", "subscriptions", "Subscription", ("view",)),
+    ("configuration", "subscriptions", "Subscription", ("view", "manage")),
     (
         "protection",
         "source_hosts",
@@ -294,6 +294,7 @@ ORG_CALL_ALIASES = {
     "roles.view": "configuration.roles.view",
     "roles.manage": "configuration.roles.manage",
     "subscription.view": "configuration.subscriptions.view",
+    "subscription.manage": "configuration.subscriptions.manage",
     "resource_access.manage": "configuration.groups.manage",
     "group.view": "configuration.groups.view",
     "group.members.manage": "configuration.groups.manage_members",

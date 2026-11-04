@@ -142,7 +142,7 @@ export const ERROR_CODE_FALLBACK_EN: Record<string, string> = {
   'BACKUP.REPOSITORY_QUOTA_EXCEEDED':
     'This backup repository has reached its configured Storage Quota. Free repository space or increase Storage Quota before retrying.',
   'SUBSCRIPTION.QUOTA_EXCEEDED':
-    'Organization quota is full. Contact your platform administrator to raise limits.',
+    'Organization quota is full. Open Usage for details, or contact your platform administrator.',
   'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE':
     'Capacity information is temporarily unavailable. Try again shortly.',
   'BACKUP.ALREADY_RUNNING': 'A backup is starting or running for this source. Stop it or wait for it to finish before continuing.',

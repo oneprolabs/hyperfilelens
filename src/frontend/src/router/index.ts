@@ -1,5 +1,5 @@
 import { nextTick } from 'vue'
-import { createRouter, createWebHistory } from 'vue-router'
+import { createMemoryHistory, createRouter, createWebHistory } from 'vue-router'
 import { resolvePlatformOpsRoutes } from '../platform-ops/resolveRoutes'
 import { resolveTenantOpsRoutes } from '../ops/resolveRoutes'
 import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
@@ -67,7 +67,9 @@ const GlobalSearchPage = lazyRoute(() => import('../pages/Search.vue'))
 const NotificationsPage = lazyRoute(() => import('../pages/Notifications.vue'))
 
 export const router = createRouter({
-  history: createWebHistory(),
+  // Keep route modules importable in SSR/static test environments where
+  // `window` is unavailable; browsers retain the normal history behavior.
+  history: typeof window === 'undefined' ? createMemoryHistory() : createWebHistory(),
   routes: [
     { path: '/account/setup', component: lazyRoute(() => import('../pages/auth/FirstPasswordSetup.vue')) },
     { path: '/login', name: LOGIN_ROUTE_NAME, component: LoginPage, beforeEnter: authTurnstilePrefetch },

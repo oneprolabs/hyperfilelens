@@ -16,3 +16,4 @@ export {
   type TranslateFn,
 } from './resolver'
 export { presentError } from './presenter'
+export { resolveQuotaIncreaseRequestPath } from './resolver'

@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { resolveErrorMessage, resolveErrorMessageI18n } from './resolver'
+import {
+  resolveErrorMessage,
+  resolveErrorMessageI18n,
+  resolveQuotaIncreaseRequestPath,
+} from './resolver'
 
 const messages: Record<string, string> = {
   'errors.codes.backupRepositoryQuotaExceeded':
     'This repository reached its configured storage quota.',
   'errors.codes.subscriptionQuotaExceeded':
-    'Organization quota is full. Contact your platform administrator to raise limits.',
+    'Organization quota is full. Open Usage for details, or contact your platform administrator.',
   'errors.codes.subscriptionQuotaExceededMeter':
-    '{meter} quota is full for this organization. Contact your platform administrator to raise limits.',
+    '{meter} quota is full for this organization. Open Usage for details, or contact your platform administrator.',
   'errors.codes.subscriptionQuotaExceededInstance':
     'Shared instance capacity is full. Contact your platform administrator to raise the deployment grant or free capacity from other organizations.',
   'errors.codes.subscriptionQuotaExceededInstanceMeter':
@@ -16,6 +20,7 @@ const messages: Record<string, string> = {
     'The shared Data Gateway currently has insufficient capacity. Try again later or contact your platform administrator.',
   'errors.codes.subscriptionQuotaUsageUnavailable':
     'Capacity information is temporarily unavailable. Try again shortly.',
+  'errors.codes.subscriptionQuotaRequestAction': 'Request Quota Increase',
   'licenseQuota.users': 'Users',
   'licenseQuota.publicGatewayCapacity': 'Public Gateway Capacity',
 }
@@ -113,5 +118,25 @@ describe('subscription quota error messages', () => {
 
     expect(message).toBe('Capacity information is temporarily unavailable. Try again shortly.')
     expect(message).not.toContain('internal meter diagnostic')
+  })
+
+  it('builds a Subscription deep link for organization quota increases', () => {
+    expect(
+      resolveQuotaIncreaseRequestPath({
+        status: 403,
+        errorCode: 'SUBSCRIPTION.QUOTA_EXCEEDED',
+        meta: { quota_type: 'max_users', scope: 'organization' },
+      }),
+    ).toEqual({ path: '/node/subscription', query: { request: 'max_users' } })
+  })
+
+  it('does not deep-link instance or gateway quota failures', () => {
+    expect(
+      resolveQuotaIncreaseRequestPath({
+        status: 403,
+        errorCode: 'SUBSCRIPTION.QUOTA_EXCEEDED',
+        meta: { quota_type: 'max_users', scope: 'instance' },
+      }),
+    ).toBeNull()
   })
 })

@@ -133,3 +133,68 @@ export async function fetchEffectiveQuotaUsage() {
     }),
   )
 }
+
+export type QuotaIncreaseRequest = {
+  id: number
+  organization_id: number
+  organization_key: string
+  meter_key: string
+  current_limit: number
+  requested_limit: number
+  justification: string
+  status: 'pending' | 'approved_applied' | 'approved_failed' | 'rejected' | 'cancelled'
+  decision_note: string
+  apply_error: string
+  effective_before_limit: number | null
+  effective_after_limit: number | null
+  created_at: string | null
+  reviewed_at: string | null
+  applied_at: string | null
+  applied: boolean
+}
+
+export type QuotaIncreaseRequestPage = {
+  count: number
+  page: number
+  page_size: number
+  results: QuotaIncreaseRequest[]
+}
+
+export async function fetchQuotaIncreaseRequests(options?: {
+  page?: number
+  page_size?: number
+}) {
+  const params = new URLSearchParams()
+  if (options?.page != null) params.set('page', String(options.page))
+  if (options?.page_size != null) params.set('page_size', String(options.page_size))
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return unwrapApiPayload<QuotaIncreaseRequestPage>(
+    await api<unknown>(`/api/v1/subscription/quota-increase-requests/${query}`, {
+      headers: orgHeaders(),
+    }),
+  )
+}
+
+export async function submitQuotaIncreaseRequest(payload: {
+  meter_key: string
+  requested_limit: number
+  justification: string
+}) {
+  return unwrapApiPayload<QuotaIncreaseRequest>(
+    await api<unknown>('/api/v1/subscription/quota-increase-requests/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers: orgHeaders(),
+    }),
+  )
+}
+
+export async function cancelQuotaIncreaseRequest(requestId: number, cancellation_note = '') {
+  return unwrapApiPayload<QuotaIncreaseRequest>(
+    await api<unknown>(`/api/v1/subscription/quota-increase-requests/${requestId}/cancel/`, {
+      method: 'POST',
+      body: JSON.stringify({ cancellation_note }),
+      headers: orgHeaders(),
+    }),
+  )
+}
