@@ -13,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   getPolicy: vi.fn(), createPolicy: vi.fn(), updatePolicy: vi.fn(),
   fetchMetadata: vi.fn(), fetchMetadataResources: vi.fn(), listChannels: vi.fn(),
 }))
-vi.mock('vue-router', () => ({
+vi.mock('vue-router', async (importOriginal) => ({
+  ...await importOriginal<typeof import('vue-router')>(),
   useRoute: () => mocks.route,
   useRouter: () => ({ push: mocks.push }),
 }))
