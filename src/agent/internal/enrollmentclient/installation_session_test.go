@@ -25,9 +25,12 @@ func TestOpenInstallationSessionAcceptsAPIEnvelope(t *testing.T) {
 		if body["role"] != "gateway" || body["installation_id"] != "hfli_host" {
 			t.Fatalf("body=%v", body)
 		}
+		if _, present := body["session_secret"]; present {
+			t.Error("normal session creation must use a server-generated secret")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"installation_session":"hfls_secret","gateway_scope":"private"}}`))
+		_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"installation_session":"hfls_secret","gateway_scope":"private","client_session_secret_supported":true}}`))
 	}))
 	defer server.Close()
 
@@ -40,7 +43,7 @@ func TestOpenInstallationSessionAcceptsAPIEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Secret != "hfls_secret" || session.GatewayScope != "private" {
+	if session.Secret != "hfls_secret" || session.GatewayScope != "private" || !session.ClientSessionSecretSupported {
 		t.Fatalf("session=%+v", session)
 	}
 }
@@ -62,7 +65,7 @@ func TestOpenInstallationSessionAcceptsUnwrappedPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Secret != "hfls_direct" {
+	if session.Secret != "hfls_direct" || session.ClientSessionSecretSupported {
 		t.Fatalf("session=%+v", session)
 	}
 }

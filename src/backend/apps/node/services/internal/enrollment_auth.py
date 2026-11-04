@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -205,11 +206,14 @@ def open_installation_session(
     role: str,
     installation_id: str,
     namespace: str | None = None,
+    session_secret: str = "",
 ) -> tuple[NodeInstallationSession, str]:
     """Issue a resumable installation session secret."""
     installation_id = installation_id.strip()
     if not installation_id:
         raise ValueError("installation_id is required")
+    if session_secret and not re.fullmatch(r"hfls_[A-Za-z0-9_-]{43}", session_secret):
+        raise ValueError("invalid recovery session secret")
 
     token = active_enrollment_token(
         org=org,
@@ -265,14 +269,25 @@ def open_installation_session(
             + timedelta(seconds=INSTALLATION_SESSION_ABSOLUTE_SECONDS),
         )
 
-    secret = NodeInstallationSession.generate_secret()
+    # Recovery clients generate 32 random bytes locally. Retrying the same
+    # authenticated request preserves a known secret even if its response is
+    # lost; the normal server-generated session flow is unchanged.
+    secret = session_secret or NodeInstallationSession.generate_secret()
     session.set_secret(secret)
     session.last_activity_at = now
     session.idle_expires_at = min(
         now + timedelta(seconds=INSTALLATION_SESSION_IDLE_SECONDS),
         session.absolute_expires_at,
     )
-    session.save()
+    try:
+        with transaction.atomic():
+            session.save()
+    except IntegrityError:
+        if session_secret:
+            # Secret hashes are globally unique; never let a supplied secret
+            # overwrite a session with another installation/owner.
+            raise ValueError("recovery session secret is already in use") from None
+        raise
     return session, secret
 
 

@@ -139,6 +139,21 @@ func logFail(message string, code int) {
 	abortInstall("Installing", message, code, fmt.Sprintf("HFL-INSTALL-%03d", code))
 }
 
+func temporaryRegistrationFailure(err error) InstallFailure {
+	return InstallFailure{
+		Stage:          "Registration",
+		Reason:         "Node registration failed: " + err.Error(),
+		Code:           5,
+		CodeKey:        "HFL-INSTALL-005",
+		Summary:        "Node registration could not be completed because the control plane was temporarily unavailable.",
+		Cause:          "The installer retried automatically, but registration is still incomplete.",
+		ChangesApplied: "Node registration was not confirmed.",
+		RecommendedActions: []string{
+			"Please wait briefly and run the same installation command again.",
+		},
+	}
+}
+
 func abortInstall(stage, message string, code int, codeKey string) {
 	abortInstallFailure(InstallFailure{
 		Stage:   stage,

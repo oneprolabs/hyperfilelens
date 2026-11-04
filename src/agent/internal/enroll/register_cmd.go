@@ -62,7 +62,14 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 	if err != nil {
 		logFail("Installation session could not be started: "+err.Error(), 2)
 	}
+	originalEnrollmentSecret := cfg.NodeToken
 	cfg.NodeToken = session.Secret
+	cfg.ClientSessionSecretSupported = session.ClientSessionSecretSupported
+	sessionSecrets := []string{session.Secret}
+	rememberSessionSecret := func(secret string) {
+		cfg.NodeToken = secret
+		sessionSecrets = append(sessionSecrets, secret)
+	}
 	sessionCompleted := false
 	defer func() {
 		if sessionCompleted {
@@ -70,11 +77,7 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 		}
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
-		if releaseErr := enrollmentclient.ReleaseInstallationSession(
-			releaseCtx,
-			cfg.AgentConfig(),
-			cfg.InstallationID,
-		); releaseErr != nil {
+		if releaseErr := releaseInstallationSessionCandidates(releaseCtx, cfg, sessionSecrets); releaseErr != nil {
 			logWarn("Installation session release failed: " + releaseErr.Error())
 		}
 	}()
@@ -132,6 +135,8 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 		cfg,
 		agentVer,
 		existingNodeCredential,
+		originalEnrollmentSecret,
+		rememberSessionSecret,
 		rememberIssuedCredential,
 		func() {
 			committed = true

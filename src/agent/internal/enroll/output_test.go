@@ -514,3 +514,27 @@ func TestDirectSessionStillPrintsAgentContext(t *testing.T) {
 		}
 	}
 }
+
+func TestTemporaryRegistrationFailureOffersOnlySameCommandRetry(t *testing.T) {
+	failure := temporaryRegistrationFailure(errors.New("heartbeat HTTP 502 Bad Gateway"))
+	if failure.CodeKey != "HFL-INSTALL-005" || failure.Stage != "Registration" {
+		t.Fatalf("failure=%+v", failure)
+	}
+	actions := failureActions("install", failure)
+	if len(actions) != 1 || actions[0] != "Please wait briefly and run the same installation command again." {
+		t.Fatalf("actions=%v", actions)
+	}
+	if !strings.Contains(failureSummary("install", failure), "temporarily unavailable") {
+		t.Fatal("missing temporary failure summary")
+	}
+	// A lost response may have committed a Node; don't claim there were no
+	// server-side changes or direct the user to uninstall/reissue credentials.
+	if failureChanges("install", failure) != "Node registration was not confirmed." {
+		t.Fatal("incorrect state claim")
+	}
+	for _, word := range []string{"administrator", "uninstall", "token"} {
+		if strings.Contains(strings.ToLower(strings.Join(actions, " ")), word) {
+			t.Fatalf("unwanted advice: %v", actions)
+		}
+	}
+}

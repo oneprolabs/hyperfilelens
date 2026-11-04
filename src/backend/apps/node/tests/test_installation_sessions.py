@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from unittest import mock
 
@@ -17,6 +18,7 @@ from apps.node.models import Node, NodeCredential, NodeInstallationSession, Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_ws_auth import validate_agent_ws_credentials
 from apps.node.services.internal import enrollment_auth
+from common.http.throttling import EnrollmentRateThrottle
 
 
 class InstallationSessionTests(TestCase):
@@ -29,11 +31,15 @@ class InstallationSessionTests(TestCase):
             expires_at=timezone.now() + timedelta(hours=24),
         )
         self.factory = APIRequestFactory()
+        # Keep the real throttle, but do not share its IP history between
+        # independent test cases (Django's DB rollback does not reset Redis).
+        throttle = EnrollmentRateThrottle()
+        throttle.cache.delete(throttle.get_cache_key(self.factory.get("/"), None))
 
-    def _open_session(self, installation_id: str):
+    def _open_session(self, installation_id: str, **recovery):
         request = self.factory.post(
             "/api/v1/node/enrollment/session",
-            {"role": NodeRole.AGENT, "installation_id": installation_id},
+            {"role": NodeRole.AGENT, "installation_id": installation_id, **recovery},
             format="json",
             HTTP_X_ORG_KEY=self.org.key,
             HTTP_X_NODE_TOKEN=self.token.token,
@@ -81,6 +87,107 @@ class InstallationSessionTests(TestCase):
             NodeInstallationSession.objects.get(installation_id="host-a").status,
             NodeInstallationSession.Status.COMPLETED,
         )
+
+    def test_lost_registration_response_recovers_one_node_with_a_new_session(self):
+        """A response lost after commit must not create another console record."""
+        opened = self._open_session("host-retry")
+        original_secret = opened.data["installation_session"]
+        lost_response = self._register("host-retry", original_secret)
+        self.assertEqual(lost_response.status_code, 200)
+        original_node_id = lost_response.data["node_id"]
+
+        # The Agent never received the credential. Replaying the completed
+        # session cannot recover it, so it opens a new temporary session with
+        # the original enrollment link and the SAME installation identity.
+        self.assertEqual(self._register("host-retry", original_secret).status_code, 401)
+        recovered = self._open_session("host-retry", session_secret="hfls_" + "R" * 43)
+        self.assertEqual(recovered.status_code, 201)
+        registered = self._register(
+            "host-retry", recovered.data["installation_session"],
+        )
+
+        self.assertEqual(registered.status_code, 200)
+        self.assertEqual(registered.data["node_id"], original_node_id)
+        self.assertEqual(Node.objects.filter(installation_id="host-retry").count(), 1)
+        self.assertEqual(NodeCredential.objects.filter(node_id=original_node_id).count(), 1)
+        self.assertTrue(validate_agent_ws_credentials(
+            original_node_id, registered.data["node_credential"],
+        ))
+        self.assertFalse(validate_agent_ws_credentials(
+            original_node_id, lost_response.data["node_credential"],
+        ))
+        self.assertFalse(NodeInstallationSession.objects.filter(
+            installation_id="host-retry",
+            status=NodeInstallationSession.Status.ACTIVE,
+        ).exists())
+
+    def test_retry_before_registration_rotates_only_the_temporary_session(self):
+        first = self._open_session("host-retry")
+        retry = self._open_session("host-retry")
+        self.assertEqual(retry.status_code, 201)
+        self.assertEqual(NodeInstallationSession.objects.filter(
+            installation_id="host-retry",
+        ).count(), 1)
+        self.assertEqual(self._register(
+            "host-retry", first.data["installation_session"],
+        ).status_code, 401)
+        registered = self._register("host-retry", retry.data["installation_session"])
+        self.assertEqual(registered.status_code, 200)
+        self.assertEqual(Node.objects.filter(installation_id="host-retry").count(), 1)
+
+    def test_recovery_secret_survives_lost_open_response_and_can_be_released(self):
+        first = self._open_session("host-recovery")
+        registered = self._register("host-recovery", first.data["installation_session"])
+        self.assertEqual(registered.status_code, 200)
+        proposed = "hfls_" + "R" * 43
+
+        # Ignore the first response as if it were lost on the network. A
+        # repeated recovery POST must not rotate to a secret the Agent lacks.
+        lost = self._open_session("host-recovery", session_secret=proposed)
+        self.assertEqual(lost.status_code, 201)
+        retried = self._open_session("host-recovery", session_secret=proposed)
+        self.assertEqual(retried.status_code, 201)
+        self.assertEqual(retried.data["installation_session"], proposed)
+        rendered = json.loads(retried.render().content)["data"]
+        self.assertTrue(rendered["client_session_secret_supported"])
+        self.assertEqual(NodeInstallationSession.objects.filter(
+            installation_id="host-recovery", status=NodeInstallationSession.Status.ACTIVE,
+        ).count(), 1)
+
+        request = self.factory.delete(
+            "/api/v1/node/enrollment/session",
+            {"role": NodeRole.AGENT, "installation_id": "host-recovery"},
+            format="json", HTTP_X_ORG_KEY=self.org.key, HTTP_X_NODE_TOKEN=proposed,
+        )
+        self.assertEqual(InstallationSessionView.as_view()(request).status_code, 204)
+        self.assertFalse(NodeInstallationSession.objects.filter(
+            installation_id="host-recovery", status=NodeInstallationSession.Status.ACTIVE,
+        ).exists())
+        self.assertEqual(Node.objects.filter(installation_id="host-recovery").count(), 1)
+
+    def test_recovery_secret_rejects_invalid_values(self):
+        for value in (None, 123, {}, "hfls_short", "hfls_" + "!" * 43):
+            with self.subTest(value=value):
+                response = self._open_session("host-recovery", session_secret=value)
+                self.assertEqual(response.status_code, 400)
+        self.assertFalse(NodeInstallationSession.objects.exists())
+
+    def test_recovery_secret_does_not_bypass_expired_enrollment_authorization(self):
+        self.token.expires_at = timezone.now() - timedelta(seconds=1)
+        self.token.save(update_fields=["expires_at"])
+        response = self._open_session("host-recovery", session_secret="hfls_" + "R" * 43)
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(NodeInstallationSession.objects.exists())
+
+    def test_recovery_secret_cannot_overwrite_a_different_installation(self):
+        secret = "hfls_" + "R" * 43
+        first = self._open_session("host-a", session_secret=secret)
+        self.assertEqual(first.status_code, 201)
+        other = self._open_session("host-b", session_secret=secret)
+        self.assertEqual(other.status_code, 400)
+        self.assertEqual(NodeInstallationSession.objects.count(), 1)
+        self.assertTrue(NodeInstallationSession.objects.get().matches(secret))
+        self.assertEqual(NodeInstallationSession.objects.get().installation_id, "host-a")
 
     def test_session_rejects_a_different_installation_identity(self):
         opened = self._open_session("host-a")

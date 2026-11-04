@@ -67,12 +67,17 @@ class InstallationSessionView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         try:
+            payload = request.data if isinstance(request.data, dict) else {}
+            session_secret = payload.get("session_secret", "")
+            if not isinstance(session_secret, str):
+                raise ValueError("invalid recovery session secret")
             session, secret = open_installation_session(
                 org=org,
                 enrollment_secret=enrollment_secret,
                 role=role,
                 installation_id=installation_id,
                 namespace=org_key,
+                session_secret=session_secret,
             )
         except PermissionError as exc:
             return Response(
@@ -87,6 +92,7 @@ class InstallationSessionView(APIView):
         return Response(
             {
                 "installation_session": secret,
+                "client_session_secret_supported": True,
                 "gateway_scope": (
                     "public"
                     if session.enrollment_token.gateway_scope == "platform"

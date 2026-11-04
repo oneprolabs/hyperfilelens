@@ -17,8 +17,9 @@ import (
 
 // InstallationSession is the server-authoritative authorization for one install.
 type InstallationSession struct {
-	Secret       string
-	GatewayScope string
+	Secret                       string
+	GatewayScope                 string
+	ClientSessionSecretSupported bool
 }
 
 // OpenInstallationSession exchanges an enrollment token for a resumable session.
@@ -27,16 +28,30 @@ func OpenInstallationSession(
 	cfg *model.AgentConfig,
 	installationID string,
 ) (InstallationSession, error) {
+	return openInstallationSession(ctx, cfg, installationID, "")
+}
+
+// A client-known secret is used only for recovery on consoles advertising
+// support. It lets cleanup authenticate even when the POST response is lost.
+func openInstallationSession(
+	ctx context.Context,
+	cfg *model.AgentConfig,
+	installationID, sessionSecret string,
+) (InstallationSession, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBaseURL), "/")
 	org := strings.TrimSpace(cfg.OrgKey)
 	token := strings.TrimSpace(cfg.NodeToken)
 	if base == "" || org == "" || token == "" || strings.TrimSpace(installationID) == "" {
 		return InstallationSession{}, fmt.Errorf("installation session credentials are incomplete")
 	}
-	body, err := json.Marshal(map[string]string{
+	payload := map[string]string{
 		"role":            string(cfg.Role),
 		"installation_id": strings.TrimSpace(installationID),
-	})
+	}
+	if sessionSecret != "" {
+		payload["session_secret"] = sessionSecret
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return InstallationSession{}, err
 	}
@@ -55,12 +70,18 @@ func OpenInstallationSession(
 	client := enrollmentHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
-		return InstallationSession{}, err
+		return InstallationSession{}, &RegistrationError{Operation: "installation session", Cause: err}
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return InstallationSession{}, fmt.Errorf("installation session HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+		return InstallationSession{}, &RegistrationError{
+			Operation: "installation session", StatusCode: resp.StatusCode,
+			Detail: registrationErrorDetail(raw),
+		}
+	}
+	if readErr != nil {
+		return InstallationSession{}, &RegistrationError{Operation: "installation session", Cause: readErr}
 	}
 	data, err := decodeAPIData(raw)
 	if err != nil {
@@ -71,8 +92,9 @@ func OpenInstallationSession(
 		return InstallationSession{}, fmt.Errorf("installation session response is incomplete")
 	}
 	return InstallationSession{
-		Secret:       secret,
-		GatewayScope: strings.TrimSpace(stringField(data, "gateway_scope")),
+		Secret:                       secret,
+		GatewayScope:                 strings.TrimSpace(stringField(data, "gateway_scope")),
+		ClientSessionSecretSupported: boolField(data, "client_session_secret_supported"),
 	}, nil
 }
 
