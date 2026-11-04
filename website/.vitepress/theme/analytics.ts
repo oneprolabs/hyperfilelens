@@ -35,6 +35,7 @@ function websitePageMetadata(path: string) {
   if (isDocs) {
     if (/^(?:getting-started|$)/.test(relative)) pageGroup = 'quick_start'
     else if (/^(?:product|backup-restore|insights)/.test(relative)) pageGroup = 'product_usage'
+    else if (/^governance/.test(relative)) pageGroup = 'governance'
     else if (/^deployment/.test(relative)) pageGroup = 'deployment_operations'
     else pageGroup = 'help_center'
   }

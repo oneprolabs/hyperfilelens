@@ -11,9 +11,13 @@ description: 理解 HyperFileLens 中组织、备份源、目标存储、任务�
 
 | 概念 | 说明 |
 | --- | --- |
-| 组织 | 用户、备份资源、任务和业务数据的工作空间 |
-| 成员 | 可以进入组织并使用授权功能的用户 |
-| 角色 | 决定成员可以查看或执行哪些组织操作 |
+| 组织 | 用户、备份资源、任务和业务数据的工作空间；见[组织](/zh/docs/governance/organization) |
+| 成员 | 可以进入组织并使用授权功能的用户；见[成员](/zh/docs/governance/members) |
+| 角色 | 决定成员可以查看或执行哪些组织操作；见[角色与权限](/zh/docs/governance/roles) |
+| 组 | 在组织内划分成员与资源的协作范围；见[组](/zh/docs/governance/groups) |
+| 用量与配额 | 组织限额、占用以及配额申请与审批；见[用量与配额](/zh/docs/governance/usage) |
+
+完整组织治理说明见[治理概述](/zh/docs/governance/)。
 
 ## 数据保护
 

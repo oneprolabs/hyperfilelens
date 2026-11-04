@@ -27,6 +27,9 @@ Avoid selecting:
 - large caches or reproducible data with no recovery value;
 - overlapping root folders that include the same data more than once.
 
+If you need to back up a host root or system paths such as `/lib` and `/lib/modules`, read the FAQ
+[Backup scope and system paths](/docs/faq/backup-scope) first, then confirm the result in the first snapshot.
+
 ## NAS shares
 
 Select **Add Source → NAS**, configure the share protocol, address, and credentials, and choose a Proxy that can reach the share. Verify the path, protocol, credentials, and character set before saving. The Proxy must be able to connect to the NAS; access to the console alone is not sufficient.

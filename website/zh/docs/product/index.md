@@ -35,6 +35,10 @@ HyperFileLens 以备份快照为核心。备份配置将需要保护的数据、
 
 需要完整说明时，请进入[智能洞察使用流程](/zh/docs/insights/)。
 
+## 组织治理
+
+备份与洞察运行在组织工作空间内。需要管理成员、默认角色、组授权或用量配额时，请进入[治理](/zh/docs/governance/)。运行侧的任务与告警见[任务、告警与审计](/zh/docs/deployment/operations)。
+
 ## 首次使用
 
 第一次使用 HyperFileLens 时，建议按照[快速开始](/zh/docs/getting-started/install)使用同一份测试数据依次完成备份、恢复和智能洞察。完成首次流程后，再根据实际数据量和业务要求配置策略、保留规则及日常验证计划。

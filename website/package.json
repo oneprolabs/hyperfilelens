@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vitepress dev --port 5174",
     "build": "vitepress build",
-    "preview": "vitepress preview --port 4174"
+    "preview": "vitepress preview --port 4174",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "node --test tests/navigation.browser.mjs"
   },
   "dependencies": {
     "vitepress": "^1.6.4",

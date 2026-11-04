@@ -7,12 +7,14 @@ description: Understand product boundaries and security responsibilities when de
 
 This page describes important product boundaries. See [Supported Configurations](/docs/reference/support-matrix) for platforms and storage types.
 
-For Windows-specific file attributes, NTFS permissions, and SMB/CIFS behavior,
-see [Windows file attribute and permission limitations](/docs/reference/windows-limitations).
+For Windows file attributes, NTFS permissions, and SMB/CIFS behavior, see the FAQ
+[Windows attributes and permissions](/docs/reference/windows-limitations).
+For host root directories and system paths such as `/lib`, see
+[Backup scope and system paths](/docs/faq/backup-scope).
 
 ## Product boundaries
 
-- File-level backup does not automatically provide application-consistent copies of databases, virtual machines, or business applications.
+- File-level backup does not automatically provide application-consistent copies of databases, virtual machines, or business applications, and it is not a full system-disk image.
 - A NAS connection without a Proxy is supported only for Linux backup hosts where the product explicitly offers that option.
 - The current release cannot import an existing backup repository as a new target storage resource.
 - A snapshot can be restored only if it succeeded or partially succeeded and contains backed-up files.
