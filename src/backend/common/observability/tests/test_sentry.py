@@ -72,6 +72,9 @@ def test_init_sentry_uses_fixed_privacy_policy(monkeypatch):
     assert kwargs["send_default_pii"] is False
     assert kwargs["include_local_variables"] is False
     assert kwargs["max_request_body_size"] == "never"
+    assert kwargs["shutdown_timeout"] == 1
+    assert kwargs["transport_queue_size"] == 32
+    assert kwargs["send_client_reports"] is False
     assert kwargs["before_send_transaction"] is kwargs["before_send"]
     assert kwargs["integrations"] == [fake_django, fake_celery, fake_redis]
 
@@ -206,3 +209,114 @@ def test_init_failure_is_non_blocking(monkeypatch):
     monkeypatch.setenv("SENTRY_BACKEND_DSN", "https://public@sentry.example.com/42")
     with patch("sentry_sdk.init", side_effect=ValueError("bad config")):
         init_sentry()
+
+
+def _make_fail_open_transport():
+    from sentry_sdk.consts import DEFAULT_OPTIONS
+    from common.observability.sentry import _fail_open_transport
+
+    options = dict(DEFAULT_OPTIONS)
+    options.update(dsn="https://public@sentry.example.com/42", transport_queue_size=2, send_client_reports=False)
+    return _fail_open_transport()(options)
+
+
+def _test_envelope():
+    from sentry_sdk.envelope import Envelope
+
+    envelope = Envelope()
+    envelope.add_event({"event_id": "0" * 32, "message": "test event"})
+    return envelope
+
+
+def test_transport_has_short_timeout_and_no_network_retries():
+    transport = _make_fail_open_transport()
+    try:
+        options = transport._get_pool_options()
+        assert options["timeout"].total == 2
+        assert options["retries"] == 0
+    finally:
+        transport.kill()
+
+
+@pytest.mark.parametrize("failure", ["dns", "timeout", "http_503"])
+def test_sentry_network_failure_stays_off_api_request_thread(failure):
+    """Even a blocked Sentry sender cannot delay the business response."""
+    import socket
+    import threading
+    from django.http import JsonResponse
+    from django.test import RequestFactory
+    from urllib3.response import HTTPResponse
+
+    transport = _make_fail_open_transport()
+    started, release, finished = (threading.Event() for _ in range(3))
+    api_thread = threading.get_ident()
+    sender_threads = []
+
+    def unavailable(*args, **kwargs):
+        sender_threads.append(threading.get_ident())
+        started.set()
+        assert release.wait(5), "test failed to release the network sender"
+        try:
+            if failure == "dns":
+                raise socket.gaierror("Sentry DNS unavailable")
+            if failure == "timeout":
+                raise TimeoutError("Sentry timeout")
+            return HTTPResponse(status=503, body=b"unavailable")
+        finally:
+            finished.set()
+
+    # A minimal API handler performing best-effort reporting through the
+    # production transport; no real Sentry traffic or external DNS involved.
+    def api_view(request):
+        transport.capture_envelope(_test_envelope())
+        return JsonResponse({"status": "ok"})
+
+    try:
+        with patch.object(transport._pool, "request", side_effect=unavailable) as send:
+            response = api_view(RequestFactory().get("/health"))
+            assert response.status_code == 200
+            assert started.wait(2)
+            assert not finished.is_set()  # API returned while sender is blocked.
+            assert len(sender_threads) == 1
+            assert sender_threads[0] != api_thread
+            release.set()
+            transport.flush(2)
+            assert finished.is_set()
+            assert send.call_count == 1
+    finally:
+        release.set()
+        transport.kill()
+
+
+def test_queue_overflow_drops_events_without_waiting_for_sender():
+    import threading
+
+    transport = _make_fail_open_transport()
+    started, release = threading.Event(), threading.Event()
+
+    def blocked(envelope):
+        started.set()
+        release.wait(5)
+
+    try:
+        with patch.object(transport, "_send_envelope", side_effect=blocked):
+            transport.capture_envelope(_test_envelope())
+            assert started.wait(2)
+            # More than the queue's capacity must return without waiting.
+            for _ in range(20):
+                transport.capture_envelope(_test_envelope())
+            assert transport._worker._queue.qsize() == 2
+            release.set()
+            transport.flush(2)
+    finally:
+        release.set()
+        transport.kill()
+
+
+def test_transport_thread_start_failure_does_not_escape_to_api():
+    transport = _make_fail_open_transport()
+    try:
+        with patch.object(transport._worker, "submit", side_effect=RuntimeError("no thread")):
+            transport.capture_envelope(_test_envelope())
+    finally:
+        transport.kill()

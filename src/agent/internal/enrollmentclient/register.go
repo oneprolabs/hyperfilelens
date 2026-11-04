@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,6 +41,20 @@ type RegistrationResult struct {
 	NodeCredential   string
 	CredentialReused bool
 }
+
+const (
+	registrationMaxAttempts = 3
+	registrationRetryBase   = time.Second
+)
+
+// RegistrationRetryCallback receives a retryable registration failure before
+// the next attempt starts. attempt is one-based.
+type RegistrationRetryCallback func(attempt, maxAttempts int, err error)
+
+// SessionRenewedCallback receives a replacement session secret after an
+// ambiguous registration failure. The secret is supplied only in memory so
+// callers can update their cleanup state.
+type SessionRenewedCallback func(secret string)
 
 // EnsureNodeRegistered registers missing identities, migrates legacy credentials,
 // and refreshes durable nodes so newly introduced host identity fields are backfilled.
@@ -127,6 +142,87 @@ func RegisterNodeHTTP(
 		build,
 		existingNodeCredential,
 	)
+}
+
+// RegisterNodeHTTPWithRetry is the install-time, bounded recovery path. Runtime
+// heartbeats continue using RegisterNodeHTTP. Each retry renews the temporary
+// session with the original enrollment authorization, but never the persisted
+// installation identity. This also recovers a committed-but-lost response.
+func RegisterNodeHTTPWithRetry(
+	ctx context.Context,
+	cfg *model.AgentConfig,
+	build selfupdate.BuildIdentity,
+	existingNodeCredential string,
+	originalEnrollmentSecret string,
+	onSessionRenewed SessionRenewedCallback,
+	onRetry RegistrationRetryCallback,
+) (RegistrationResult, error) {
+	if cfg.InstallationID == "" || cfg.NodeID != "" || originalEnrollmentSecret == "" {
+		return RegistrationResult{}, fmt.Errorf("registration retry requires an installation identity and enrollment authorization, without node_id")
+	}
+	// Preserve the existing 30-second HTTP timeout for a single request:
+	// shrinking it would make an otherwise healthy but busy single-worker
+	// console fail earlier. Bound the complete recovery path separately.
+	retryCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	var lastErr error
+	for attempt := 1; attempt <= registrationMaxAttempts; attempt++ {
+		result, err := RegisterNodeHTTP(retryCtx, cfg, build, existingNodeCredential)
+		if err == nil {
+			return result, nil
+		}
+		if ctx.Err() != nil {
+			return RegistrationResult{}, ctx.Err()
+		}
+		if !IsRetryableRegistrationError(err) || attempt == registrationMaxAttempts {
+			return RegistrationResult{}, err
+		}
+		lastErr = err
+		if onRetry != nil {
+			onRetry(attempt+1, registrationMaxAttempts, err)
+		}
+		delay := registrationRetryBase * time.Duration(1<<(attempt-1))
+		var httpErr *RegistrationError
+		if errors.As(err, &httpErr) && httpErr.RetryAfter > delay {
+			delay = httpErr.RetryAfter
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-retryCtx.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				return RegistrationResult{}, ctx.Err()
+			}
+			return RegistrationResult{}, lastErr
+		case <-timer.C:
+		}
+		if err := renewRegistrationSession(retryCtx, cfg, originalEnrollmentSecret, onSessionRenewed); err != nil {
+			if ctx.Err() != nil {
+				return RegistrationResult{}, ctx.Err()
+			}
+			return RegistrationResult{}, err
+		}
+	}
+	return RegistrationResult{}, lastErr
+}
+
+func renewRegistrationSession(
+	ctx context.Context,
+	cfg *model.AgentConfig,
+	originalEnrollmentSecret string,
+	onSessionRenewed SessionRenewedCallback,
+) error {
+	recoveryCfg := *cfg
+	recoveryCfg.NodeToken = originalEnrollmentSecret
+	session, err := OpenInstallationSession(ctx, &recoveryCfg, cfg.InstallationID)
+	if err != nil {
+		return err
+	}
+	cfg.NodeToken = session.Secret
+	if onSessionRenewed != nil {
+		onSessionRenewed(session.Secret)
+	}
+	return nil
 }
 
 func httpRegisterNode(
@@ -224,14 +320,21 @@ func httpRegisterNode(
 
 	resp, err := enrollmentHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
-		return RegistrationResult{}, err
+		return RegistrationResult{}, &RegistrationError{Cause: err}
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return RegistrationResult{}, fmt.Errorf("heartbeat HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+		return RegistrationResult{}, &RegistrationError{
+			StatusCode: resp.StatusCode,
+			RetryAfter: registrationRetryAfter(resp.Header.Get("Retry-After")),
+			Detail:     registrationErrorDetail(raw),
+		}
 	}
 
+	if readErr != nil {
+		return RegistrationResult{}, &RegistrationError{Cause: readErr}
+	}
 	data, err := decodeAPIData(raw)
 	if err != nil {
 		return RegistrationResult{}, fmt.Errorf("heartbeat response: %w", err)
@@ -255,4 +358,27 @@ func httpRegisterNode(
 		return RegistrationResult{}, fmt.Errorf("heartbeat missing node_id")
 	}
 	return result, nil
+}
+
+// Bound Retry-After even if a proxy supplies an unreasonable value.
+func registrationRetryAfter(value string) time.Duration {
+	var delay time.Duration
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		if seconds > 5 {
+			return 5 * time.Second
+		}
+		delay = time.Duration(seconds) * time.Second
+	} else if at, err := http.ParseTime(value); err == nil {
+		delay = time.Until(at)
+	}
+	if delay < 0 {
+		return 0
+	}
+	if delay > 5*time.Second {
+		return 5 * time.Second
+	}
+	return delay
 }

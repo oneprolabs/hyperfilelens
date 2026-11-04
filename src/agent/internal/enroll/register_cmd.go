@@ -62,6 +62,7 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 	if err != nil {
 		logFail("Installation session could not be started: "+err.Error(), 2)
 	}
+	originalEnrollmentSecret := cfg.NodeToken
 	cfg.NodeToken = session.Secret
 	sessionCompleted := false
 	defer func() {
@@ -132,6 +133,8 @@ func RunRegister(ctx context.Context, opts InstallOptions) error {
 		cfg,
 		agentVer,
 		existingNodeCredential,
+		originalEnrollmentSecret,
+		&cfg.NodeToken,
 		rememberIssuedCredential,
 		func() {
 			committed = true

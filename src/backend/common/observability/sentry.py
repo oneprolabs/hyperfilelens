@@ -37,6 +37,35 @@ _SAFE_SPAN_FIELDS = frozenset(
 )
 
 
+def _fail_open_transport() -> type:
+    """Return a bounded Sentry transport that cannot hold up the API.
+
+    Sentry is deliberately best-effort.  The SDK's default urllib3 retry
+    policy and 30-second transport timeout are too expensive for a
+    resource-constrained control plane when the Sentry endpoint is
+    unreachable.
+    """
+    from sentry_sdk.transport import HttpTransport
+
+    class FailOpenHttpTransport(HttpTransport):
+        TIMEOUT = 2
+
+        def _get_pool_options(self) -> dict[str, Any]:
+            options = super()._get_pool_options()
+            options["retries"] = 0
+            return options
+
+        def capture_envelope(self, envelope: Any) -> None:
+            # SDK thread startup/queue errors must be as harmless as network
+            # failures. Do not log payloads or recurse through error reporting.
+            try:
+                super().capture_envelope(envelope)
+            except Exception:
+                logger.debug("Sentry event discarded because transport is unavailable")
+
+    return FailOpenHttpTransport
+
+
 def _env_bool(name: str, *, default: bool = False) -> bool:
     raw = (os.getenv(name) or "").strip().lower()
     if not raw:
@@ -240,6 +269,7 @@ def init_sentry() -> None:
     try:
         sentry_sdk.init(
             dsn=dsn,
+            transport=_fail_open_transport(),
             integrations=[DjangoIntegration(), CeleryIntegration(), RedisIntegration()],
             environment=environment or None,
             release=release or None,
@@ -251,6 +281,9 @@ def init_sentry() -> None:
             before_breadcrumb=_before_breadcrumb,
             before_send=_before_send,
             before_send_transaction=_before_send,
+            shutdown_timeout=1,
+            transport_queue_size=32,
+            send_client_reports=False,
         )
     except Exception as exc:  # Sentry must never prevent process startup.
         logger.warning("Sentry initialization failed; reporting is disabled: %s", exc)

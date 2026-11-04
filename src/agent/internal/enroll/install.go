@@ -111,6 +111,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 	if err != nil {
 		logFail("Installation session could not be started: "+err.Error(), 2)
 	}
+	originalEnrollmentSecret := cfg.NodeToken
 	cfg.NodeToken = session.Secret
 	sessionCompleted := false
 	configCommitted := false
@@ -231,6 +232,8 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			cfg,
 			agentVer,
 			existingNodeCredential,
+			originalEnrollmentSecret,
+			&cfg.NodeToken,
 			nil,
 			markEnrollmentComplete,
 		)
@@ -248,6 +251,8 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			cfg,
 			agentVer,
 			existingNodeCredential,
+			originalEnrollmentSecret,
+			&cfg.NodeToken,
 			rememberIssuedCredential,
 			markEnrollmentComplete,
 		)
@@ -283,6 +288,8 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			cfg,
 			agentVer,
 			existingNodeCredential,
+			originalEnrollmentSecret,
+			&cfg.NodeToken,
 			rememberIssuedCredential,
 			markEnrollmentComplete,
 		)
@@ -307,6 +314,8 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			cfg,
 			agentVer,
 			existingNodeCredential,
+			originalEnrollmentSecret,
+			&cfg.NodeToken,
 			rememberIssuedCredential,
 			markEnrollmentComplete,
 		)
@@ -391,6 +400,8 @@ func finishEnrollment(
 	cfg Config,
 	agentVer string,
 	existingNodeCredential string,
+	originalEnrollmentSecret string,
+	sessionToken *string,
 	onCredentialIssued func(string),
 	onRegistered func(),
 ) error {
@@ -412,11 +423,25 @@ func finishEnrollment(
 	if err != nil {
 		logFail("Installed Agent build identity could not be verified: "+err.Error(), 5)
 	}
-	registration, err := enrollmentclient.RegisterNodeHTTP(
+	registration, err := enrollmentclient.RegisterNodeHTTPWithRetry(
 		ctx,
 		agentCfg,
 		buildIdentity,
 		existingNodeCredential,
+		originalEnrollmentSecret,
+		func(secret string) {
+			if sessionToken != nil {
+				*sessionToken = secret
+			}
+		},
+		func(attempt, maxAttempts int, retryErr error) {
+			writeCommandLogOnly("Node registration retry: " + retryErr.Error() + "\n")
+			logWarn(fmt.Sprintf(
+				"Node registration temporarily unavailable; retrying (attempt %d/%d)...",
+				attempt,
+				maxAttempts,
+			))
+		},
 	)
 	nodeID := registration.NodeID
 	if err != nil {
@@ -427,6 +452,8 @@ func finishEnrollment(
 				5,
 				"HFL-REGISTER-005",
 			)
+		} else if enrollmentclient.IsRetryableRegistrationError(err) {
+			abortInstallFailure(temporaryRegistrationFailure(err))
 		} else {
 			logFail("Node registration failed: "+err.Error(), 5)
 		}

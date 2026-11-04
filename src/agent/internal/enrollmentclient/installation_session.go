@@ -55,12 +55,15 @@ func OpenInstallationSession(
 	client := enrollmentHTTPClient(30 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
-		return InstallationSession{}, err
+		return InstallationSession{}, &RegistrationError{Operation: "installation session", Cause: err}
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return InstallationSession{}, fmt.Errorf("installation session HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+		return InstallationSession{}, &RegistrationError{
+			Operation: "installation session", StatusCode: resp.StatusCode,
+			Detail: registrationErrorDetail(raw),
+		}
 	}
 	data, err := decodeAPIData(raw)
 	if err != nil {

@@ -82,6 +82,53 @@ class InstallationSessionTests(TestCase):
             NodeInstallationSession.Status.COMPLETED,
         )
 
+    def test_lost_registration_response_recovers_one_node_with_a_new_session(self):
+        """A response lost after commit must not create another console record."""
+        opened = self._open_session("host-retry")
+        original_secret = opened.data["installation_session"]
+        lost_response = self._register("host-retry", original_secret)
+        self.assertEqual(lost_response.status_code, 200)
+        original_node_id = lost_response.data["node_id"]
+
+        # The Agent never received the credential. Replaying the completed
+        # session cannot recover it, so it opens a new temporary session with
+        # the original enrollment link and the SAME installation identity.
+        self.assertEqual(self._register("host-retry", original_secret).status_code, 401)
+        recovered = self._open_session("host-retry")
+        self.assertEqual(recovered.status_code, 201)
+        registered = self._register(
+            "host-retry", recovered.data["installation_session"],
+        )
+
+        self.assertEqual(registered.status_code, 200)
+        self.assertEqual(registered.data["node_id"], original_node_id)
+        self.assertEqual(Node.objects.filter(installation_id="host-retry").count(), 1)
+        self.assertEqual(NodeCredential.objects.filter(node_id=original_node_id).count(), 1)
+        self.assertTrue(validate_agent_ws_credentials(
+            original_node_id, registered.data["node_credential"],
+        ))
+        self.assertFalse(validate_agent_ws_credentials(
+            original_node_id, lost_response.data["node_credential"],
+        ))
+        self.assertFalse(NodeInstallationSession.objects.filter(
+            installation_id="host-retry",
+            status=NodeInstallationSession.Status.ACTIVE,
+        ).exists())
+
+    def test_retry_before_registration_rotates_only_the_temporary_session(self):
+        first = self._open_session("host-retry")
+        retry = self._open_session("host-retry")
+        self.assertEqual(retry.status_code, 201)
+        self.assertEqual(NodeInstallationSession.objects.filter(
+            installation_id="host-retry",
+        ).count(), 1)
+        self.assertEqual(self._register(
+            "host-retry", first.data["installation_session"],
+        ).status_code, 401)
+        registered = self._register("host-retry", retry.data["installation_session"])
+        self.assertEqual(registered.status_code, 200)
+        self.assertEqual(Node.objects.filter(installation_id="host-retry").count(), 1)
+
     def test_session_rejects_a_different_installation_identity(self):
         opened = self._open_session("host-a")
 
