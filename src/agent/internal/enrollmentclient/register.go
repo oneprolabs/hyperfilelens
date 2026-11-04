@@ -3,6 +3,8 @@ package enrollmentclient
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,9 +53,16 @@ const (
 // the next attempt starts. attempt is one-based.
 type RegistrationRetryCallback func(attempt, maxAttempts int, err error)
 
-// SessionRenewedCallback receives a replacement session secret after an
-// ambiguous registration failure. The secret is supplied only in memory so
-// callers can update their cleanup state.
+// RegistrationRecovery contains only the in-memory authorization and server
+// capability needed to recover a registration whose response was lost.
+type RegistrationRecovery struct {
+	EnrollmentSecret             string
+	ClientSessionSecretSupported bool
+}
+
+// SessionRenewedCallback records a replacement secret before a recovery POST,
+// so cleanup can authenticate even if the response is lost. The secret is
+// supplied only in memory.
 type SessionRenewedCallback func(secret string)
 
 // EnsureNodeRegistered registers missing identities, migrates legacy credentials,
@@ -145,19 +154,19 @@ func RegisterNodeHTTP(
 }
 
 // RegisterNodeHTTPWithRetry is the install-time, bounded recovery path. Runtime
-// heartbeats continue using RegisterNodeHTTP. Each retry renews the temporary
-// session with the original enrollment authorization, but never the persisted
-// installation identity. This also recovers a committed-but-lost response.
+// heartbeats continue using RegisterNodeHTTP. Retry the existing session first;
+// only an invalid enrollment session AFTER a transient failure may need recovery
+// of a committed-but-lost response. Never change the installation identity.
 func RegisterNodeHTTPWithRetry(
 	ctx context.Context,
 	cfg *model.AgentConfig,
 	build selfupdate.BuildIdentity,
 	existingNodeCredential string,
-	originalEnrollmentSecret string,
+	recovery RegistrationRecovery,
 	onSessionRenewed SessionRenewedCallback,
 	onRetry RegistrationRetryCallback,
 ) (RegistrationResult, error) {
-	if cfg.InstallationID == "" || cfg.NodeID != "" || originalEnrollmentSecret == "" {
+	if cfg.InstallationID == "" || cfg.NodeID != "" || recovery.EnrollmentSecret == "" {
 		return RegistrationResult{}, fmt.Errorf("registration retry requires an installation identity and enrollment authorization, without node_id")
 	}
 	// Preserve the existing 30-second HTTP timeout for a single request:
@@ -174,10 +183,19 @@ func RegisterNodeHTTPWithRetry(
 		if ctx.Err() != nil {
 			return RegistrationResult{}, ctx.Err()
 		}
-		if !IsRetryableRegistrationError(err) || attempt == registrationMaxAttempts {
+		needsRecovery := lastErr != nil && invalidatedRegistrationSession(err)
+		if needsRecovery && (!recovery.ClientSessionSecretSupported || attempt == registrationMaxAttempts) {
+			// Older consoles cannot safely acknowledge a client-known recovery
+			// secret. An exhausted retry budget also cannot recover now.
+			// Preserve the transient failure and same-command retry guidance.
+			return RegistrationResult{}, lastErr
+		}
+		if (!IsRetryableRegistrationError(err) && !needsRecovery) || attempt == registrationMaxAttempts {
 			return RegistrationResult{}, err
 		}
-		lastErr = err
+		if !needsRecovery {
+			lastErr = err
+		}
 		if onRetry != nil {
 			onRetry(attempt+1, registrationMaxAttempts, err)
 		}
@@ -196,14 +214,27 @@ func RegisterNodeHTTPWithRetry(
 			return RegistrationResult{}, lastErr
 		case <-timer.C:
 		}
-		if err := renewRegistrationSession(retryCtx, cfg, originalEnrollmentSecret, onSessionRenewed); err != nil {
-			if ctx.Err() != nil {
-				return RegistrationResult{}, ctx.Err()
+		if needsRecovery {
+			if err := renewRegistrationSession(retryCtx, cfg, recovery.EnrollmentSecret, onSessionRenewed); err != nil {
+				if ctx.Err() != nil {
+					return RegistrationResult{}, ctx.Err()
+				}
+				return RegistrationResult{}, err
 			}
-			return RegistrationResult{}, err
 		}
 	}
 	return RegistrationResult{}, lastErr
+}
+
+// First-attempt authorization/mode failures are never retried. These exact
+// protocol errors following a transient failure can mean the prior request
+// already committed, so its session can no longer return a credential.
+func invalidatedRegistrationSession(err error) bool {
+	var httpErr *RegistrationError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	return httpErr.StatusCode == http.StatusUnauthorized && httpErr.Detail == "invalid enrollment token"
 }
 
 func renewRegistrationSession(
@@ -212,17 +243,45 @@ func renewRegistrationSession(
 	originalEnrollmentSecret string,
 	onSessionRenewed SessionRenewedCallback,
 ) error {
+	var random [32]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return fmt.Errorf("generate recovery session secret: %w", err)
+	}
+	secret := "hfls_" + base64.RawURLEncoding.EncodeToString(random[:])
 	recoveryCfg := *cfg
 	recoveryCfg.NodeToken = originalEnrollmentSecret
-	session, err := OpenInstallationSession(ctx, &recoveryCfg, cfg.InstallationID)
-	if err != nil {
-		return err
-	}
-	cfg.NodeToken = session.Secret
+	// Record the proposed secret BEFORE the mutating HTTP request. Even if the
+	// response is lost, the installer now possesses the secret needed for DELETE.
+	cfg.NodeToken = secret
 	if onSessionRenewed != nil {
-		onSessionRenewed(session.Secret)
+		onSessionRenewed(secret)
 	}
-	return nil
+	for attempt := 1; attempt <= 2; attempt++ {
+		session, err := openInstallationSession(ctx, &recoveryCfg, cfg.InstallationID, secret)
+		if err == nil {
+			if session.Secret != secret {
+				// A mixed-version console might ignore the optional field.
+				// Keep its actual reply available for cleanup before stopping.
+				cfg.NodeToken = session.Secret
+				if onSessionRenewed != nil {
+					onSessionRenewed(session.Secret)
+				}
+				return fmt.Errorf("console did not honor the recovery session secret")
+			}
+			return nil
+		}
+		if !IsRetryableRegistrationError(err) || attempt == 2 {
+			return err
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("registration session recovery exhausted")
 }
 
 func httpRegisterNode(

@@ -30,7 +30,7 @@ func TestRegistrationRetryPreservesInstallationIdentity(t *testing.T) {
 		{"429_then_success", []int{429, 200}, false},
 		{"408_then_success", []int{408, 200}, false},
 		{"503_twice_then_success", []int{503, 503, 200}, false},
-		{"lost_committed_response", []int{502, 200}, true},
+		{"lost_committed_response", []int{502, 401, 200}, true},
 		{"exhausted", []int{504, 504, 504}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -61,7 +61,10 @@ func TestRegistrationRetryPreservesInstallationIdentity(t *testing.T) {
 						t.Error("recovery did not use original authorization")
 					}
 					sessions++
-					currentSecret = "hfls_recovered_" + strconv.Itoa(sessions)
+					currentSecret, _ = body["session_secret"].(string)
+					if len(currentSecret) != 48 || !strings.HasPrefix(currentSecret, "hfls_") {
+						t.Error("missing client-known recovery secret")
+					}
 					w.WriteHeader(http.StatusCreated)
 					json.NewEncoder(w).Encode(map[string]string{"installation_session": currentSecret})
 				case "/api/v1/node/nodes/heartbeat/":
@@ -88,7 +91,11 @@ func TestRegistrationRetryPreservesInstallationIdentity(t *testing.T) {
 					status := test.statuses[attempts-1]
 					if status != 200 {
 						w.WriteHeader(status)
-						io.WriteString(w, "<html>proxy error with secret</html>")
+						if status == 401 {
+							io.WriteString(w, `{"code":401,"message":"failed","data":{"error":"invalid enrollment token"}}`)
+						} else {
+							io.WriteString(w, "<html>proxy error with secret</html>")
+						}
 						return
 					}
 					nodes["hfli_persisted"] = "42"
@@ -100,13 +107,17 @@ func TestRegistrationRetryPreservesInstallationIdentity(t *testing.T) {
 			defer server.Close()
 			cfg := &model.AgentConfig{APIBaseURL: server.URL, OrgKey: "org", Role: model.RoleAgent, InstallationID: "hfli_persisted", NodeToken: currentSecret}
 			cleanupSecret := cfg.NodeToken
-			result, err := RegisterNodeHTTPWithRetry(context.Background(), cfg, selfupdate.BuildIdentity{Version: "1.2.3", Commit: "abc"}, "hfln_existing", "original-enrollment", func(s string) { cleanupSecret = s }, func(attempt, max int, err error) {
+			result, err := RegisterNodeHTTPWithRetry(context.Background(), cfg, selfupdate.BuildIdentity{Version: "1.2.3", Commit: "abc"}, "hfln_existing", RegistrationRecovery{EnrollmentSecret: "original-enrollment", ClientSessionSecretSupported: true}, func(s string) { cleanupSecret = s }, func(attempt, max int, err error) {
 				notices++
 				if max != 3 {
 					t.Error("unbounded attempts")
 				}
 			})
-			if attempts != len(test.statuses) || sessions != attempts-1 || notices != attempts-1 {
+			expectedSessions := 0
+			if test.disconnect {
+				expectedSessions = 1
+			}
+			if attempts != len(test.statuses) || sessions != expectedSessions || notices != attempts-1 {
 				t.Errorf("attempts=%d sessions=%d notices=%d", attempts, sessions, notices)
 			}
 			if cleanupSecret != currentSecret || cfg.InstallationID != "hfli_persisted" {
@@ -140,11 +151,15 @@ func TestRegistrationPermanentErrorsAreNotRetried(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				attempts++
 				w.WriteHeader(status)
-				io.WriteString(w, `{"error":"private-server-body"}`)
+				if status == 401 {
+					io.WriteString(w, `{"error":"invalid enrollment token"}`)
+				} else {
+					io.WriteString(w, `{"error":"private-server-body"}`)
+				}
 			}))
 			defer server.Close()
 			cfg := &model.AgentConfig{APIBaseURL: server.URL, OrgKey: "org", Role: model.RoleAgent, InstallationID: "hfli_persisted", NodeToken: "hfls_initial"}
-			_, err := RegisterNodeHTTPWithRetry(context.Background(), cfg, selfupdate.BuildIdentity{Version: "1", Commit: "abc"}, "", "original", nil, nil)
+			_, err := RegisterNodeHTTPWithRetry(context.Background(), cfg, selfupdate.BuildIdentity{Version: "1", Commit: "abc"}, "", RegistrationRecovery{EnrollmentSecret: "original", ClientSessionSecretSupported: true}, nil, nil)
 			if err == nil || attempts != 1 || IsRetryableRegistrationError(err) {
 				t.Fatalf("attempts=%d err=%v", attempts, err)
 			}
@@ -162,7 +177,7 @@ func TestRegistrationCancellationStopsBeforeRecovery(t *testing.T) {
 	cfg := &model.AgentConfig{APIBaseURL: server.URL, OrgKey: "org", Role: model.RoleAgent, InstallationID: "hfli_persisted", NodeToken: "hfls_initial"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, err := RegisterNodeHTTPWithRetry(ctx, cfg, selfupdate.BuildIdentity{Version: "1", Commit: "abc"}, "", "original", nil, func(int, int, error) { cancel() })
+	_, err := RegisterNodeHTTPWithRetry(ctx, cfg, selfupdate.BuildIdentity{Version: "1", Commit: "abc"}, "", RegistrationRecovery{EnrollmentSecret: "original", ClientSessionSecretSupported: true}, nil, func(int, int, error) { cancel() })
 	if !errors.Is(err, context.Canceled) || attempts != 1 {
 		t.Fatalf("attempts=%d err=%v", attempts, err)
 	}
@@ -212,8 +227,8 @@ func TestRegistrationRecoveryStopsOnPermanentError(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := &model.AgentConfig{APIBaseURL: server.URL, OrgKey: "org", Role: model.RoleAgent, InstallationID: "hfli_existing", NodeToken: "hfls_initial"}
-			_, err := RegisterNodeHTTPWithRetry(context.Background(), cfg, selfupdate.BuildIdentity{Version: "1", Commit: "abc"}, "", "original", nil, nil)
-			if err == nil || attempts != 2 || sessions != 1 || IsRetryableRegistrationError(err) {
+			_, err := RegisterNodeHTTPWithRetry(context.Background(), cfg, selfupdate.BuildIdentity{Version: "1", Commit: "abc"}, "", RegistrationRecovery{EnrollmentSecret: "original", ClientSessionSecretSupported: true}, nil, nil)
+			if err == nil || attempts != 2 || sessions != 0 || IsRetryableRegistrationError(err) {
 				t.Fatalf("attempts=%d sessions=%d err=%v", attempts, sessions, err)
 			}
 		})

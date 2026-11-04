@@ -13,6 +13,9 @@ import (
 
 // Config holds enrollment credentials from HFL_* environment variables.
 type Config struct {
+	// ClientSessionSecretSupported is negotiated for this command only.
+	ClientSessionSecretSupported bool
+
 	OrgKey           string
 	NodeRole         model.Role
 	NodeToken        string

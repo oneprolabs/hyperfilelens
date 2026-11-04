@@ -2,6 +2,7 @@ package enroll
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,6 +114,12 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 	}
 	originalEnrollmentSecret := cfg.NodeToken
 	cfg.NodeToken = session.Secret
+	cfg.ClientSessionSecretSupported = session.ClientSessionSecretSupported
+	sessionSecrets := []string{session.Secret}
+	rememberSessionSecret := func(secret string) {
+		cfg.NodeToken = secret
+		sessionSecrets = append(sessionSecrets, secret)
+	}
 	sessionCompleted := false
 	configCommitted := false
 	var stagedConfig enrollmentEnvSnapshot
@@ -124,11 +131,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 		}
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
-		if releaseErr := enrollmentclient.ReleaseInstallationSession(
-			releaseCtx,
-			cfg.AgentConfig(),
-			cfg.InstallationID,
-		); releaseErr != nil {
+		if releaseErr := releaseInstallationSessionCandidates(releaseCtx, cfg, sessionSecrets); releaseErr != nil {
 			logWarn("Installation session release failed: " + releaseErr.Error())
 		}
 	}()
@@ -233,7 +236,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			agentVer,
 			existingNodeCredential,
 			originalEnrollmentSecret,
-			&cfg.NodeToken,
+			rememberSessionSecret,
 			nil,
 			markEnrollmentComplete,
 		)
@@ -252,7 +255,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			agentVer,
 			existingNodeCredential,
 			originalEnrollmentSecret,
-			&cfg.NodeToken,
+			rememberSessionSecret,
 			rememberIssuedCredential,
 			markEnrollmentComplete,
 		)
@@ -289,7 +292,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			agentVer,
 			existingNodeCredential,
 			originalEnrollmentSecret,
-			&cfg.NodeToken,
+			rememberSessionSecret,
 			rememberIssuedCredential,
 			markEnrollmentComplete,
 		)
@@ -315,7 +318,7 @@ func RunInstall(ctx context.Context, opts InstallOptions) error {
 			agentVer,
 			existingNodeCredential,
 			originalEnrollmentSecret,
-			&cfg.NodeToken,
+			rememberSessionSecret,
 			rememberIssuedCredential,
 			markEnrollmentComplete,
 		)
@@ -401,7 +404,7 @@ func finishEnrollment(
 	agentVer string,
 	existingNodeCredential string,
 	originalEnrollmentSecret string,
-	sessionToken *string,
+	onSessionSecret func(string),
 	onCredentialIssued func(string),
 	onRegistered func(),
 ) error {
@@ -428,12 +431,11 @@ func finishEnrollment(
 		agentCfg,
 		buildIdentity,
 		existingNodeCredential,
-		originalEnrollmentSecret,
-		func(secret string) {
-			if sessionToken != nil {
-				*sessionToken = secret
-			}
+		enrollmentclient.RegistrationRecovery{
+			EnrollmentSecret:             originalEnrollmentSecret,
+			ClientSessionSecretSupported: cfg.ClientSessionSecretSupported,
 		},
+		onSessionSecret,
 		func(attempt, maxAttempts int, retryErr error) {
 			writeCommandLogOnly("Node registration retry: " + retryErr.Error() + "\n")
 			logWarn(fmt.Sprintf(
@@ -689,4 +691,25 @@ func runtimeArch() string {
 		return "arm64"
 	}
 	return "amd64"
+}
+
+// A failed recovery POST may or may not have rotated the server-side secret.
+// Release all locally known candidates under the existing bounded cleanup
+// context. Never use the broad enrollment token as cleanup authorization.
+func releaseInstallationSessionCandidates(ctx context.Context, cfg Config, secrets []string) error {
+	seen := make(map[string]bool)
+	var failures []error
+	for i := len(secrets) - 1; i >= 0; i-- {
+		secret := secrets[i]
+		if seen[secret] {
+			continue
+		}
+		seen[secret] = true
+		candidate := cfg.AgentConfig()
+		candidate.NodeToken = secret
+		if err := enrollmentclient.ReleaseInstallationSession(ctx, candidate, cfg.InstallationID); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }

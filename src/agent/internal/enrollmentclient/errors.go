@@ -2,7 +2,6 @@ package enrollmentclient
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,13 +46,17 @@ func (e *RegistrationError) Error() string {
 
 // Keep actionable protocol errors, not arbitrary proxy HTML/credential echoes.
 func registrationErrorDetail(raw []byte) string {
-	var data map[string]any
-	if err := json.Unmarshal(raw, &data); err != nil {
+	data, err := decodeAPIData(raw)
+	if err != nil {
 		return ""
+	}
+	// ProblemDetails uses a stable machine code, not a free-form error string.
+	if stringField(data, "code") == "SUBSCRIPTION.QUOTA_EXCEEDED" {
+		return "Organization quota is full."
 	}
 	detail, _ := data["error"].(string)
 	switch detail {
-	case "invalid enrollment token", "invalid node credential",
+	case "invalid enrollment token", "invalid or expired enrollment token", "invalid node credential",
 		"organization not found", "X-Org-Key required",
 		"installation mode does not match enrollment token",
 		"installation mode authorization changed",
