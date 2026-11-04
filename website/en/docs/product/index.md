@@ -33,6 +33,10 @@ Insights works with existing backup snapshots and does not read live files from 
 3. Create an insight session and wait for the selected data to be prepared.
 4. Open citations to review the source material behind an answer.
 
+## Organization governance
+
+Backups and Insights run inside an organization workspace. To manage members, roles, groups, or usage quotas, see [Governance](/docs/governance/). For jobs and alerts, see [Jobs, alerts, and audit logs](/docs/deployment/operations).
+
 ## First-time use
 
 If you are new to HyperFileLens, follow the [Quick start](/docs/getting-started/install) to run a backup, restore a test file, and create an Insights session with the same sample data. Once you have completed the workflow, configure schedules, retention, and routine restore tests for the data you need to protect.

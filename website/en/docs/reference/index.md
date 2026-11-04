@@ -11,9 +11,13 @@ These concepts explain how product pages and jobs relate to one another. For ste
 
 | Concept | Description |
 | --- | --- |
-| Organization | A workspace that contains users, backup resources, jobs, and protected data |
-| Member | A user who can enter an organization and use its authorized features |
-| Role | A set of permissions that determines which organization actions a member can view or perform |
+| Organization | A workspace that contains users, backup resources, jobs, and protected data; see [Organization](/docs/governance/organization) |
+| Member | A user who can enter an organization and use its authorized features; see [Members](/docs/governance/members) |
+| Role | A set of permissions that determines which organization actions a member can view or perform; see [Roles and permissions](/docs/governance/roles) |
+| Group | A collaboration boundary for members and resources inside an organization; see [Groups](/docs/governance/groups) |
+| Usage and quotas | Organization limits, consumption, and quota increase requests; see [Usage and quotas](/docs/governance/usage) |
+
+For the full organization governance guide, see [Governance overview](/docs/governance/).
 
 ## Data protection
 
