@@ -109,6 +109,7 @@ func IsRetryableRegistrationError(err error) bool {
 		return true
 	}
 	return errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNREFUSED) ||
+		isRetryablePlatformConnectionError(err) ||
 		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
