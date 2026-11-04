@@ -18,8 +18,7 @@ const mocks = vi.hoisted(() => ({
   channels: vi.fn(), logs: vi.fn(), logStats: vi.fn(),
   route: { query: {} as Record<string, string> }, push: vi.fn(), replace: vi.fn(),
 }))
-vi.mock('vue-router', async (importOriginal) => ({
-  ...await importOriginal<typeof import('vue-router')>(),
+vi.mock('vue-router', () => ({
   useRoute: () => mocks.route, useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
 }))
 vi.mock('../../composables/useOpsMenus', () => ({ useOpsMenus: () => [] }))
