@@ -70,11 +70,10 @@ describe('Configuration entry', () => {
     expect(resolveConfigurationEntry([{ path: 'node/subscription' }], has)).toBe('/node/subscription')
   })
 
-  it('returns to the dashboard with a permission notice if no page is authorized', () => {
-    expect(enterConfiguration(routes)).toEqual({ path: '/', replace: true })
-    expect(mocks.warning).toHaveBeenCalledExactlyOnceWith(
-      'You do not have permission to view any Configuration pages.',
-    )
+  it('opens personal settings without a warning when no organization page is authorized', () => {
+    expect(enterConfiguration(routes, { query: { org: 'tenant-a', id: 'stale' } }))
+      .toEqual({ path: '/account/profile', replace: true })
+    expect(mocks.warning).not.toHaveBeenCalled()
   })
 
   it('preserves explicit organization context, not stale page parameters', () => {
@@ -118,14 +117,15 @@ describe('Configuration entry', () => {
       routes: [
         { path: '/node', component: { render: () => null }, beforeEnter: () => enterConfiguration(routes) },
         { path: '/node/organization', component: { render: () => null } },
+        { path: '/account/profile', component: { render: () => null } },
         { path: '/', component: { render: () => null } },
       ],
     })
     const guard = vi.fn(to => to.path === '/node/organization' ? '/node' : true)
     router.beforeEach(guard)
     await router.push('/node/organization')
-    expect(router.currentRoute.value.path).toBe('/')
+    expect(router.currentRoute.value.path).toBe('/account/profile')
     expect(guard).toHaveBeenCalledTimes(3)
-    expect(mocks.warning).toHaveBeenCalledTimes(1)
+    expect(mocks.warning).not.toHaveBeenCalled()
   })
 })

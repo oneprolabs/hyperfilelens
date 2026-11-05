@@ -152,6 +152,84 @@ describe('login route authentication guard', () => {
     expect(next).toHaveBeenCalledExactlyOnceWith()
   })
 
+  it.each([
+    ['/account/profile', '/platform-ops/account/profile'],
+    ['/protection/backups', '/platform-ops/overview'],
+    ['/insight/copilot', '/platform-ops/overview'],
+    ['/node/members', '/platform-ops/overview'],
+    ['/ops/tasks', '/platform-ops/overview'],
+    ['/account/notifications', '/platform-ops/overview'],
+    ['/account/organizations/new', '/platform-ops/overview'],
+  ])('redirects ops-site visits to %s before tenant context or page loading', async (path, target) => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      ...tenantProfile, site_role: 'ops', landing_path: '/platform-ops/overview',
+    })
+    setStoredOrgKey('original-org')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const next = vi.fn()
+    await mocks.guard?.({ path, query: { org: 'other-org' }, meta: {} }, { path: '/platform-ops/overview' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith(target)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(getEffectiveOrgKey()).toBe('original-org')
+  })
+
+  it('does not mount a business shell when the site profile cannot be loaded', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue(null)
+    const next = vi.fn()
+    await mocks.guard?.({ path: '/account/profile', query: {}, meta: {} }, { path: '/' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith('/login')
+  })
+
+  it('allows a platform-only administrator to open their own settings without a tenant Role', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      ...tenantProfile, site_role: 'ops', platform_ops_access_allowed: true,
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: { id: 71, email: 'platform@example.test', is_staff: true },
+    })))
+    const next = vi.fn()
+    await mocks.guard?.({
+      path: '/platform-ops/account/profile', query: {}, meta: { requiresPlatformOps: true },
+    }, { path: '/platform-ops/overview' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('preserves mandatory password setup on the operations site', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      ...tenantProfile, site_role: 'ops', platform_ops_access_allowed: true,
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: {
+        id: 71, email: 'platform@example.test', is_staff: true, requires_password_change: true,
+      },
+    })))
+    const next = vi.fn()
+    await mocks.guard?.({
+      path: '/platform-ops/account/profile', query: {}, meta: { requiresPlatformOps: true },
+    }, { path: '/login' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith('/account/setup')
+    next.mockClear()
+    await mocks.guard?.({
+      path: '/account/setup', query: {}, meta: {},
+    }, { path: '/platform-ops/account/profile' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith()
+  })
+
+  it('still refuses Admin Console personal settings for an actor without platform access', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue({
+      ...tenantProfile, site_role: 'ops', platform_ops_access_allowed: false, tenant_public_url: '',
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: { id: 71, email: 'member@example.test', is_staff: false },
+    })))
+    const next = vi.fn()
+    await mocks.guard?.({
+      path: '/platform-ops/account/profile', query: {}, meta: { requiresPlatformOps: true },
+    }, { path: '/' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith('/login')
+  })
+
   it('holds the login route until session inspection redirects an authenticated user', async () => {
     let resolveSession!: (response: Response) => void
     const sessionResponse = new Promise<Response>((resolve) => {

@@ -6,8 +6,6 @@ import { resolveInsightEntry } from '../lib/insightAccess'
 import { resolveProtectionEntry } from '../lib/protectionAccess'
 import { resolveOperationsEntry } from '../lib/operationsAccess'
 import { hasTenantHostMonitor } from '../ops/resolveRoutes'
-import { resolveConfigurationEntry } from '../lib/configurationAccess'
-import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
 import {
   Activity,
   LayoutDashboard,
@@ -52,7 +50,6 @@ export function useAppPrimaryNav() {
     if (item.to === '/insight') return resolveInsightEntry(has) !== '/'
     if (item.to === '/protection') return resolveProtectionEntry(has) !== '/'
     if (item.to === '/ops') return resolveOperationsEntry(has, hasTenantHostMonitor()) !== '/'
-    if (item.to === '/node') return resolveConfigurationEntry(resolveGovernanceRoutes(), has) !== '/'
     return true
   }))
 
@@ -71,6 +68,7 @@ export function useAppPrimaryNav() {
     }
 
     if (to === '/node') {
+      if (pathMatchesPrefix(path, '/account/profile') || pathMatchesPrefix(path, '/account/notifications')) return true
       if (protectionRoutePrefixes.some((prefix) => pathMatchesPrefix(path, prefix))) return false
       if (insightRoutePrefixes.some((prefix) => pathMatchesPrefix(path, prefix))) return false
       return pathMatchesPrefix(path, to)

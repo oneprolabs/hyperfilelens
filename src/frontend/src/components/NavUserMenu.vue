@@ -8,6 +8,9 @@ import { useAuth } from '../composables/useAuth'
 import { fetchDeployProfile } from '../composables/useDeployProfile'
 import { useTheme } from '../composables/useTheme'
 import HflPopover from './HflPopover.vue'
+import { PLATFORM_ACCOUNT_PATH } from '../lib/siteNavigation'
+
+const props = withDefaults(defineProps<{ platform?: boolean }>(), { platform: false })
 
 const { t } = useI18n()
 const router = useRouter()
@@ -151,7 +154,7 @@ async function confirmLogout() {
         <button
           type="button"
           class="nav-dropdown-panel__item"
-          @click="go('/account/profile')"
+          @click="go(props.platform ? PLATFORM_ACCOUNT_PATH : '/account/profile')"
         >
           <span
             class="nav-dropdown-panel__icon-box"

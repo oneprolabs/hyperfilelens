@@ -111,4 +111,11 @@ describe('authenticated Configuration route access', () => {
     session(['protection.source_hosts.view'])
     expect(await navigate('/account/organizations/new')).toHaveBeenCalledExactlyOnceWith()
   })
+
+  it.each(['/account/profile', '/account/notifications'])(
+    'keeps the personal page %s accessible without organization capabilities', async path => {
+      session()
+      expect(await navigate(path)).toHaveBeenCalledExactlyOnceWith()
+    },
+  )
 })

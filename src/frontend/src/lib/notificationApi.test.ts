@@ -26,6 +26,7 @@ describe('notificationApi inbox routes', () => {
     expect(mocks.api).toHaveBeenNthCalledWith(
       1,
       '/api/v1/notifications/inbox/?page=2&page_size=20',
+      undefined,
     )
     expect(mocks.api).toHaveBeenNthCalledWith(
       2,
@@ -36,6 +37,24 @@ describe('notificationApi inbox routes', () => {
       3,
       '/api/v1/notifications/inbox/mark-all-read/',
       { method: 'POST', body: '{}' },
+    )
+  })
+
+  it('pins inbox reads and mutations to the initiating organization', async () => {
+    await listUserNotifications(20, 2, 'org-a')
+    await markUserNotificationRead('17', 'org-a')
+    await markAllUserNotificationsRead('org-a')
+    expect(mocks.api).toHaveBeenNthCalledWith(1,
+      '/api/v1/notifications/inbox/?page=2&page_size=20',
+      { headers: { 'X-Org-Key': 'org-a' } },
+    )
+    expect(mocks.api).toHaveBeenNthCalledWith(2,
+      '/api/v1/notifications/inbox/17/read/',
+      { method: 'POST', body: '{}', headers: { 'X-Org-Key': 'org-a' } },
+    )
+    expect(mocks.api).toHaveBeenNthCalledWith(3,
+      '/api/v1/notifications/inbox/mark-all-read/',
+      { method: 'POST', body: '{}', headers: { 'X-Org-Key': 'org-a' } },
     )
   })
 })

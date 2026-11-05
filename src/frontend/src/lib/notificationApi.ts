@@ -120,21 +120,29 @@ function paged<T>(raw: unknown): Paged<T> {
 
 const base = '/api/v1/notifications'
 
-export async function listUserNotifications(pageSize = 10, page = 1) {
+function notificationScopeHeaders(organizationKey?: string): RequestInit | undefined {
+  // Keep automatic token-refresh retries bound to the initiating organization.
+  return organizationKey === undefined ? undefined : { headers: { 'X-Org-Key': organizationKey } }
+}
+
+export async function listUserNotifications(pageSize = 10, page = 1, organizationKey?: string) {
   return unwrapApiPayload<UserNotificationPage>(
-    await api<unknown>(`${base}/inbox/?page=${page}&page_size=${pageSize}`),
+    await api<unknown>(`${base}/inbox/?page=${page}&page_size=${pageSize}`, notificationScopeHeaders(organizationKey)),
   )
 }
 
-export async function markUserNotificationRead(id: string) {
+export async function markUserNotificationRead(id: string, organizationKey?: string) {
   await api(`${base}/inbox/${encodeURIComponent(id)}/read/`, {
     method: 'POST',
     body: '{}',
+    ...notificationScopeHeaders(organizationKey),
   })
 }
 
-export async function markAllUserNotificationsRead() {
-  await api(`${base}/inbox/mark-all-read/`, { method: 'POST', body: '{}' })
+export async function markAllUserNotificationsRead(organizationKey?: string) {
+  await api(`${base}/inbox/mark-all-read/`, {
+    method: 'POST', body: '{}', ...notificationScopeHeaders(organizationKey),
+  })
 }
 
 export async function listChannels(

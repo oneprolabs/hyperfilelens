@@ -1,6 +1,4 @@
-import { ElMessage } from 'element-plus'
 import { useTenantPermissions } from '../composables/useTenantPermissions'
-import { i18n } from '../i18n'
 import { configurationEntryTarget, resolveConfigurationEntry, type ConfigurationRoute } from '../lib/configurationAccess'
 export { resolveConfigurationEntry } from '../lib/configurationAccess'
 
@@ -10,8 +8,10 @@ export function enterConfiguration(
 ) {
   const { has } = useTenantPermissions()
   const path = resolveConfigurationEntry(routes, has)
+  // Personal pages are available without organization permissions or membership.
+  // Do not carry an organization override into an account-scoped page.
   if (path === '/') {
-    ElMessage.warning(i18n.global.t('settings.nav.accessDenied'))
+    return { path: '/account/profile', replace: true }
   }
   const target = configurationEntryTarget(path, location)
   const [targetPath, search] = target.split('?')

@@ -29,6 +29,7 @@ type AccountUserDetails = {
 }
 
 const { t } = useI18n()
+withDefaults(defineProps<{ showOrganizationRole?: boolean }>(), { showOrganizationRole: true })
 const router = useRouter()
 const { user, clearAuth } = useAuth()
 
@@ -362,32 +363,42 @@ watch(
           <div class="account-overview__content">
             <div class="account-overview__name">
               <span class="account-settings-row__text">{{ username }}</span>
-              <span class="account-role-badge">{{ role }}</span>
-            </div>
-            <div class="account-overview__email">
-              {{ email }}
+              <span
+                v-if="showOrganizationRole"
+                class="account-role-badge"
+              >{{ role }}</span>
             </div>
           </div>
         </div>
-        <div class="account-settings-row">
-          <span class="account-settings-row__label">{{ t('account.fieldAccountIdentity') }}</span>
-          <span class="account-settings-row__value">
-            <span class="account-settings-row__text">{{ username }}</span>
-          </span>
-        </div>
-        <div class="account-settings-row">
-          <span class="account-settings-row__label">{{ t('account.fieldEmail') }}</span>
-          <span class="account-settings-row__value">
-            <span class="account-settings-row__text">{{ email }}</span>
-          </span>
-        </div>
-        <div class="account-settings-row">
-          <span class="account-settings-row__label">{{ t('account.fieldRegisteredAt') }}</span>
-          <span
-            class="account-settings-row__value account-settings-row__value--mono"
-            :class="{ 'account-settings-row__value--empty': isEmptyDisplay(registeredAt) }"
-          >{{ registeredAt }}</span>
-        </div>
+        <dl class="account-details-grid">
+          <div class="account-details-field">
+            <dt class="account-settings-row__label">
+              {{ t('account.fieldAccountIdentity') }}
+            </dt>
+            <dd class="account-settings-row__value">
+              {{ username }}
+            </dd>
+          </div>
+          <div class="account-details-field">
+            <dt class="account-settings-row__label">
+              {{ t('account.fieldEmail') }}
+            </dt>
+            <dd class="account-settings-row__value">
+              {{ email }}
+            </dd>
+          </div>
+          <div class="account-details-field">
+            <dt class="account-settings-row__label">
+              {{ t('account.fieldRegisteredAt') }}
+            </dt>
+            <dd
+              class="account-settings-row__value account-settings-row__value--numeric"
+              :class="{ 'account-settings-row__value--empty': isEmptyDisplay(registeredAt) }"
+            >
+              {{ registeredAt }}
+            </dd>
+          </div>
+        </dl>
       </section>
     </div>
 
@@ -415,10 +426,10 @@ watch(
         </ElButton>
       </div>
       <template v-else>
-        <p class="account-password-description">
-          {{ t('account.passwordAccountScope') }}
-        </p>
-        <template v-if="passwordRecoveryOpen || !hasUsablePassword">
+        <div
+          v-if="passwordRecoveryOpen || !hasUsablePassword"
+          class="account-password-recovery"
+        >
           <p
             v-if="!hasUsablePassword"
             class="account-password-description"
@@ -427,9 +438,13 @@ watch(
           </p>
           <ResetPasswordCard
             v-if="passwordResetAvailable"
+            :key="user?.id"
             :initial-email="user?.email || ''"
             lock-email
             embedded
+            :allow-cancel="hasUsablePassword === true"
+            :set-password="hasUsablePassword === false"
+            @cancel="passwordRecoveryOpen = false"
             @password-reset="onPasswordReset"
           />
           <p
@@ -438,13 +453,7 @@ watch(
           >
             {{ t('account.passwordRecoveryUnavailable') }}
           </p>
-          <ElButton
-            v-if="hasUsablePassword"
-            @click="passwordRecoveryOpen = false"
-          >
-            {{ t('account.passwordRecoveryBack') }}
-          </ElButton>
-        </template>
+        </div>
         <ElForm
           v-else
           label-position="top"
@@ -452,9 +461,13 @@ watch(
           @submit.prevent
         >
           <div class="account-settings-row account-settings-row--form">
-            <span class="account-settings-row__label">{{ t('account.fieldCurrentPassword') }}</span>
+            <label
+              for="account-current-password"
+              class="account-settings-row__label"
+            >{{ t('account.fieldCurrentPassword') }}</label>
             <div class="account-settings-row__control">
               <ElInput
+                id="account-current-password"
                 v-model="currentPassword"
                 type="password"
                 show-password
@@ -472,9 +485,13 @@ watch(
             </div>
           </div>
           <div class="account-settings-row account-settings-row--form">
-            <span class="account-settings-row__label">{{ t('account.fieldNewPassword') }}</span>
+            <label
+              for="account-new-password"
+              class="account-settings-row__label"
+            >{{ t('account.fieldNewPassword') }}</label>
             <div class="account-settings-row__control">
               <ElInput
+                id="account-new-password"
                 v-model="newPassword"
                 type="password"
                 show-password
@@ -512,9 +529,13 @@ watch(
             </div>
           </div>
           <div class="account-settings-row account-settings-row--form">
-            <span class="account-settings-row__label">{{ t('account.fieldConfirmPassword') }}</span>
+            <label
+              for="account-confirm-password"
+              class="account-settings-row__label"
+            >{{ t('account.fieldConfirmPassword') }}</label>
             <div class="account-settings-row__control">
               <ElInput
+                id="account-confirm-password"
                 v-model="confirmPassword"
                 type="password"
                 show-password
@@ -536,7 +557,14 @@ watch(
               class="account-settings-row__label"
               aria-hidden="true"
             />
-            <div class="account-settings-row__control">
+            <div class="account-settings-row__control account-password-actions">
+              <ElButton
+                v-if="passwordResetAvailable"
+                class="account-password-recovery-button"
+                @click="resetPasswordFormState(); passwordRecoveryOpen = true"
+              >
+                {{ t('account.passwordRecoveryAction') }}
+              </ElButton>
               <ElButton
                 type="primary"
                 :loading="passwordSubmitting"
@@ -548,12 +576,6 @@ watch(
             </div>
           </div>
         </ElForm>
-        <ElButton
-          v-if="hasUsablePassword && !passwordRecoveryOpen && passwordResetAvailable"
-          @click="resetPasswordFormState(); passwordRecoveryOpen = true"
-        >
-          {{ t('account.passwordRecoveryAction') }}
-        </ElButton>
       </template>
     </section>
 
@@ -566,27 +588,41 @@ watch(
           {{ t('account.securityAuditCardTitle') }}
         </h2>
       </header>
-      <div class="account-settings-row">
-        <span class="account-settings-row__label">{{ t('account.lastLoginAtLabel') }}</span>
-        <span
-          class="account-settings-row__value account-settings-row__value--mono"
-          :class="{ 'account-settings-row__value--empty': isEmptyDisplay(lastLoginAt) }"
-        >{{ lastLoginAt }}</span>
-      </div>
-      <div class="account-settings-row">
-        <span class="account-settings-row__label">{{ t('account.lastLoginIpLabel') }}</span>
-        <span
-          class="account-settings-row__value account-settings-row__value--mono"
-          :class="{ 'account-settings-row__value--empty': isEmptyDisplay(lastLoginIp) }"
-        >{{ lastLoginIp }}</span>
-      </div>
-      <div class="account-settings-row">
-        <span class="account-settings-row__label">{{ t('account.lastLoginLocationLabel') }}</span>
-        <span
-          class="account-settings-row__value"
-          :class="{ 'account-settings-row__value--empty': isEmptyDisplay(lastLoginLocation) }"
-        >{{ lastLoginLocation }}</span>
-      </div>
+      <dl class="account-details-grid">
+        <div class="account-details-field">
+          <dt class="account-settings-row__label">
+            {{ t('account.lastLoginAtLabel') }}
+          </dt>
+          <dd
+            class="account-settings-row__value account-settings-row__value--numeric"
+            :class="{ 'account-settings-row__value--empty': isEmptyDisplay(lastLoginAt) }"
+          >
+            {{ lastLoginAt }}
+          </dd>
+        </div>
+        <div class="account-details-field">
+          <dt class="account-settings-row__label">
+            {{ t('account.lastLoginIpLabel') }}
+          </dt>
+          <dd
+            class="account-settings-row__value account-settings-row__value--numeric"
+            :class="{ 'account-settings-row__value--empty': isEmptyDisplay(lastLoginIp) }"
+          >
+            {{ lastLoginIp }}
+          </dd>
+        </div>
+        <div class="account-details-field">
+          <dt class="account-settings-row__label">
+            {{ t('account.lastLoginLocationLabel') }}
+          </dt>
+          <dd
+            class="account-settings-row__value"
+            :class="{ 'account-settings-row__value--empty': isEmptyDisplay(lastLoginLocation) }"
+          >
+            {{ lastLoginLocation }}
+          </dd>
+        </div>
+      </dl>
     </section>
   </div>
 </template>
@@ -594,8 +630,8 @@ watch(
 <style scoped>
 .account-settings {
   display: grid;
-  gap: 18px;
-  max-width: 1080px;
+  gap: 20px;
+  min-width: 0;
   width: 100%;
 }
 
@@ -606,11 +642,12 @@ watch(
 }
 
 .account-settings-section {
-  padding: 18px 20px 20px;
+  min-width: 0;
+  padding: 20px 24px 24px;
   background: var(--color-card-bg, var(--el-bg-color));
   border: 1px solid var(--color-border-light, var(--el-border-color-lighter));
   border-radius: var(--radius-card, 10px);
-  box-shadow: 0 8px 22px rgb(15 23 42 / 5%);
+  box-shadow: 0 2px 8px rgb(15 23 42 / 3%);
 }
 
 .account-settings-section + .account-settings-section {
@@ -699,22 +736,43 @@ watch(
   gap: 10px;
   min-width: 0;
   font-size: 16px;
+  font-weight: 500;
   line-height: 24px;
   color: var(--color-text-title, var(--el-text-color-primary));
 }
 
-.account-overview__email {
-  margin-top: 3px;
-  font-size: 13px;
+.account-details-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px 32px;
+  margin: 0;
+}
+
+.account-details-field {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-details-field .account-settings-row__label {
   line-height: 20px;
-  color: var(--color-text-secondary, var(--el-text-color-secondary));
-  overflow-wrap: anywhere;
+}
+
+.account-details-field .account-settings-row__value {
+  margin: 0;
+}
+
+.account-password-form,
+.account-password-recovery {
+  width: 100%;
+  max-width: 832px;
 }
 
 .account-settings-row {
   display: grid;
   grid-template-columns: minmax(128px, 168px) minmax(0, 1fr);
-  gap: 20px;
+  gap: 24px;
   align-items: center;
   min-height: 42px;
 }
@@ -736,13 +794,20 @@ watch(
 
 .account-settings-row--actions .account-settings-row__control {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
   justify-content: flex-end;
+}
+
+.account-password-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .account-settings-row__label {
   flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 400;
   line-height: 34px;
   color: var(--color-text-secondary, var(--el-text-color-secondary));
 }
@@ -754,13 +819,13 @@ watch(
   gap: 10px;
   min-width: 0;
   font-size: 14px;
+  font-weight: 400;
   line-height: 22px;
   color: var(--color-text-title, var(--el-text-color-primary));
   overflow-wrap: anywhere;
 }
 
-.account-settings-row__value--mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+.account-settings-row__value--numeric {
   font-variant-numeric: tabular-nums;
 }
 
@@ -790,7 +855,7 @@ watch(
 }
 
 .account-password-description {
-  margin: 8px 0 0;
+  margin: 0 0 16px;
   color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.6;
@@ -798,7 +863,7 @@ watch(
 
 .account-settings-row__control {
   width: 100%;
-  max-width: 520px;
+  max-width: 640px;
 }
 
 .account-settings-row__hint {
@@ -850,6 +915,12 @@ watch(
   min-height: 34px;
 }
 
+@media (max-width: 1100px) {
+  .account-details-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
   .account-settings-section {
     padding: 16px;
@@ -865,6 +936,10 @@ watch(
 }
 
 @media (max-width: 640px) {
+  .account-details-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .account-settings-section__header {
     margin-bottom: 14px;
   }
@@ -905,11 +980,8 @@ watch(
   }
 
   .account-settings-row--actions .account-settings-row__control {
-    justify-content: stretch;
-  }
-
-  .account-settings-row--actions :deep(.el-button) {
-    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .account-settings-row__label {

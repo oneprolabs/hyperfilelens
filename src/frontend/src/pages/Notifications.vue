@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Bell, CheckCheck, RefreshCw } from 'lucide-vue-next'
+import { MailCheck, RefreshCw } from 'lucide-vue-next'
+import NotificationOutcomeIcon from '../components/NotificationOutcomeIcon.vue'
 import HflPagination from '../components/HflPagination.vue'
 import HflTablePanel from '../components/HflTablePanel.vue'
 import {
@@ -12,7 +13,9 @@ import {
   type UserNotification,
 } from '../lib/notificationApi'
 import { formatLocalDateTime } from '../lib/dateTime'
-import { taskAlertNotificationDisplay } from '../lib/operationalEventDisplay'
+import { notificationDisplay } from '../lib/notificationDisplay'
+import { notificationScope, sameNotificationScope, onNotificationReadChange, publishNotificationReadChange } from '../lib/notificationReadState'
+import { currentUser } from '../composables/useAuth'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -23,65 +26,125 @@ const notifications = ref<UserNotification[]>([])
 const unreadCount = ref(0)
 const pagination = reactive({ page: 1, pageSize: 20, count: 0 })
 let requestSequence = 0
+let displayedScope = notificationScope()
+let cancelled = false
+const pendingReads = new Set<string>()
+
+const stopReadSync = onNotificationReadChange((change) => {
+  if (!sameNotificationScope(change.scope, notificationScope())) return
+  if (!sameNotificationScope(displayedScope, change.scope)) {
+    void loadNotifications()
+    return
+  }
+  const wasLoading = loading.value
+  requestSequence += 1
+  loading.value = false
+  if ('all' in change) {
+    notifications.value = notifications.value.map(item => ({ ...item, is_read: true }))
+    unreadCount.value = 0
+  } else {
+    const item = notifications.value.find(item => item.id === change.id)
+    if (!item) { void loadNotifications(); return }
+    if (!item.is_read) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    item.is_read = true
+  }
+  // A read event may arrive while the user is loading a different page.
+  if (wasLoading) void loadNotifications()
+})
 
 const emptyText = computed(() => t('notificationsPage.empty'))
+const displayNotifications = computed(() => notifications.value.map(notification => ({
+  ...notification,
+  display: notificationDisplay(notification, t),
+})))
+
+function notificationRowClass({ row }: { row: UserNotification }) {
+  return row.is_read ? '' : 'notifications-page__row--unread'
+}
 
 async function loadNotifications() {
+  const scope = notificationScope()
+  if (scope.userId === null) return
   const requestId = ++requestSequence
   loading.value = true
   try {
-    const result = await listUserNotifications(pagination.pageSize, pagination.page)
-    if (requestId !== requestSequence) return
+    const result = await listUserNotifications(pagination.pageSize, pagination.page, scope.organizationKey)
+    if (cancelled || requestId !== requestSequence || !sameNotificationScope(scope, notificationScope())) return
+    displayedScope = scope
     notifications.value = result.results
     unreadCount.value = result.unread_count
     pagination.count = result.count
     loadError.value = ''
   } catch {
-    if (requestId === requestSequence) {
+    if (!cancelled && requestId === requestSequence && sameNotificationScope(scope, notificationScope())) {
       loadError.value = t('notificationsPage.loadFailed')
     }
   } finally {
-    if (requestId === requestSequence) loading.value = false
+    if (!cancelled && requestId === requestSequence) loading.value = false
   }
 }
 
 async function openNotification(notification: UserNotification) {
+  const scope = notificationScope()
+  if (scope.userId === null) return
+  if (!sameNotificationScope(displayedScope, scope)) { void loadNotifications(); return }
+  if (pendingReads.has(notification.id)) return
   if (!notification.is_read) {
+    pendingReads.add(notification.id)
     try {
-      await markUserNotificationRead(notification.id)
-      requestSequence += 1
-      loading.value = false
-      notification.is_read = true
-      unreadCount.value = Math.max(0, unreadCount.value - 1)
+      await markUserNotificationRead(notification.id, scope.organizationKey)
+      if (cancelled || !sameNotificationScope(scope, notificationScope())) return
+      publishNotificationReadChange({ scope, id: notification.id })
       loadError.value = ''
     } catch {
-      loadError.value = t('notificationsPage.markReadFailed')
+      if (!cancelled && sameNotificationScope(scope, notificationScope())) {
+        loadError.value = t('notificationsPage.markReadFailed')
+      }
+    } finally {
+      pendingReads.delete(notification.id)
     }
   }
-  await router.push(notification.to || '/account/notifications')
+  if (!cancelled && sameNotificationScope(scope, notificationScope())) {
+    await router.push(notification.to || '/account/notifications')
+  }
 }
 
 async function markAllRead() {
   if (!unreadCount.value || markingAll.value) return
+  const scope = notificationScope()
+  if (scope.userId === null) return
+  if (!sameNotificationScope(displayedScope, scope)) { void loadNotifications(); return }
   markingAll.value = true
   try {
-    await markAllUserNotificationsRead()
-    requestSequence += 1
-    loading.value = false
-    notifications.value = notifications.value.map((notification) => ({
-      ...notification,
-      is_read: true,
-    }))
-    unreadCount.value = 0
+    await markAllUserNotificationsRead(scope.organizationKey)
+    if (cancelled || !sameNotificationScope(scope, notificationScope())) return
+    publishNotificationReadChange({ scope, all: true })
     loadError.value = ''
   } catch {
-    loadError.value = t('notificationsPage.markReadFailed')
+    if (!cancelled && sameNotificationScope(scope, notificationScope())) {
+      loadError.value = t('notificationsPage.markReadFailed')
+    }
   } finally {
     markingAll.value = false
   }
 }
 
 onMounted(() => void loadNotifications())
+onUnmounted(() => { cancelled = true; stopReadSync() })
+watch(
+  [() => currentUser.value?.id, () => currentUser.value?.access_profile?.org_key],
+  () => {
+    requestSequence += 1
+    displayedScope = notificationScope()
+    notifications.value = []
+    unreadCount.value = 0
+    loading.value = false
+    pagination.count = 0
+    loadError.value = ''
+    if (pagination.page !== 1) pagination.page = 1
+    else void loadNotifications()
+  },
+)
 watch(
   () => [pagination.page, pagination.pageSize],
   () => void loadNotifications(),
@@ -101,11 +164,15 @@ watch(
     <HflTablePanel fill>
       <template #toolbar>
         <el-button
+          type="primary"
           :disabled="!unreadCount"
           :loading="markingAll"
           @click="markAllRead"
         >
-          <CheckCheck :size="16" />
+          <MailCheck
+            :size="16"
+            aria-hidden="true"
+          />
           {{ t('nav.notificationPopover.markAllRead') }}
         </el-button>
       </template>
@@ -126,25 +193,13 @@ watch(
       <template #table="{ tableMaxHeight }">
         <el-table
           v-loading="loading"
-          :data="notifications"
+          :data="displayNotifications"
           row-key="id"
+          :row-class-name="notificationRowClass"
           stripe
           class="hfl-list-table"
           :max-height="tableMaxHeight"
         >
-          <el-table-column
-            width="52"
-            fixed="left"
-          >
-            <template #default="{ row }">
-              <span
-                class="notifications-page__state"
-                :class="{ 'is-unread': !row.is_read }"
-              >
-                <Bell :size="16" />
-              </span>
-            </template>
-          </el-table-column>
           <el-table-column
             :label="t('notificationsPage.notification')"
             min-width="300"
@@ -152,20 +207,30 @@ watch(
             <template #default="{ row }">
               <button
                 class="notifications-page__link"
+                :class="{ 'is-unread': !row.is_read }"
                 type="button"
                 @click="openNotification(row)"
               >
-                <strong>{{ taskAlertNotificationDisplay(row, t).title }}</strong>
-                <span>{{ taskAlertNotificationDisplay(row, t).summary || '—' }}</span>
+                <NotificationOutcomeIcon :notification="row" />
+                <span class="notifications-page__content">
+                  <span class="notifications-page__subject">{{ row.display.title }}</span>
+                  <span
+                    v-if="row.display.summary"
+                    class="notifications-page__summary"
+                  >{{ row.display.summary }}</span>
+                </span>
               </button>
             </template>
           </el-table-column>
           <el-table-column
-            :label="t('notificationsPage.severity')"
+            :label="t('notificationsPage.status')"
             width="140"
           >
             <template #default="{ row }">
-              {{ row.severity }}
+              <span
+                class="notifications-page__read-status"
+                :class="{ 'is-unread': !row.is_read }"
+              >{{ row.is_read ? t('notificationsPage.read') : t('notificationsPage.unread') }}</span>
             </template>
           </el-table-column>
           <el-table-column
@@ -174,14 +239,6 @@ watch(
           >
             <template #default="{ row }">
               {{ formatLocalDateTime(row.occurred_at || row.updated_at, '—') }}
-            </template>
-          </el-table-column>
-          <el-table-column
-            :label="t('notificationsPage.status')"
-            width="120"
-          >
-            <template #default="{ row }">
-              {{ row.is_read ? t('notificationsPage.read') : t('notificationsPage.unread') }}
             </template>
           </el-table-column>
           <template #empty>
@@ -224,20 +281,29 @@ watch(
   background: var(--el-color-danger-light-9);
 }
 
-.notifications-page__state {
-  display: inline-flex;
-  color: var(--el-text-color-placeholder);
+.notifications-page__read-status {
+  color: var(--el-text-color-secondary);
 }
 
-.notifications-page__state.is-unread {
+.notifications-page__read-status.is-unread {
   color: var(--el-color-primary);
+}
+
+.notifications-page :deep(.el-table__body tr.notifications-page__row--unread > td.el-table__cell) {
+  background: color-mix(in srgb, var(--el-color-primary) 5%, var(--el-bg-color));
+}
+
+.notifications-page :deep(.el-table__body tr.notifications-page__row--unread:hover > td.el-table__cell) {
+  background: color-mix(in srgb, var(--el-color-primary) 9%, var(--el-bg-color));
 }
 
 .notifications-page__link {
   display: flex;
+  align-items: flex-start;
+  width: 100%;
   min-width: 0;
-  flex-direction: column;
-  gap: 3px;
+  gap: 12px;
+  padding: 4px 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -245,10 +311,35 @@ watch(
   text-align: left;
 }
 
-.notifications-page__link span {
-  overflow: hidden;
-  color: var(--el-text-color-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.notifications-page__link:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.notifications-page__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.notifications-page__subject {
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.notifications-page__link.is-unread .notifications-page__subject {
+  font-weight: 600;
+}
+
+.notifications-page__summary {
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

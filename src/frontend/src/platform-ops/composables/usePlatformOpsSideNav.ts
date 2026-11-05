@@ -4,6 +4,7 @@ import {
   Atom,
   Container,
   Network,
+  User,
 } from 'lucide-vue-next'
 import type { MenuItem } from '../../components/ModulePage.vue'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
@@ -41,6 +42,12 @@ export function usePlatformOpsSideNav() {
           to: '/platform-ops/platform/runtime-environment',
           icon: Container,
           pageTitle: t('platformOps.settings.environmentTitle'),
+        },
+        {
+          label: t('account.sidebarProfile'),
+          to: '/platform-ops/account/profile',
+          icon: User,
+          pageTitle: t('account.pageProfileTitle'),
         },
       ],
     },

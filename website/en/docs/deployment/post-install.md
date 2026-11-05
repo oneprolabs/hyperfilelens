@@ -30,7 +30,7 @@ Confirm that the top navigation includes the following areas and that each one o
 - **Overview:** Review backup sources, target storage, restore tests, running jobs, and items that need attention.
 - **Protection:** Open backup sources, target storage, backup configurations, and restore workflows.
 - **Insights:** Open the AI-powered Insights workspace.
-- **Configuration:** Open <span class="hfl-path">Governance → Usage</span> in Community. Organization, member, and role management require the Enterprise governance features and the corresponding permissions; their absence in Community is not an installation failure. See [Governance](/docs/governance/).
+- **Configuration:** Open <span class="hfl-path">Organization Management → Usage</span> in Community. Organization, member, and role management require the Enterprise governance features and the corresponding permissions; their absence in Community is not an installation failure. See [Organization Management](/docs/governance/).
 - **Operations:** Open operational health, alerts, jobs, and audit information. New organizations include [default alert rules](/docs/deployment/operations#default-alert-rules).
 
 If a service or page does not open, record the message shown on the page and the product version, then see [Installation and nodes](/docs/troubleshooting/installation-nodes).

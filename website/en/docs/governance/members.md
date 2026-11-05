@@ -5,7 +5,7 @@ description: Manage who belongs to the organization and assign the roles that co
 
 # Members
 
-A member is a user who can enter the current organization and use the features they are allowed to use. Open <span class="hfl-path">Configuration → Governance → Members</span> to review the list, enable or disable members, and assign roles.
+A member is a user who can enter the current organization and use the features they are allowed to use. Open <span class="hfl-path">Configuration → Organization Management → Members</span> to review the list, enable or disable members, and assign roles.
 
 ## View members
 

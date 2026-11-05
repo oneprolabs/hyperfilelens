@@ -5,7 +5,7 @@ description: Use Enterprise default roles or custom roles to control what organi
 
 # Roles and permissions
 
-A role controls which organization actions a member can see or perform. Open <span class="hfl-path">Configuration → Governance → Roles</span> to review default and custom roles, and restore defaults when needed.
+A role controls which organization actions a member can see or perform. Open <span class="hfl-path">Configuration → Organization Management → Roles</span> to review default and custom roles, and restore defaults when needed.
 
 ## Owner vs roles
 

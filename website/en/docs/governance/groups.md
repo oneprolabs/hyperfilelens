@@ -5,7 +5,7 @@ description: Use groups to limit collaboration to a shared set of members and re
 
 # Groups
 
-Groups let teams share a clear boundary inside an organization. Put the right members and resources in a group, then use group roles to control what those members can do. Open <span class="hfl-path">Configuration → Governance → Groups</span> to manage them.
+Groups let teams share a clear boundary inside an organization. Put the right members and resources in a group, then use group roles to control what those members can do. Open <span class="hfl-path">Configuration → Organization Management → Groups</span> to manage them.
 
 Organization roles grant organization permissions, with business resource access following ownership unless the role allows access to all organization resources. A group role can independently grant supported actions on resources in that group. These grants are combined; the organization role is not an upper limit on group permissions.
 

@@ -2,16 +2,16 @@
 import { computed } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import ModulePage from '../../components/ModulePage.vue'
-import { useAccountCenterMenus } from '../../composables/useAccountCenterMenus'
+import { useNodeSideNav } from '../../composables/useNodeSideNav'
 
-const accountMenus = useAccountCenterMenus()
+const configurationMenus = useNodeSideNav()
 const route = useRoute()
 const bodyFill = computed(() => route.path === '/account/notifications')
 </script>
 
 <template>
   <ModulePage
-    :menus="accountMenus"
+    :menus="configurationMenus"
     :body-fill="bodyFill"
   >
     <RouterView v-slot="{ Component }">

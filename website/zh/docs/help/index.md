@@ -10,7 +10,7 @@ description: 查找 HyperFileLens 的产品概念、支持范围、常见问题�
 ## 产品参考
 
 - [核心概念](/zh/docs/reference/)：了解组织、备份源、目标存储、任务、快照、恢复和 Data Gateway。
-- [治理](/zh/docs/governance/)：管理组织、成员、角色、组、资源与用量配额。
+- [组织管理](/zh/docs/governance/)：管理组织、成员、角色、组、资源与用量配额。
 - [支持范围](/zh/docs/reference/support-matrix)：确认运行平台、备份源、目标存储和智能洞察的支持范围。
 - [限制与安全建议](/zh/docs/reference/limitations-security)：了解产品限制及凭据、网络、数据删除和恢复方面的注意事项。
 
