@@ -7,12 +7,14 @@ description: 部署和使用 HyperFileLens 时需要明确的产品边界与安�
 
 本页说明使用产品时需要注意的功能边界。运行平台和存储类型请查看[支持范围](/zh/docs/reference/support-matrix)。
 
-Windows 文件属性、NTFS 权限以及 SMB/CIFS 行为请查看
-[Windows 文件属性与权限限制](/zh/docs/reference/windows-limitations)。
+Windows 文件属性、NTFS 权限以及 SMB/CIFS 行为见常见问题
+[Windows 文件属性与权限](/zh/docs/reference/windows-limitations)。
+主机根目录、`/lib` 等系统路径的备份预期见
+[备份范围与系统路径](/zh/docs/faq/backup-scope)。
 
 ## 功能边界
 
-- 文件级备份不自动保证数据库、虚拟机或业务应用的一致性。
+- 文件级备份不自动保证数据库、虚拟机或业务应用的一致性，也不等同于整机系统盘镜像。
 - 未绑定 Proxy 的 NAS 连接仅适用于产品页面明确支持的 Linux 备份主机。
 - 当前版本不能把目标位置中已有的备份仓库直接导入为新的目标存储。
 - 只有成功或部分成功，并且包含已备份文件的快照才能用于恢复。

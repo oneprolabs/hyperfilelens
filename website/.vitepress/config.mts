@@ -58,6 +58,21 @@ const enProduct = [
   },
 ]
 
+const enGovernance = [
+  {
+    text: 'Governance',
+    items: [
+      { text: 'Governance overview', link: '/docs/governance/' },
+      { text: 'Organization', link: '/docs/governance/organization' },
+      { text: 'Members', link: '/docs/governance/members' },
+      { text: 'Groups', link: '/docs/governance/groups' },
+      { text: 'Roles and permissions', link: '/docs/governance/roles' },
+      { text: 'Resources', link: '/docs/governance/resources' },
+      { text: 'Usage and quotas', link: '/docs/governance/usage' },
+    ],
+  },
+]
+
 const enOperations = [
   {
     text: 'Deployment and operations',
@@ -101,8 +116,14 @@ const enHelp = [
     items: [
       { text: 'Core concepts', link: '/docs/reference/' },
       { text: 'Supported configurations', link: '/docs/reference/support-matrix' },
-      { text: 'Windows file and permission limitations', link: '/docs/reference/windows-limitations' },
       { text: 'Security and limits', link: '/docs/reference/limitations-security' },
+    ],
+  },
+  {
+    text: 'FAQ',
+    items: [
+      { text: 'Backup scope and system paths', link: '/docs/faq/backup-scope' },
+      { text: 'Windows attributes and permissions', link: '/docs/reference/windows-limitations' },
     ],
   },
   {
@@ -142,7 +163,9 @@ export default defineConfig({
       alt: 'HyperFileLens',
     },
     siteTitle: false,
-    i18nRouting: true,
+    // DocLanguageSwitcher owns page-aware links and missing-translation fallbacks.
+    // Keep the hidden default menus from publishing nonexistent translated paths.
+    i18nRouting: false,
     nav: [
       {
         text: 'Quick start',
@@ -154,20 +177,27 @@ export default defineConfig({
         link: '/docs/product/',
         activeMatch: '^/docs/(product|backup-restore|insights)/',
       },
+      {
+        text: 'Governance',
+        link: '/docs/governance/',
+        activeMatch: '^/docs/governance/',
+      },
       { text: 'Deployment and operations', link: '/docs/deployment/' },
       {
         text: 'Help center',
         link: '/docs/help/',
-        activeMatch: '^/docs/(help|reference|troubleshooting)/',
+        activeMatch: '^/docs/(help|reference|faq|troubleshooting)/',
       },
     ],
     sidebar: {
       '/docs/product/': enProduct,
       '/docs/backup-restore/': enProduct,
       '/docs/insights/': enProduct,
+      '/docs/governance/': enGovernance,
       '/docs/deployment/': enOperations,
       '/docs/help/': enHelp,
       '/docs/reference/': enHelp,
+      '/docs/faq/': enHelp,
       '/docs/troubleshooting/': enHelp,
       '/docs/': enQuickStart,
       '/docs/getting-started/': enQuickStart,

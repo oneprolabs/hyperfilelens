@@ -1,13 +1,28 @@
 /* Blog surfaces. Reuses the landing tokens from custom.css so the blog and the
    home page read as one site. */
 
-.blog-index .section-heading { max-width: 760px; }
-.blog-index h1 { margin: 0 0 18px; font-size: clamp(32px, 4vw, 46px); line-height: 1.1; letter-spacing: -.03em; }
-.blog-lead { margin: 0; color: var(--hfl-muted); font-size: 16px; line-height: 1.7; }
+.blog-index.section-block,
+.blog-post.section-block {
+  padding-top: 32px;
+  padding-bottom: 80px;
+}
 
+.blog-index .section-heading { max-width: 760px; margin-bottom: 28px; }
+.blog-index .section-kicker {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+.blog-index h1 {
+  margin: 0 0 12px;
+  font-size: clamp(28px, 3.4vw, 36px);
+  line-height: 1.18;
+  letter-spacing: -.025em;
+}
+.blog-lead { margin: 0; color: var(--hfl-muted); font-size: 15px; line-height: 1.65; }
 
-
-.blog-grid { margin-top: 32px; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
+.blog-grid { margin-top: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px; }
 
 .blog-card { position: relative; display: flex; flex-direction: column; padding: 30px; border: 1px solid var(--hfl-line); border-radius: 20px; background: #fff; transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
 .blog-card:hover { border-color: #c3d3e7; box-shadow: 0 20px 44px rgba(31, 56, 88, .08); transform: translateY(-3px); }
@@ -43,6 +58,16 @@
 .blog-post-body img { max-width: 100%; height: auto; border-radius: 12px; }
 .blog-post-canonical { margin: 48px 0 0; padding-top: 24px; border-top: 1px solid var(--hfl-line); color: var(--hfl-muted); font-size: 13px; }
 .blog-post-canonical a { color: var(--hfl-blue); }
+
+@media (max-width: 900px) {
+  .blog-index.section-block,
+  .blog-post.section-block {
+    padding-top: 24px;
+    padding-bottom: 64px;
+  }
+
+  .blog-index h1 { font-size: 26px; }
+}
 
 @media (max-width: 640px) {
   .blog-grid { grid-template-columns: 1fr; }

@@ -22,6 +22,6 @@ description: 根据使用方式部署 HyperFileLens 控制平面、备份组件�
 
 ## 运行维护
 
-- [任务、告警与审计](/zh/docs/deployment/operations)：查看任务状态、告警信息和审计记录，完成日常检查与问题定位。
+- [任务、告警与审计](/zh/docs/deployment/operations)：查看任务状态、告警信息和审计记录；新组织会启用默认告警规则。组织成员、角色与配额见[治理](/zh/docs/governance/)。
 - [升级与恢复](/zh/docs/deployment/lifecycle)：升级社区版、验证升级结果，并在异常时按安全流程处理。
 - [卸载社区版](/zh/docs/deployment/uninstall)：完整移除 HyperFileLens，或在保留配置和业务数据的情况下移除运行组件。

@@ -57,6 +57,21 @@ const product: DefaultTheme.SidebarItem[] = [
   },
 ]
 
+const governance: DefaultTheme.SidebarItem[] = [
+  {
+    text: '治理',
+    items: [
+      { text: '治理概述', link: '/zh/docs/governance/' },
+      { text: '组织', link: '/zh/docs/governance/organization' },
+      { text: '成员', link: '/zh/docs/governance/members' },
+      { text: '组', link: '/zh/docs/governance/groups' },
+      { text: '角色与权限', link: '/zh/docs/governance/roles' },
+      { text: '资源', link: '/zh/docs/governance/resources' },
+      { text: '用量与配额', link: '/zh/docs/governance/usage' },
+    ],
+  },
+]
+
 const operations: DefaultTheme.SidebarItem[] = [
   {
     text: '部署运维',
@@ -100,8 +115,14 @@ const help: DefaultTheme.SidebarItem[] = [
     items: [
       { text: '核心概念', link: '/zh/docs/reference/' },
       { text: '支持范围', link: '/zh/docs/reference/support-matrix' },
-      { text: 'Windows 文件属性与权限限制', link: '/zh/docs/reference/windows-limitations' },
       { text: '限制与安全建议', link: '/zh/docs/reference/limitations-security' },
+    ],
+  },
+  {
+    text: '常见问题',
+    items: [
+      { text: '备份范围与系统路径', link: '/zh/docs/faq/backup-scope' },
+      { text: 'Windows 文件属性与权限', link: '/zh/docs/reference/windows-limitations' },
     ],
   },
   {
@@ -124,7 +145,8 @@ export const zhThemeConfig: DefaultTheme.Config = {
   },
   logoLink: '/zh/',
   siteTitle: false,
-  i18nRouting: true,
+  // Corresponding-page links and fallbacks are rendered by DocLanguageSwitcher.
+  i18nRouting: false,
   nav: [
     {
       text: '快速开始',
@@ -136,20 +158,27 @@ export const zhThemeConfig: DefaultTheme.Config = {
       link: '/zh/docs/product/',
       activeMatch: '^/zh/docs/(product|backup-restore|insights)/',
     },
+    {
+      text: '治理',
+      link: '/zh/docs/governance/',
+      activeMatch: '^/zh/docs/governance/',
+    },
     { text: '部署运维', link: '/zh/docs/deployment/' },
     {
       text: '帮助中心',
       link: '/zh/docs/help/',
-      activeMatch: '^/zh/docs/(help|reference|troubleshooting)/',
+      activeMatch: '^/zh/docs/(help|reference|faq|troubleshooting)/',
     },
   ],
   sidebar: {
     '/zh/docs/product/': product,
     '/zh/docs/backup-restore/': product,
     '/zh/docs/insights/': product,
+    '/zh/docs/governance/': governance,
     '/zh/docs/deployment/': operations,
     '/zh/docs/help/': help,
     '/zh/docs/reference/': help,
+    '/zh/docs/faq/': help,
     '/zh/docs/troubleshooting/': help,
     '/zh/docs/getting-started/': quickStart,
     '/zh/docs/': quickStart,

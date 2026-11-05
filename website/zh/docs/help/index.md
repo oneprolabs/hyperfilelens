@@ -1,17 +1,23 @@
 ---
 title: 帮助中心
-description: 查找 HyperFileLens 的产品概念、支持范围、安全边界和问题排查方法。
+description: 查找 HyperFileLens 的产品概念、支持范围、常见问题与问题排查方法。
 ---
 
 # 帮助中心
 
-根据当前需要选择产品参考或问题排查。产品参考用于了解产品行为和支持边界；问题排查用于定位已经发生的错误或异常。
+根据当前需要选择产品参考、常见问题或问题排查。产品参考用于了解产品行为和支持边界；常见问题用于确认典型场景下的预期行为；问题排查用于定位已经发生的错误或异常。
 
 ## 产品参考
 
 - [核心概念](/zh/docs/reference/)：了解组织、备份源、目标存储、任务、快照、恢复和 Data Gateway。
+- [治理](/zh/docs/governance/)：管理组织、成员、角色、组、资源与用量配额。
 - [支持范围](/zh/docs/reference/support-matrix)：确认运行平台、备份源、目标存储和智能洞察的支持范围。
 - [限制与安全建议](/zh/docs/reference/limitations-security)：了解产品限制及凭据、网络、数据删除和恢复方面的注意事项。
+
+## 常见问题
+
+- [备份范围与系统路径](/zh/docs/faq/backup-scope)：根目录、`/lib` 等系统路径能否备份，以及如何核对快照。
+- [Windows 文件属性与权限](/zh/docs/reference/windows-limitations)：Windows 备份和恢复当前能保留哪些属性与权限。
 
 ## 问题排查
 

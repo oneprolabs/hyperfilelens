@@ -214,85 +214,6 @@ html {
   margin: 18px 24px 0;
 }
 
-/* Keep the desktop CTA outside the flex calculation so adding it does not move
-   the search/outline alignment. The utility buttons use compact but complete
-   44px hit areas, matching the homepage's right-side action group. */
-@media (min-width: 1200px) {
-  .VPNavBar:has(.hfl-doc-trial--bar) .content-body {
-    position: relative;
-  }
-
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarTranslations,
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarAppearance,
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSocialLinks {
-    flex: 0 0 44px;
-    width: 44px;
-    justify-content: center;
-    transform: none;
-  }
-
-  /* The compact utility hit areas free 63px for the CTA. Reserve that space
-     after GitHub so search and the outline rail keep their established x-axis. */
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSocialLinks {
-    margin-right: 63px;
-  }
-
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarTranslations .button,
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarAppearance button,
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSocialLinks a {
-    width: 44px;
-    justify-content: center;
-  }
-
-  .hfl-doc-trial--bar {
-    position: absolute;
-    right: -41px;
-    display: flex;
-    align-self: center;
-  }
-}
-
-@media (min-width: 960px) {
-  .hfl-doc-trial--screen {
-    display: none;
-  }
-}
-
-@media (min-width: 960px) and (max-width: 1199px) {
-  .VPNavBar:has(.hfl-doc-trial--bar) .content-body {
-    position: relative;
-  }
-
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch {
-    width: 44px;
-    margin-right: 104px;
-    padding-left: 0;
-  }
-
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button {
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button-Container {
-    margin: 0;
-  }
-
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button-Placeholder,
-  .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch .DocSearch-Button-Keys {
-    display: none;
-  }
-
-  .hfl-doc-trial--bar {
-    position: absolute;
-    right: 0;
-    display: flex;
-    align-self: center;
-  }
-}
-
 /* Use a quiet page scrollbar on documentation routes; the sidebar has its own scroll area. */
 html:has(.Layout) {
   scrollbar-width: thin;
@@ -1054,5 +975,183 @@ body .VPLocalSearchBox .search-keyboard-shortcuts kbd {
 @media (prefers-reduced-motion: reduce) {
   .hfl-doc-card {
     transition: none;
+  }
+}
+
+/* Own the language links in Vue slots; leave VitePress's DOM intact. */
+.Layout:has(.hfl-doc-languages) .VPNavBarTranslations,
+.Layout:has(.hfl-doc-languages) .VPNavBarExtra .translations,
+.Layout:has(.hfl-doc-languages) .VPNavScreenTranslations {
+  display: none !important;
+}
+
+.hfl-doc-languages--bar {
+  display: none;
+  order: 3;
+  flex: 0 0 44px;
+  width: 44px;
+}
+
+.hfl-doc-languages .lang-switcher-menu {
+  right: 0;
+  left: auto;
+  border-color: var(--vp-c-divider);
+  background: var(--vp-c-bg-elv);
+}
+
+.hfl-doc-languages .lang-switcher-trigger {
+  width: 44px;
+  justify-content: center;
+  padding: 0;
+  color: var(--vp-c-text-1);
+}
+
+.hfl-doc-languages svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.hfl-doc-languages .lang-switcher-trigger > span,
+.hfl-doc-languages .lang-switcher-caret {
+  display: none;
+}
+
+.hfl-doc-languages .lang-switcher-item {
+  min-height: 44px;
+  color: var(--vp-c-text-1);
+}
+
+.hfl-doc-languages .lang-switcher-item:hover,
+.hfl-doc-languages .lang-switcher-item.active {
+  color: var(--vp-c-brand-1);
+  background: var(--vp-c-brand-soft);
+}
+
+.hfl-doc-languages :is(button, a):focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}
+
+.hfl-doc-languages--screen {
+  display: flex;
+  flex-direction: column;
+  margin-top: 24px;
+}
+
+/* Five section links plus search and utilities need a full desktop header.
+   Keep the native screen navigation available on tablets instead of clipping. */
+@media (max-width: 1279px) {
+  .Layout .VPNavBarMenu,
+  .Layout .VPNavBarAppearance,
+  .Layout .VPNavBarSocialLinks,
+  .Layout .VPNavBarExtra,
+  .Layout .hfl-doc-trial--bar {
+    display: none !important;
+  }
+
+  .Layout .VPNavBar .content-body {
+    justify-content: flex-end;
+  }
+
+  .Layout .VPNavBar:has(.hfl-doc-trial--bar) .VPNavBarSearch {
+    order: 0;
+    flex: 0 0 44px;
+    margin-right: 8px;
+    padding-left: 0;
+    width: 44px;
+  }
+
+  .Layout .VPNavBarSearch .DocSearch-Button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .Layout .VPNavBarSearch .DocSearch-Button-Container {
+    margin: 0;
+  }
+
+  .Layout .VPNavBarSearch .DocSearch-Button-Placeholder,
+  .Layout .VPNavBarSearch .DocSearch-Button-Keys {
+    display: none;
+  }
+
+  .Layout .VPNavBarHamburger {
+    display: flex;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .Layout .VPNavScreen {
+    display: block;
+  }
+
+  .Layout .hfl-doc-trial--screen {
+    display: flex;
+  }
+}
+
+@media (min-width: 1280px) {
+  .Layout .VPNavBarMenuLink {
+    padding-inline: 8px;
+  }
+
+  .Layout .VPNavBarAppearance,
+  .Layout .VPNavBarSocialLinks {
+    flex: 0 0 44px;
+    justify-content: center;
+    margin: 0;
+  }
+
+  .Layout .VPNavBarSocialLinks a {
+    width: 44px;
+    justify-content: center;
+  }
+
+  .Layout .hfl-doc-trial--bar {
+    display: flex;
+    flex: 0 0 auto;
+    order: 6;
+    margin-left: 8px;
+  }
+
+  .hfl-doc-languages--bar {
+    display: block;
+  }
+
+  .hfl-doc-languages--screen {
+    display: none;
+  }
+}
+
+@media (min-width: 1280px) and (max-width: 1439px) {
+  .Layout .VPNavBarSearch {
+    width: 44px;
+    padding-left: 0;
+  }
+
+  .Layout .VPNavBarSearch .DocSearch-Button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .Layout .VPNavBarSearch .DocSearch-Button-Container {
+    margin: 0;
+  }
+
+  .Layout .VPNavBarSearch .DocSearch-Button-Placeholder,
+  .Layout .VPNavBarSearch .DocSearch-Button-Keys {
+    display: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .Layout .hfl-path {
+    white-space: normal;
   }
 }
