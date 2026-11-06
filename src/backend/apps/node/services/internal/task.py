@@ -24,6 +24,9 @@ from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_log import task_log_context
+from apps.node.services.internal.repository_cache_policy import (
+    attach_node_kopia_cache_policy,
+)
 from apps.storage.crypto import decrypt_text, encrypt_text
 
 if TYPE_CHECKING:
@@ -1057,6 +1060,18 @@ def _deliver_agent_task(
                 for key, value in task.payload.items()
                 if key != "pre_upgrade_session_id"
             }
+        candidate_payload = delivery_payload if delivery_payload is not None else task.payload
+        if (
+            isinstance(candidate_payload, dict)
+            and isinstance(candidate_payload.get("repository"), dict)
+            and task.node.role in {NodeRole.AGENT, NodeRole.PROXY}
+        ):
+            # Encrypted commands may have been queued before the upgrade or a
+            # later user edit. Refresh only this non-secret setting at delivery.
+            current_node = Node.objects.only("metadata", "role").get(pk=task.node_id)
+            delivery_payload = attach_node_kopia_cache_policy(
+                node=current_node, payload=candidate_payload,
+            )
         logger.info("agent task dispatching %s", ctx)
         dispatched_at = timezone.now()
         if uses_ack:

@@ -16,8 +16,8 @@ describe('node repository cache settings', () => {
     expect(settings).toMatchObject({ cpuCores: 3, memCapMb: 2050, kopiaCacheMb: 0, logRetention: 14, logSpaceMb: 256 })
     expect(node.metadata.perf_settings).not.toHaveProperty('cpuCores')
   })
-  it('defaults each source node repository cache to 1 GiB', () => {
-    expect(buildDefaultNodePerfSettings(8, 16_384).kopiaCacheMb).toBe(1024)
+  it('defaults each source node repository cache to 8192 MB', () => {
+    expect(buildDefaultNodePerfSettings(8, 16_384).kopiaCacheMb).toBe(8192)
   })
 
   it('preserves zero and rejects cache values outside the supported range', () => {
@@ -33,19 +33,19 @@ describe('node repository cache settings', () => {
         { metadata: { perf_settings: { kopiaCacheMb: 65_537 } } },
         defaults,
       ).kopiaCacheMb,
-    ).toBe(1024)
+    ).toBe(8192)
     expect(
       readNodePerfSettings(
         { metadata: { perf_settings: { kopiaCacheMb: null } } },
         defaults,
       ).kopiaCacheMb,
-    ).toBe(1024)
+    ).toBe(8192)
     expect(
       readNodePerfSettings(
         { metadata: { perf_settings: { kopiaCacheMb: '2048' } } },
         defaults,
       ).kopiaCacheMb,
-    ).toBe(1024)
+    ).toBe(8192)
   })
 
   it('does not persist repository cache settings for gateway nodes', () => {

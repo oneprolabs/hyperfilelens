@@ -56,7 +56,7 @@ class AgentTaskSyncWaitTests(TestCase):
             payload={"repository": {"id": 9, "type": "s3"}},
         )
 
-        self.assertEqual(payload["kopia_cache_size_mb"], 1024)
+        self.assertEqual(payload["kopia_cache_size_mb"], 8192)
 
     def test_repository_task_preserves_explicit_zero_cache_policy(self):
         self.node.metadata = {
@@ -85,16 +85,17 @@ class AgentTaskSyncWaitTests(TestCase):
                 payload={"repository": {"id": 9, "type": "s3"}},
             )
 
-            self.assertEqual(payload["kopia_cache_size_mb"], 1024)
+            self.assertEqual(payload["kopia_cache_size_mb"], 8192)
 
-    def test_legacy_settings_are_not_activated_without_a_policy(self):
+    def test_cache_only_settings_do_not_require_a_resource_policy(self):
         self.node.metadata = {"perf_settings": {"kopiaCacheMb": 0}}
         payload = _attach_node_kopia_cache_policy(
             node=self.node,
             payload={"repository": {"id": 9, "type": "s3"}},
         )
 
-        self.assertEqual(payload["kopia_cache_size_mb"], 1024)
+        self.assertEqual(payload["kopia_cache_size_mb"], 0)
+        self.assertNotIn("performance_policy", self.node.metadata)
 
     def test_payload_without_repository_is_not_modified(self):
         payload = {"path": "/tmp"}
@@ -702,7 +703,11 @@ class AgentTaskDeliveryAndLeaseTests(TestCase):
 
         self.task.status = NodeTask.Status.PENDING
         self.task.payload = protect_task_delivery_payload(
-            delivery_payload={"nas": {"username": "user", "password": "plain-secret"}},
+            delivery_payload={
+                "nas": {"username": "user", "password": "plain-secret"},
+                "repository": {"id": 71, "type": "s3"},
+                "kopia_cache_size_mb": 1024,
+            },
             persisted_payload={"nas": {"username": "user"}},
         )
         self.task.save(update_fields=["status", "payload"])
@@ -714,9 +719,19 @@ class AgentTaskDeliveryAndLeaseTests(TestCase):
 
         self.assertIsNotNone(task)
         self.assertEqual(delivered_payload["nas"]["password"], "plain-secret")
+        self.assertEqual(delivered_payload["kopia_cache_size_mb"], 8192)
         self.task.refresh_from_db()
         self.assertNotIn("password", self.task.payload["nas"])
         self.assertNotIn("plain-secret", str(self.task.payload))
+
+        # A later user edit, including disabling the cache, wins over the
+        # original encrypted payload and any stale in-memory Node instance.
+        self.node.metadata = {"performance_policy": {"settings": {"kopiaCacheMb": 0}}}
+        self.node.save(update_fields=["metadata"])
+        self.task.status = NodeTask.Status.PENDING
+        self.task.save(update_fields=["status"])
+        redeliver_pending_agent_task(task_id=self.task.id)
+        self.assertEqual(delivered_payload["kopia_cache_size_mb"], 0)
 
     @patch("apps.node.services.internal.task._send_task_command")
     @patch("apps.node.services.internal.task.redis_store.get_agent_session")

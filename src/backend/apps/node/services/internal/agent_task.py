@@ -23,6 +23,9 @@ from apps.node.models import Node, NodeTask
 from apps.node.selectors.internal.node_query import node_by_id
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_log import task_log_context
+from apps.node.services.internal.repository_cache_policy import (
+    attach_node_kopia_cache_policy as _attach_node_kopia_cache_policy,
+)
 from apps.node.services.internal.task import (
     cancel_task,
     create_agent_task,
@@ -45,37 +48,6 @@ _TERMINAL_STATUSES = frozenset(
     },
 )
 _TASK_SYNC_DB_POLL_SECONDS = 5
-_KOPIA_CACHE_DEFAULT_MB = 1024
-_KOPIA_CACHE_MAX_MB = 65536
-
-
-def _node_kopia_cache_size_mb(node: Node) -> int:
-    """Read the optional node cache target without trusting arbitrary metadata."""
-    metadata = node.metadata if isinstance(node.metadata, dict) else {}
-    policy = metadata.get("performance_policy")
-    settings = policy.get("settings") if isinstance(policy, dict) else None
-    raw = settings.get("kopiaCacheMb") if isinstance(settings, dict) else None
-    if not isinstance(raw, int) or isinstance(raw, bool):
-        return _KOPIA_CACHE_DEFAULT_MB
-    value = raw
-    if value < 0 or value > _KOPIA_CACHE_MAX_MB:
-        return _KOPIA_CACHE_DEFAULT_MB
-    return value
-
-
-def _attach_node_kopia_cache_policy(
-    *, node: Node, payload: dict | None
-) -> dict | None:
-    """Add the node policy to repository work executed by source nodes."""
-    if node.role not in {Node.Role.AGENT, Node.Role.PROXY}:
-        return payload
-    if not isinstance(payload, dict):
-        return payload
-    if not isinstance(payload.get("repository"), dict):
-        return payload
-    enriched = dict(payload)
-    enriched["kopia_cache_size_mb"] = _node_kopia_cache_size_mb(node)
-    return enriched
 
 
 @dataclass(frozen=True)

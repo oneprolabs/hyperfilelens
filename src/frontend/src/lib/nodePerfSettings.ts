@@ -13,7 +13,7 @@ export type NodePerfSettings = {
 }
 
 const PERF_SETTINGS_KEY = 'perf_settings'
-export const DEFAULT_KOPIA_CACHE_MB = 1024
+export const DEFAULT_KOPIA_CACHE_MB = 8192
 export const MAX_KOPIA_CACHE_MB = 65536
 
 export function buildDefaultNodePerfSettings(hostCpuCores: number, hostMemMb: number): NodePerfSettings {
