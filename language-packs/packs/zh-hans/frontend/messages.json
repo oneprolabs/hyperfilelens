@@ -793,6 +793,8 @@
       "dirTreeHint": "展开加载子项；勾选文件或文件夹后点击「添加」加入右侧，父子路径不能重复勾选。",
       "dirTreeEmptyHost": "该备份源当前无可浏览路径。",
       "dirTreeLoadFailed": "路径读取失败，请确认备份源在线且路径可访问。",
+      "sourceDirectoryTimedOut": "目录加载超时，请稍后重试。",
+      "sourcePathValidationTimedOut": "路径校验超时，尚未获得校验结果。请稍后重试。",
       "dirTreeFilenameEncodingWarningTitle": "可能的 SMB 文件名编码问题",
       "dirTreeFilenameEncodingWarningReasonLabel": "原因",
       "dirTreeFilenameEncodingWarningReason": "此源未配置 iocharset=utf8。显示的问号可能会替换原始的非 ASCII 名称，因此这可能不是真正的路径。",

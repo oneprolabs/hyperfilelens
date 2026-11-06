@@ -741,6 +741,8 @@
   "protection.backupsPage.dirTreeHint": "2ddc033c82a738d69ff6f9f169ebacd9e7543e7086663dc9bec6c73aa29973dd",
   "protection.backupsPage.dirTreeEmptyHost": "e662710bdd0a45d9d721d7bd4a5d1a903063f448226873b46651feab8e19913a",
   "protection.backupsPage.dirTreeLoadFailed": "03076b320b27c608fe51a3c5c11f9ab1a037611af535e6e604a59729ff6d9b81",
+  "protection.backupsPage.sourceDirectoryTimedOut": "822ff2e7f55be7754b559a44d1254df54dabad5ca90bc789dd285be6817b4231",
+  "protection.backupsPage.sourcePathValidationTimedOut": "fb7d03cd8ba2c8ec802cf0e65e7a12be323813910aa68a36b0ad04da1c3453e8",
   "protection.backupsPage.dirTreeFilenameEncodingWarningTitle": "e4b8843fbdad3c557f4764e894ec07846504aec998dad0692c21b8da78caecf9",
   "protection.backupsPage.dirTreeFilenameEncodingWarningReasonLabel": "dafc3476fe7d3275214fe992f90848c6042e448049faecd64bf085af9f7a365d",
   "protection.backupsPage.dirTreeFilenameEncodingWarningReason": "54eae0e142674a8a04d3f9582400896fbec8ef7b0a03b1d8c07f278ed45c98cc",

@@ -142,6 +142,8 @@ export const enProtectionPages = {
     dirTreeHint: 'Expand to load children; check files or folders and click Add. Parent and child paths cannot be checked at the same time.',
     dirTreeEmptyHost: 'No browsable paths for this backup source.',
     dirTreeLoadFailed: 'Failed to load paths. Check that the source is online and the path is accessible.',
+    sourceDirectoryTimedOut: 'Directory loading timed out. Please try again later.',
+    sourcePathValidationTimedOut: 'Path validation timed out without a result. Please try again later.',
     dirTreeFilenameEncodingWarningTitle: 'Possible SMB filename encoding issue',
     dirTreeFilenameEncodingWarningReasonLabel: 'Reason',
     dirTreeFilenameEncodingWarningReason: 'This Source is not configured with iocharset=utf8. The displayed question marks may replace the original non-ASCII name, so this may not be the real path.',

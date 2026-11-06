@@ -62,6 +62,8 @@ import {
 import { apiErrorMessage, apiErrorMessageI18n, isAbortError } from '../../lib/api'
 import { normalizeThrownError } from '../../lib/errors'
 import { backupPathAccessSummaryKey } from '../../lib/backupPathAccessError'
+import { createSourcePathRequests, SOURCE_PATH_WAIT_SECONDS } from '../../lib/sourcePathRequests'
+import { getEffectiveOrgKey } from '../../composables/useAuth'
 import { openErrorDetails } from '../../lib/errors/details'
 import { notifyError, notifySuccess } from '../../lib/notify'
 import { logger } from '../../lib/logger'
@@ -1014,6 +1016,56 @@ const createSourceTreeRemountKeyBySource = reactive<Record<string, number>>({})
 const refreshingSourceDirectoryByKey = reactive<Record<string, boolean>>({})
 const sourceDirectoryExpansionRevisionByKey = new Map<string, number>()
 const directoryLoadingByKey = reactive<Record<string, number>>({})
+const sourcePathRequests = createSourcePathRequests()
+let sourcePathRequestGeneration = 0
+const sourceTreeRequestGenerations = new Map<string, number>()
+
+function cancelSourcePathRequests() {
+  sourcePathRequestGeneration += 1
+  sourcePathRequests.cancelAll()
+  sourceTreeRequestGenerations.clear()
+  Object.keys(manualSourcePathValidatingBySource).forEach((key) => delete manualSourcePathValidatingBySource[key])
+  Object.keys(directoryLoadingByKey).filter((key) => key.startsWith('create-source:'))
+    .forEach((key) => delete directoryLoadingByKey[key])
+  Object.keys(refreshingSourceDirectoryByKey).filter((key) => /^(agent|nas):\d+:/.test(key))
+    .forEach((key) => delete refreshingSourceDirectoryByKey[key])
+}
+
+function startSourcePathRequest(key: string, sourceId: string) {
+  const orgKey = getEffectiveOrgKey()
+  const generation = sourcePathRequestGeneration
+  const isTreeRequest = key.includes('|directory|')
+  const treeGeneration = sourceTreeRequestGenerations.get(sourceId)
+  const treeRevision = treeRemountKey.value
+  const sourceRevision = createSourceTreeRemountKeyBySource[sourceId] ?? 0
+  const boundNodeId = sourceRecord(sourceId)?.boundNodeId
+  // A request may release its own loading count after its source/org goes stale,
+  // but never after that tree's loading state was reset for a new generation.
+  const loadingContextIsCurrent = () => (
+    sourcePathRequestGeneration === generation
+    && (!isTreeRequest || (
+      treeRemountKey.value === treeRevision
+      && (createSourceTreeRemountKeyBySource[sourceId] ?? 0) === sourceRevision
+      && sourceTreeRequestGenerations.get(sourceId) === treeGeneration
+    ))
+  )
+  const request = sourcePathRequests.start(key, () => (
+    loadingContextIsCurrent()
+    && createOpen.value
+    && createStep.value === 0
+    && getEffectiveOrgKey() === orgKey
+    && createSourceIds.value.includes(sourceId)
+    && sourceRecord(sourceId)?.boundNodeId === boundNodeId
+  ))
+  return { ...request, loadingContextIsCurrent }
+}
+
+function sourceDirectoryErrorMessage(err: unknown) {
+  const error = normalizeThrownError(err)
+  return (error.errorCode || error.code) === 'AGENT.TIMEOUT'
+    ? t('protection.backupsPage.sourceDirectoryTimedOut')
+    : apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
+}
 const recoveryDirectoryCreateNameByKey = reactive<Record<string, string | undefined>>({})
 const recoveryDirectoryCreateInputRefs = new Map<string, { focus?: () => void }>()
 const recoveryDirectoryCreatingByKey = reactive<Record<string, boolean>>({})
@@ -3155,6 +3207,7 @@ function targetPayloadFromSourceId(sourceId: string) {
 }
 
 function resetCreateStateForSources(sourceIds: string[], initialStep = 0) {
+  cancelSourcePathRequests()
   cancelTargetValidation()
   targetConnectionResults.value = {}
   createOpen.value = true
@@ -3384,6 +3437,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  cancelSourcePathRequests()
   cancelTargetValidation()
   if (typeof window !== 'undefined') window.removeEventListener('beforeunload', preventUnloadDuringCreate)
   if (typeof document !== 'undefined') document.body.style.overflow = ''
@@ -3394,6 +3448,7 @@ function sourceKey(hostId: string, path: string) {
 }
 
 function openCreate() {
+  cancelSourcePathRequests()
   const sourceIds = createSourceIds.value
   if (sourceIds.length === 0) {
     ElMessage.warning({ message: t('protection.backupsPage.msgSelectSourceFirst'), grouping: true })
@@ -3466,10 +3521,19 @@ function openCreate() {
 }
 
 watch(wizardBrowsingSourceId, () => {
+  cancelSourcePathRequests()
   createSourceDirKeys.value = []
   noSourceTreeRoots.value = false
   treeRemountKey.value += 1
 })
+
+watch([
+  () => createSourceIds.value.map((id) => `${id}:${sourceRecord(id)?.boundNodeId ?? ''}`).join(','),
+  () => getEffectiveOrgKey(),
+  createStep,
+], () => {
+  cancelSourcePathRequests()
+}, { flush: 'sync' })
 
 watch(createSourceDirKeys, (keys) => {
   createSourceTreeRef.value?.setCheckedKeys(keys)
@@ -3485,6 +3549,12 @@ function setCreateSourceTreeRef(sourceId: string, el: unknown) {
   if (el) {
     createSourceTreeRefs.set(sourceId, el as InstanceType<typeof ElTree>)
   } else {
+    sourceTreeRequestGenerations.set(sourceId, (sourceTreeRequestGenerations.get(sourceId) ?? 0) + 1)
+    sourcePathRequests.cancelPrefix(`${sourceId}|directory|`)
+    delete directoryLoadingByKey[createSourceDirectoryLoadingKey(sourceId)]
+    for (const key of Object.keys(refreshingSourceDirectoryByKey)) {
+      if (key.startsWith(`${sourceId}:`)) delete refreshingSourceDirectoryByKey[key]
+    }
     createSourceTreeRefs.delete(sourceId)
   }
 }
@@ -3506,6 +3576,8 @@ function sourceSelectedEntries(sourceId: string) {
 }
 
 function clearManualSourcePathError(sourceId: string) {
+  sourcePathRequests.cancel(`${sourceId}|manual`)
+  delete manualSourcePathValidatingBySource[sourceId]
   delete manualSourcePathErrorBySource[sourceId]
   delete manualSourcePathErrorCodeBySource[sourceId]
 }
@@ -3529,6 +3601,9 @@ function stringMetaValue(meta: Record<string, unknown> | undefined, key: string)
 
 function manualPathValidationErrorMessage(err: unknown, sourceId: string, fallbackPath: string) {
   const normalized = normalizeThrownError(err)
+  if ((normalized.errorCode || normalized.code) === 'AGENT.TIMEOUT') {
+    return t('protection.backupsPage.sourcePathValidationTimedOut')
+  }
   const meta = normalized.meta && typeof normalized.meta === 'object'
     ? normalized.meta as Record<string, unknown>
     : undefined
@@ -3943,7 +4018,7 @@ function sourceTreeItemWithBlockedState(sourceId: string, item: SourceTreeItem):
 async function listRealSourceDirChildren(
   sourceId: string,
   parentPath: string,
-  options: { includeFiles?: boolean; cursor?: string; timeout?: number; forceRefresh?: boolean; restoreTarget?: boolean } = {},
+  options: { includeFiles?: boolean; cursor?: string; timeout?: number; forceRefresh?: boolean; restoreTarget?: boolean; signal?: AbortSignal; isCurrent?: () => boolean } = {},
 ): Promise<SourceTreePage> {
   const isRoot = !parentPath
   const limit = isRoot ? SOURCE_TREE_ROOT_LIMIT : SOURCE_TREE_CHILD_LIMIT
@@ -3951,15 +4026,16 @@ async function listRealSourceDirChildren(
     {
       source_id: sourceId,
       path: parentPath || undefined,
-      timeout: options.timeout ?? (isRoot ? 10 : 30),
+      timeout: options.timeout ?? SOURCE_PATH_WAIT_SECONDS,
       limit,
       cursor: options.cursor,
       include_files: Boolean(options.includeFiles),
       include_metadata: false,
       restore_target: options.restoreTarget,
     },
-    options.forceRefresh ? { cache: 'no-store' } : undefined,
+    { ...(options.forceRefresh ? { cache: 'no-store' } : {}), signal: options.signal },
   )
+  if (options.isCurrent && !options.isCurrent()) throw new DOMException('Stale directory request', 'AbortError')
   const source = sourceRecord(sourceId)
   const entries = selectBackupSourceDirectoryTreeEntries({
     source,
@@ -4033,9 +4109,13 @@ async function loadSourceTreeNode(
   }
   const parentPath = node.level === 0 ? '' : String(node.data?.path ?? '')
   const loadingKey = createSourceDirectoryLoadingKey(sourceId)
+  const request = startSourcePathRequest(`${sourceId}|directory|${encodeURIComponent(parentPath)}`, sourceId)
   setDirectoryLoading(loadingKey, true)
   try {
-    const page = await listRealSourceDirChildren(sourceId, parentPath, { includeFiles: true })
+    const page = await request.run((signal) => listRealSourceDirChildren(sourceId, parentPath, {
+      includeFiles: true, signal, isCurrent: request.isCurrent,
+    }))
+    if (!request.isCurrent()) { resolve([]); return }
     createSourceTreeErrorBySource[sourceId] = ''
     const treeItems = sourceTreeItemsWithLoadMore(sourceId, parentPath, page)
       .map((item) => sourceTreeItemWithBlockedState(sourceId, item))
@@ -4044,13 +4124,14 @@ async function loadSourceTreeNode(
     }
     resolve(treeItems)
     nextTick(() => {
-      syncCreateSourceTreeCheckedKeys(sourceId)
+      if (request.contextIsCurrent()) syncCreateSourceTreeCheckedKeys(sourceId)
     })
   } catch (err) {
+    if (!request.isCurrent() || isAbortError(err)) { resolve([]); return }
     if (showSourceTreeFilenamePathError(sourceId, parentPath, err)) {
       createSourceTreeErrorBySource[sourceId] = ''
     } else {
-      const message = apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
+      const message = sourceDirectoryErrorMessage(err)
       createSourceTreeErrorBySource[sourceId] = message
       ElMessage.error({ message: message, grouping: true })
     }
@@ -4059,11 +4140,17 @@ async function loadSourceTreeNode(
     }
     resolve([])
   } finally {
-    setDirectoryLoading(loadingKey, false)
+    if (request.loadingContextIsCurrent()) setDirectoryLoading(loadingKey, false)
+    request.finish()
   }
 }
 
 function reloadCreateSourceTree(sourceId: string) {
+  sourcePathRequests.cancelPrefix(`${sourceId}|directory|`)
+  delete directoryLoadingByKey[createSourceDirectoryLoadingKey(sourceId)]
+  for (const key of Object.keys(refreshingSourceDirectoryByKey)) {
+    if (key.startsWith(`${sourceId}:`)) delete refreshingSourceDirectoryByKey[key]
+  }
   createSourceTreeErrorBySource[sourceId] = ''
   noSourceTreeRootsBySource[sourceId] = false
   createSourceTreeRemountKeyBySource[sourceId] = (createSourceTreeRemountKeyBySource[sourceId] ?? 0) + 1
@@ -4096,13 +4183,18 @@ async function refreshCreateSourceDirectory(sourceId: string, data: SourceTreeIt
   if (!sourceNode) return
   const wasExpanded = Boolean(sourceNode.expanded)
   const expansionRevisionAtStart = sourceDirectoryExpansionRevisionByKey.get(refreshKey) ?? 0
+  const requestKey = `${sourceId}|directory|${encodeURIComponent(data.path)}`
+  sourcePathRequests.cancelPrefix(`${requestKey}|`)
+  const request = startSourcePathRequest(requestKey, sourceId)
 
   refreshingSourceDirectoryByKey[refreshKey] = true
   try {
-    const page = await listRealSourceDirChildren(sourceId, data.path, {
+    const page = await request.run((signal) => listRealSourceDirChildren(sourceId, data.path, {
       includeFiles: true,
       forceRefresh: true,
-    })
+      signal, isCurrent: request.isCurrent,
+    }))
+    if (!request.isCurrent()) return
     const treeItems = sourceTreeItemsWithLoadMore(sourceId, data.path, page)
       .map((item) => sourceTreeItemWithBlockedState(sourceId, item))
     if (createSourceTreeRefs.get(sourceId) !== tree) return
@@ -4119,6 +4211,7 @@ async function refreshCreateSourceDirectory(sourceId: string, data: SourceTreeIt
     refreshedNode.updateLeafState?.()
     createSourceTreeErrorBySource[sourceId] = ''
     await nextTick()
+    if (!request.isCurrent()) return
     syncCreateSourceTreeCheckedKeys(sourceId)
     const hasChildren = page.entries.length > 0
     if (!hasChildren) {
@@ -4143,14 +4236,16 @@ async function refreshCreateSourceDirectory(sourceId: string, data: SourceTreeIt
       })
     }
   } catch (err) {
+    if (!request.isCurrent() || isAbortError(err)) return
     if (!showSourceTreeFilenamePathError(sourceId, data.path, err)) {
       ElMessage.error({
-        message: apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed')),
+        message: sourceDirectoryErrorMessage(err),
         grouping: true,
       })
     }
   } finally {
-    delete refreshingSourceDirectoryByKey[refreshKey]
+    if (request.loadingContextIsCurrent()) delete refreshingSourceDirectoryByKey[refreshKey]
+    request.finish()
   }
 }
 
@@ -4168,14 +4263,16 @@ async function loadMoreSourceTreeChildren(item: SourceTreeItem) {
   if (!tree?.append) return
 
   const loadingKey = createSourceDirectoryLoadingKey(sourceId)
+  const request = startSourcePathRequest(`${sourceId}|directory|${encodeURIComponent(parentPath)}|${encodeURIComponent(cursor)}`, sourceId)
   item.loading = true
   setDirectoryLoading(loadingKey, true)
   try {
-    const page = await listRealSourceDirChildren(sourceId, parentPath, {
+    const page = await request.run((signal) => listRealSourceDirChildren(sourceId, parentPath, {
       includeFiles: true,
       cursor,
-      timeout: 30,
-    })
+      signal, isCurrent: request.isCurrent,
+    }))
+    if (!request.isCurrent() || createSourceTreeRefs.get(sourceId) !== tree) return
     createSourceTreeErrorBySource[sourceId] = ''
     const parentNode = parentPath ? tree.getNode?.(parentPath) : undefined
     const loadMoreNode = tree.getNode?.(item.path)
@@ -4188,19 +4285,21 @@ async function loadMoreSourceTreeChildren(item: SourceTreeItem) {
         tree.append?.(entry, parentNode)
       })
     nextTick(() => {
-      syncCreateSourceTreeCheckedKeys(sourceId)
+      if (request.contextIsCurrent()) syncCreateSourceTreeCheckedKeys(sourceId)
     })
   } catch (err) {
+    if (!request.isCurrent() || isAbortError(err)) return
     if (showSourceTreeFilenamePathError(sourceId, parentPath, err)) {
       createSourceTreeErrorBySource[sourceId] = ''
     } else {
-      const message = apiErrorMessageI18n(err, t, t('protection.backupsPage.dirTreeLoadFailed'))
+      const message = sourceDirectoryErrorMessage(err)
       createSourceTreeErrorBySource[sourceId] = message
       ElMessage.error({ message: message, grouping: true })
     }
   } finally {
     item.loading = false
-    setDirectoryLoading(loadingKey, false)
+    if (request.loadingContextIsCurrent()) setDirectoryLoading(loadingKey, false)
+    request.finish()
   }
 }
 
@@ -4339,6 +4438,7 @@ function isManualSourcePathValidating(sourceId: string) {
 }
 
 async function addManualSourcePath(sourceId: string) {
+  if (isManualSourcePathValidating(sourceId)) return
   const path = String(manualSourcePathBySource[sourceId] || '').trim()
   clearManualSourcePathError(sourceId)
   if (!path) {
@@ -4360,15 +4460,18 @@ async function addManualSourcePath(sourceId: string) {
     return
   }
   manualSourcePathValidatingBySource[sourceId] = true
+  const request = startSourcePathRequest(`${sourceId}|manual`, sourceId)
   let pathInfo: Awaited<ReturnType<typeof getBackupSourcePathInfo>>
   try {
-    pathInfo = await getBackupSourcePathInfo({
+    pathInfo = await request.run((signal) => getBackupSourcePathInfo({
       source_id: sourceId,
       path,
-      timeout: 10,
+      timeout: SOURCE_PATH_WAIT_SECONDS,
       include_metadata: false,
-    })
+    }, { signal }))
+    if (!request.isCurrent() || String(manualSourcePathBySource[sourceId] || '').trim() !== path) return
   } catch (err) {
+    if (!request.isCurrent() || isAbortError(err)) return
     const message = manualPathValidationErrorMessage(err, sourceId, path)
     const normalized = normalizeThrownError(err)
     const code = normalized.errorCode || normalized.code || ''
@@ -4378,7 +4481,7 @@ async function addManualSourcePath(sourceId: string) {
     if (!backupPathAccessSummaryKey(code)) ElMessage.error({ message, grouping: true })
     return
   } finally {
-    manualSourcePathValidatingBySource[sourceId] = false
+    if (request.finish()) manualSourcePathValidatingBySource[sourceId] = false
   }
   const resolvedPath = pathInfo.path || path
   const resolvedPathType = backupPathTypeForEntry(pathInfo)
@@ -5964,6 +6067,7 @@ function submitCreateWizard() {
 
 watch(createOpen, (v) => {
   if (!v) {
+    cancelSourcePathRequests()
     cancelTargetValidation()
     targetConnectionResults.value = {}
     createStep.value = 0
