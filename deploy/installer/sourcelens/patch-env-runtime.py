@@ -102,7 +102,13 @@ def apply_runtime_env(text: str, *, template: bool = False) -> str:
     set_key("SENTRY_SEND_DEFAULT_PII", "false")
     set_key("LENSNODE_PLANNING_REASONING_EFFORT", "medium")
     set_key("LENSNODE_EXECUTION_BACKEND", "trusted_container")
-    set_key("LENSNODE_MAX_CONCURRENT_RUNS", "1")
+    # Compose accepts exported assignments and whitespace around "=" as well.
+    # Keep this preservation rule scoped to the configurable Q&A run limit.
+    if not any(
+        match.group(1) == "LENSNODE_MAX_CONCURRENT_RUNS"
+        for match in QUEUE_ASSIGNMENT.finditer(text)
+    ):
+        ensure_key("LENSNODE_MAX_CONCURRENT_RUNS", "8")
     allowed_hosts_match = re.search(r"^ALLOWED_HOSTS=(.*)$", text, flags=re.M)
     allowed_hosts = []
     if allowed_hosts_match:

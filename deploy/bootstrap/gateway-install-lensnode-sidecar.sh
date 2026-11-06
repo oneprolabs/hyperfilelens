@@ -354,6 +354,27 @@ install_docker_sidecar() {
 	local previous_compose="${COMPOSE_DIR}/.docker-compose.yml.previous.$$"
 	local recovery_detail="the new Compose configuration was removed"
 	local current_container="" previous_image_id="" desired_image_id=""
+	local run_concurrency="${LENSNODE_MAX_CONCURRENT_RUNS:-}"
+	# An explicit environment value wins; fresh installs otherwise default to 8.
+	# Retain the scalar written by an earlier sidecar install, including 1.
+	# Enrollment may rewrite lensnode.env; do not silently reset a local limit.
+	if [[ -z "${run_concurrency}" && -f "${compose_file}" ]]; then
+		run_concurrency="$(awk '
+			/^[ \t]+LENSNODE_MAX_CONCURRENT_RUNS:[ \t]*/ {
+				sub(/^[^:]*:[ \t]*/, "")
+				sub(/[ \t]+#.*/, "")
+				sub(/[ \t]+$/, "")
+				if ($0 ~ /^"[^"]*"$/ || $0 ~ /^\047[^\047]*\047$/) {
+					$0 = substr($0, 2, length($0) - 2)
+				}
+				print
+			}
+		' "${compose_file}")"
+	fi
+	run_concurrency="${run_concurrency:-8}"
+	if [[ ! "${run_concurrency}" =~ ^[1-9][0-9]*$ ]]; then
+		hfl_fail "LENSNODE_MAX_CONCURRENT_RUNS must be a positive integer; existing configuration was not changed." 2
+	fi
 	if [[ -z "${ssl_verify}" ]]; then
 		if [[ "${HFL_INSECURE_TLS}" == "1" ]]; then
 			ssl_verify="false"
@@ -398,7 +419,7 @@ ${EXTRA_HOSTS_BLOCK}    environment:
       LENSNODE_DRAIN_TIMEOUT_S: "240"
       LENSNODE_PLANNING_REASONING_EFFORT: "medium"
       LENSNODE_EXECUTION_BACKEND: "trusted_container"
-      LENSNODE_MAX_CONCURRENT_RUNS: "1"
+      LENSNODE_MAX_CONCURRENT_RUNS: "${run_concurrency}"
       LENSNODE_STREAM_RECOVERY_ATTEMPTS: "3"
       LENSNODE_STREAM_RECOVERY_BACKOFF_S: "1"
       LENSNODE_STREAM_RECOVERY_BACKOFF_MAX_S: "8"

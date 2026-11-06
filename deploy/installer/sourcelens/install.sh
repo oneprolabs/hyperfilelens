@@ -230,6 +230,11 @@ env_path = pathlib.Path(sys.argv[1])
 example_path = pathlib.Path(sys.argv[2])
 text = env_path.read_text(encoding="utf-8")
 existing = set(re.findall(r"^([A-Z0-9_]+)=", text, flags=re.M))
+# Preserve valid Compose dotenv forms of the user-configurable Q&A limit.
+existing.update(re.findall(
+    r"^[ \t]*(?:export[ \t]+)?(LENSNODE_MAX_CONCURRENT_RUNS)[ \t]*=",
+    text, flags=re.M,
+))
 added = []
 for line in example_path.read_text(encoding="utf-8").splitlines():
     if not line or line.lstrip().startswith("#") or "=" not in line:
