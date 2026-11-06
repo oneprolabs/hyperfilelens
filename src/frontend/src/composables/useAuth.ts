@@ -18,6 +18,7 @@ import {
 } from '../lib/sessionNotice'
 import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
+import { operationsSiteRedirect } from '../lib/siteNavigation'
 import { readStoredOrganizationKey } from '../lib/organizationStorage'
 import { insightPermissionHints, insightRouteRedirect } from '../lib/insightAccess'
 import { protectionRouteRedirect } from '../lib/protectionAccess'
@@ -466,6 +467,19 @@ export function setupAuthGuard() {
     const publicPaths = ['/login', '/register', '/auth/oauth/callback', '/auth/oauth/error']
     const isPublicPath = publicPaths.some(path => to.path.startsWith(path))
     const isPlatformOpsPath = to.path.startsWith('/platform-ops')
+    if (!isPublicPath && !isPlatformOpsPath && to.path !== '/account/setup') {
+      const profile = await fetchDeployProfile()
+      // Never mount a tenant shell before the serving site's role is known.
+      if (profile === null) {
+        next('/login')
+        return
+      }
+      const siteRedirect = operationsSiteRedirect(to.path, profile)
+      if (siteRedirect) {
+        next(siteRedirect)
+        return
+      }
+    }
     // Admin Console deep links select a target, but only the backend decides
     // whether the authenticated actor may enter it. Never infer membership.
     const requestedOrg = typeof to.query.org === 'string' ? to.query.org.trim() : ''

@@ -19,6 +19,7 @@ describe('usePlatformOpsSideNav (community)', () => {
       '/platform-ops/engine/ai-settings',
       '/platform-ops/platform/external-access',
       '/platform-ops/platform/runtime-environment',
+      '/platform-ops/account/profile',
     ])
     expect(paths.some((path) => path?.includes('/gateways'))).toBe(false)
     expect(paths.some((path) => path?.includes('/email'))).toBe(false)

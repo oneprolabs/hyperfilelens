@@ -15,6 +15,7 @@ describe('platformOpsRoutes (community)', () => {
     expect(platformOpsRoutes.some((route) => route.path === 'platform/email')).toBe(true)
     expect(platformOpsRoutes.some((route) => route.path === 'platform/external-access')).toBe(true)
     expect(platformOpsRoutes.some((route) => route.path === 'platform/runtime-environment')).toBe(true)
+    expect(platformOpsRoutes.some((route) => route.path === 'account/profile')).toBe(true)
   })
 })
 

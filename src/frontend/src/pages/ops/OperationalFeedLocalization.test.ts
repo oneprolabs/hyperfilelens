@@ -7,6 +7,7 @@ import { defineComponent } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { en } from '../../locales/en'
+import { currentUser } from '../../composables/useAuth'
 import AlertIncidents from './AlertIncidents.vue'
 import Events from './Events.vue'
 import Notifications from '../Notifications.vue'
@@ -23,6 +24,11 @@ vi.mock('vue-router', async (importOriginal) => ({
   useRoute: () => mocks.route, useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
 }))
 vi.mock('../../composables/useOpsMenus', () => ({ useOpsMenus: () => [] }))
+vi.mock('../../composables/useAuth', async () => {
+  const { ref } = await import('vue')
+  return { currentUser: ref(null) }
+})
+vi.mock('../../lib/organizationStorage', () => ({ readStoredOrganizationKey: () => 'test-org' }))
 vi.mock('../../lib/alertApi', () => ({
   listRecords: mocks.records, recordStatistics: mocks.statistics,
   acknowledgeRecord: vi.fn(), resolveRecord: vi.fn(),
@@ -85,6 +91,7 @@ describe('operational feed rendered localization', () => {
   })
   afterEach(() => {
     wrappers.splice(0).forEach(wrapper => wrapper.unmount())
+    currentUser.value = null
     vi.unstubAllGlobals()
     vi.useRealTimers()
   })
@@ -259,6 +266,7 @@ describe('operational feed rendered localization', () => {
   })
 
   it('localizes resolved alerts in the full notification inbox without refetching', async () => {
+    currentUser.value = { id: 1, email: 'test@example.com', username: 'test' }
     const notification = {
       id: '1', kind: 'alert', title: 'Resolved: Task alert: task_failed',
       summary: `Task ${id} status=failed`, severity: 'warning', is_read: false, to: '/ops/alerts',
@@ -271,14 +279,15 @@ describe('operational feed rendered localization', () => {
       await flushPromises()
       const { t } = i18n.global
       const row = wrapper.get('.notifications-page__link')
-      expect(row.get('strong').text()).toBe(t('ops.events.resolvedTaskAlert', {
+      expect(row.get('.notifications-page__subject').text()).toBe(t('ops.events.resolvedTaskAlert', {
         title: t('ops.events.taskAlert', { event: t('ops.alertsCenter.taskEvents.task_failed') }),
       }))
-      expect(row.get('span').text()).toBe(t('ops.events.taskDiagnostic.taskStatus', {
+      expect(row.get('.notifications-page__summary').text()).toBe(t('ops.events.taskDiagnostic.taskStatus', {
         id, status: t('ops.task.status.failed'),
       }))
     }
     expect(mocks.notifications).toHaveBeenCalledOnce()
+    expect(mocks.notifications).toHaveBeenCalledWith(20, 1, 'test-org')
     expect(notification.title).toBe('Resolved: Task alert: task_failed')
   })
 })

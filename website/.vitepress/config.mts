@@ -60,9 +60,9 @@ const enProduct = [
 
 const enGovernance = [
   {
-    text: 'Governance',
+    text: 'Organization Management',
     items: [
-      { text: 'Governance overview', link: '/docs/governance/' },
+      { text: 'Overview', link: '/docs/governance/' },
       { text: 'Organization', link: '/docs/governance/organization' },
       { text: 'Members', link: '/docs/governance/members' },
       { text: 'Groups', link: '/docs/governance/groups' },
@@ -178,7 +178,7 @@ export default defineConfig({
         activeMatch: '^/docs/(product|backup-restore|insights)/',
       },
       {
-        text: 'Governance',
+        text: 'Organization Management',
         link: '/docs/governance/',
         activeMatch: '^/docs/governance/',
       },

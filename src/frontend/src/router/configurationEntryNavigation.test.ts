@@ -162,16 +162,29 @@ describe('Configuration intermediate navigation with real request cancellation',
     }
   })
 
-  it('does not cancel Dashboard requests when no Configuration page is permitted', async () => {
+  it('opens Account and cancels Dashboard requests when no organization page is permitted', async () => {
     await router.replace('/')
     mocks.permissions = []
     mocks.beginTransition.mockClear()
     const request = pendingRequest()
     await router.push('/node')
-    expect(router.currentRoute.value.path).toBe('/')
+    expect(router.currentRoute.value.path).toBe('/account/profile')
+    expect(request.signal.aborted).toBe(true)
+    expect(mocks.beginTransition).toHaveBeenCalledTimes(1)
+    expect(mocks.warning).not.toHaveBeenCalled()
+    expect(await request.result).toMatchObject({ error: { name: 'AbortError' } })
+  })
+
+  it('preserves personal settings requests when Configuration resolves to the same Account page', async () => {
+    mocks.permissions = []
+    await router.replace('/account/profile')
+    mocks.beginTransition.mockClear()
+    const request = pendingRequest()
+    const navigation = await router.push('/node')
+    expect(isNavigationFailure(navigation, NavigationFailureType.duplicated)).toBe(true)
+    expect(router.currentRoute.value.path).toBe('/account/profile')
     expect(request.signal.aborted).toBe(false)
     expect(mocks.beginTransition).not.toHaveBeenCalled()
-    expect(mocks.warning).toHaveBeenCalledTimes(1)
     request.complete()
     expect((await request.result).error).toBeNull()
   })

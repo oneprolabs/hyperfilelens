@@ -64,7 +64,7 @@ Review and change them in Platform Ops under alert rules. They are typically not
 - Email, webhooks, and other external channels need separate configuration. Do not expect external delivery until those channels are in place.
 - If email delivery is configured and a rule is not linked to another channel, organization default alerts may also email the organization owner. Confirm the exact behavior in your deployment.
 
-For members, roles, and quotas, see [Governance](/docs/governance/).
+For members, roles, and quotas, see [Organization Management](/docs/governance/).
 
 ## Review audit logs
 

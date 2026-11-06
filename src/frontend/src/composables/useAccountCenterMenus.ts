@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { Bell, User } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 
-/** Account center sidebar menus. */
+/** Personal Account section shared by Configuration and account pages. */
 export function useAccountCenterMenus() {
   const { t } = useI18n()
   return computed<MenuItem[]>(() => [

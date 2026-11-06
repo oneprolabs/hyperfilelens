@@ -13,7 +13,6 @@ import { useInsightSideNav } from '../../composables/useInsightSideNav'
 import { useNodeSideNav } from '../../composables/useNodeSideNav'
 import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
-import { useAccountCenterMenus } from '../../composables/useAccountCenterMenus'
 import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
 import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
 
@@ -35,7 +34,6 @@ const protectionFallbackMenus = useProtectionSideNav()
 const insightFallbackMenus = useInsightSideNav()
 const nodeFallbackMenus = useNodeSideNav()
 const opsFallbackMenus = useOpsMenus()
-const accountFallbackMenus = useAccountCenterMenus()
 const mobileNavigationOpen = ref(false)
 const { itemsWithActiveState: primaryNavItems } = useAppPrimaryNav()
 
@@ -76,7 +74,7 @@ const fallbackMenuItems = computed<MenuItem[]>(() => {
     return insightFallbackMenus.value
   }
   if (pathMatchesPrefix(path, '/ops')) return opsFallbackMenus.value
-  if (pathMatchesPrefix(path, '/account')) return accountFallbackMenus.value
+  if (pathMatchesPrefix(path, '/account')) return nodeFallbackMenus.value
   if (pathMatchesPrefix(path, '/node')) return nodeFallbackMenus.value
   return []
 })

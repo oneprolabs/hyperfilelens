@@ -57,7 +57,10 @@ function saveSidebarScroll() {
 }
 
 onMounted(() => {
-  void nextTick(restoreSidebarScroll)
+  void nextTick(() => {
+    restoreSidebarScroll()
+    revealActiveSidebarItem()
+  })
 })
 
 onBeforeUnmount(saveSidebarScroll)
@@ -130,6 +133,39 @@ function isActive(to?: string) {
   }
   return false
 }
+
+function revealActiveSidebarItem() {
+  if (!shouldPreserveSidebarScroll) return
+  const nav = sidebarNavRef.value
+  const active = nav?.querySelector<HTMLElement>('a.active')
+  if (!nav || !active) return
+  const viewport = nav.getBoundingClientRect()
+  if (viewport.height <= 0) return
+  const item = active.getBoundingClientRect()
+  // Only scroll the sidebar, never the page or the user's settings form.
+  if (item.bottom > viewport.bottom) nav.scrollTop += item.bottom - viewport.bottom
+  else if (item.top < viewport.top) nav.scrollTop -= viewport.top - item.top
+}
+
+function revealExpandedActiveGroup(index: number) {
+  if (props.menus[index]?.children?.some(child => isActive(child.to))) {
+    revealActiveSidebarItem()
+  }
+}
+
+watch(
+  [() => route.fullPath, () => props.menus, () => props.collapsed],
+  async () => {
+    if (!shouldPreserveSidebarScroll) return
+    const activeGroup = props.menus.findIndex(item => item.children?.some(child => isActive(child.to)))
+    if (activeGroup >= 0 && !expandedParentIndices.value.has(activeGroup)) {
+      expandedParentIndices.value = new Set([...expandedParentIndices.value, activeGroup])
+    }
+    await nextTick()
+    revealActiveSidebarItem()
+  },
+  { flush: 'post' },
+)
 
 const allMenuPaths = computed(() => {
   const paths = new Set<string>()
@@ -270,7 +306,10 @@ const collapsedNavItems = computed<FlatNavItem[]>(() => {
                 class="expand-icon"
               />
             </div>
-            <Transition name="slide">
+            <Transition
+              name="slide"
+              @after-enter="revealExpandedActiveGroup(index)"
+            >
               <div
                 v-if="expandedParentIndices.has(index)"
                 class="submenu"

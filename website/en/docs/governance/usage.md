@@ -5,7 +5,7 @@ description: Review organization limits and usage, request higher quotas, and ap
 
 # Usage and quotas
 
-The Usage page shows license status, quota limits, and how much the organization is using. Open <span class="hfl-path">Configuration → Governance → Usage</span> to review them. If you need a higher limit, submit a request for a platform administrator to approve in the Admin Console.
+The Usage page shows license status, quota limits, and how much the organization is using. Open <span class="hfl-path">Configuration → Organization Management → Usage</span> to review them. If you need a higher limit, submit a request for a platform administrator to approve in the Admin Console.
 
 ## View usage
 
@@ -44,7 +44,7 @@ For a pending request, members with usage management permission in the same orga
 
 ## Review quota requests on the platform
 
-Platform administrators open <span class="hfl-path">Admin Console → Governance → Quota Requests</span>:
+Platform administrators open <span class="hfl-path">Admin Console → Tenant Management → Quota Requests</span>:
 
 1. Filter pending requests by organization, status, or keyword.
 2. Check the organization, quota, current limit, requested limit, and justification.

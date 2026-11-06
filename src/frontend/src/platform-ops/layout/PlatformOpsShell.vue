@@ -154,7 +154,7 @@ watch(
         <span class="platform-ops-header__desktop-utility">
           <LanguageSwitcher variant="navigation" />
         </span>
-        <NavUserMenu />
+        <NavUserMenu platform />
       </div>
     </header>
     <MobileNavigationDrawer

@@ -2,8 +2,11 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowUpRight, Bell } from 'lucide-vue-next'
-import { taskAlertNotificationDisplay } from '../lib/operationalEventDisplay'
+import { ArrowRight, Bell, LoaderCircle, MailCheck } from 'lucide-vue-next'
+import NotificationOutcomeIcon from './NotificationOutcomeIcon.vue'
+import { notificationDisplay } from '../lib/notificationDisplay'
+import { notificationScope, sameNotificationScope, onNotificationReadChange, publishNotificationReadChange } from '../lib/notificationReadState'
+import { currentUser } from '../composables/useAuth'
 import {
   listUserNotifications,
   markAllUserNotificationsRead,
@@ -20,14 +23,13 @@ const loadError = ref('')
 const notifications = ref<UserNotification[]>([])
 const unreadCount = ref(0)
 
-type Severity = 'critical' | 'warning' | 'insight' | 'info'
-
 const POLL_MS = 30000
 const PAGE_SIZE = 10
 
 let cancelled = false
 let interval: ReturnType<typeof setInterval> | undefined
 let requestSequence = 0
+let displayedScope = notificationScope()
 
 const badgeCount = computed(() => unreadCount.value)
 
@@ -51,12 +53,33 @@ const popperOptions = {
   ],
 }
 
-function severityClass(notification: UserNotification): Severity {
-  if (notification.severity === 'critical') return 'critical'
-  if (notification.severity === 'warning') return 'warning'
-  if (notification.severity === 'info') return 'info'
-  return 'info'
-}
+const pendingReads = new Set<string>()
+const displayNotifications = computed(() => notifications.value.map(notification => ({
+  ...notification,
+  display: notificationDisplay(notification, t),
+})))
+
+const stopReadSync = onNotificationReadChange((change) => {
+  if (!sameNotificationScope(change.scope, notificationScope())) return
+  if (!sameNotificationScope(displayedScope, change.scope)) {
+    void loadNotifications()
+    return
+  }
+  const wasLoading = loading.value
+  requestSequence += 1
+  loading.value = false
+  if ('all' in change) {
+    notifications.value = notifications.value.map(item => ({ ...item, is_read: true }))
+    unreadCount.value = 0
+  } else {
+    const item = notifications.value.find(item => item.id === change.id)
+    if (!item) { void loadNotifications(); return }
+    if (!item.is_read) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    item.is_read = true
+  }
+  // Read-state invalidation must not silently discard an in-flight refresh.
+  if (wasLoading) void loadNotifications()
+})
 
 function formatRelativeTime(iso?: string) {
   if (!iso) return '—'
@@ -79,16 +102,19 @@ function formatRelativeTime(iso?: string) {
 }
 
 async function loadNotifications() {
+  const scope = notificationScope()
+  if (scope.userId === null) return
   const requestId = ++requestSequence
   loading.value = true
   try {
-    const res = await listUserNotifications(PAGE_SIZE)
-    if (cancelled || requestId !== requestSequence) return
+    const res = await listUserNotifications(PAGE_SIZE, 1, scope.organizationKey)
+    if (cancelled || requestId !== requestSequence || !sameNotificationScope(scope, notificationScope())) return
+    displayedScope = scope
     notifications.value = res.results
     unreadCount.value = res.unread_count
     loadError.value = ''
   } catch {
-    if (!cancelled && requestId === requestSequence) {
+    if (!cancelled && requestId === requestSequence && sameNotificationScope(scope, notificationScope())) {
       loadError.value = t('nav.notificationPopover.loadFailed')
     }
   } finally {
@@ -97,38 +123,46 @@ async function loadNotifications() {
 }
 
 async function onItemClick(notification: UserNotification) {
+  const scope = notificationScope()
+  if (scope.userId === null) return
+  if (!sameNotificationScope(displayedScope, scope)) { void loadNotifications(); return }
+  if (pendingReads.has(notification.id)) return
   visible.value = false
   if (!notification.is_read) {
+    pendingReads.add(notification.id)
     try {
-      await markUserNotificationRead(notification.id)
-      requestSequence += 1
-      loading.value = false
-      notification.is_read = true
-      unreadCount.value = Math.max(0, unreadCount.value - 1)
+      await markUserNotificationRead(notification.id, scope.organizationKey)
+      if (cancelled || !sameNotificationScope(scope, notificationScope())) return
+      publishNotificationReadChange({ scope, id: notification.id })
       loadError.value = ''
     } catch {
-      loadError.value = t('nav.notificationPopover.markReadFailed')
+      if (!cancelled && sameNotificationScope(scope, notificationScope())) {
+        loadError.value = t('nav.notificationPopover.markReadFailed')
+      }
+    } finally {
+      pendingReads.delete(notification.id)
     }
   }
-  void router.push(notification.to || '/account/notifications')
+  if (!cancelled && sameNotificationScope(scope, notificationScope())) {
+    void router.push(notification.to || '/account/notifications')
+  }
 }
 
 async function markAllRead() {
   if (!unreadCount.value || markingAll.value) return
-
+  const scope = notificationScope()
+  if (scope.userId === null) return
+  if (!sameNotificationScope(displayedScope, scope)) { void loadNotifications(); return }
   markingAll.value = true
   try {
-    await markAllUserNotificationsRead()
-    requestSequence += 1
-    loading.value = false
-    notifications.value = notifications.value.map((notification) => ({
-      ...notification,
-      is_read: true,
-    }))
-    unreadCount.value = 0
+    await markAllUserNotificationsRead(scope.organizationKey)
+    if (cancelled || !sameNotificationScope(scope, notificationScope())) return
+    publishNotificationReadChange({ scope, all: true })
     loadError.value = ''
   } catch {
-    loadError.value = t('nav.notificationPopover.markReadFailed')
+    if (!cancelled && sameNotificationScope(scope, notificationScope())) {
+      loadError.value = t('nav.notificationPopover.markReadFailed')
+    }
   } finally {
     markingAll.value = false
   }
@@ -143,6 +177,20 @@ watch(visible, (open) => {
   if (open) void loadNotifications()
 })
 
+watch(
+  [() => currentUser.value?.id, () => currentUser.value?.access_profile?.org_key],
+  () => {
+    requestSequence += 1
+    displayedScope = notificationScope()
+    notifications.value = []
+    unreadCount.value = 0
+    loading.value = false
+    loadError.value = ''
+    visible.value = false
+    void loadNotifications()
+  },
+)
+
 onMounted(() => {
   void loadNotifications()
   interval = setInterval(() => void loadNotifications(), POLL_MS)
@@ -150,6 +198,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   cancelled = true
+  stopReadSync()
   if (interval) clearInterval(interval)
 })
 </script>
@@ -160,10 +209,10 @@ onUnmounted(() => {
       v-model:visible="visible"
       trigger="click"
       placement="bottom-end"
-      :width="380"
+      :width="420"
       :show-arrow="false"
       effect="light"
-      popper-class="nav-dropdown-popover"
+      popper-class="nav-dropdown-popover nn-popover"
       :popper-options="popperOptions"
       :offset="8"
     >
@@ -182,21 +231,31 @@ onUnmounted(() => {
       </template>
 
       <div class="nav-dropdown-panel">
-        <header class="nav-dropdown-panel__head">
+        <header class="nav-dropdown-panel__head nn-head">
           <h3 class="nav-dropdown-panel__title">
-            {{ t('nav.notificationPopover.title') }} ({{ badgeCount }})
+            {{ t('nav.notificationPopover.title') }}
           </h3>
-          <ElButton
+          <button
             v-if="unreadCount > 0"
-            text
-            type="primary"
-            size="small"
-            class="nav-dropdown-panel__head-action"
-            :loading="markingAll"
+            type="button"
+            class="nav-dropdown-panel__foot-link nav-dropdown-panel__head-action nn-mark-all"
+            :aria-busy="markingAll"
+            :disabled="markingAll"
             @click="markAllRead"
           >
+            <LoaderCircle
+              v-if="markingAll"
+              class="nn-mark-all__loading"
+              :size="16"
+              aria-hidden="true"
+            />
+            <MailCheck
+              v-else
+              :size="16"
+              aria-hidden="true"
+            />
             {{ t('nav.notificationPopover.markAllRead') }}
-          </ElButton>
+          </button>
         </header>
 
         <div class="nav-dropdown-panel__body nav-dropdown-panel__body--flush">
@@ -225,28 +284,30 @@ onUnmounted(() => {
             role="list"
           >
             <li
-              v-for="notification in notifications"
+              v-for="notification in displayNotifications"
               :key="notification.id"
               class="nn-item"
+              :class="{ 'is-unread': !notification.is_read }"
               role="button"
               tabindex="0"
+              :aria-label="`${notification.display.title} · ${t(notification.is_read ? 'notificationsPage.read' : 'notificationsPage.unread')}`"
               @click="onItemClick(notification)"
               @keydown.enter.prevent="onItemClick(notification)"
               @keydown.space.prevent="onItemClick(notification)"
             >
-              <span
-                class="nn-icon"
-                :class="`nn-icon--${severityClass(notification)}`"
-                aria-hidden="true"
-              />
+              <NotificationOutcomeIcon :notification="notification" />
               <div class="nn-item-body">
                 <div class="nn-item-title">
-                  {{ taskAlertNotificationDisplay(notification, t).title }}
+                  {{ notification.display.title }}
                 </div>
-                <div class="nn-item-meta">
-                  <span class="nn-item-summary">{{ taskAlertNotificationDisplay(notification, t).summary || '—' }}</span>
-                  <span class="nn-item-sep">|</span>
-                  <span class="nn-item-time">{{ formatRelativeTime(notification.occurred_at || notification.updated_at) }}</span>
+                <div
+                  v-if="notification.display.summary"
+                  class="nn-item-summary"
+                >
+                  {{ notification.display.summary }}
+                </div>
+                <div class="nn-item-time">
+                  {{ formatRelativeTime(notification.occurred_at || notification.updated_at) }}
                 </div>
               </div>
               <span
@@ -265,7 +326,7 @@ onUnmounted(() => {
             @click="viewAll"
           >
             <span>{{ t('nav.notificationPopover.viewAll') }}</span>
-            <ArrowUpRight
+            <ArrowRight
               :size="14"
               aria-hidden="true"
             />
@@ -354,49 +415,96 @@ onUnmounted(() => {
 }
 
 .nn-list {
-  padding: 4px 0;
+  padding: 0;
+  max-height: min(440px, 60vh);
+  overscroll-behavior: contain;
+}
+
+.nn-head {
+  align-items: center;
+  padding: 12px 16px;
+  flex-wrap: wrap;
+}
+
+.nn-mark-all {
+  display: inline-flex;
+  width: auto;
+  height: 30px;
+  gap: 6px;
+  margin: 0;
+  padding: 0 8px;
+  font-weight: 400;
+}
+
+.nn-mark-all:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+  background: var(--color-primary-light);
+  border-color: var(--color-primary-border);
+}
+
+.nn-mark-all:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.nn-mark-all__loading {
+  animation: nn-mark-all-spin 1s linear infinite;
+}
+
+@keyframes nn-mark-all-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (pointer: coarse) {
+  .nn-mark-all {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nn-mark-all {
+    transition: none;
+  }
+
+  .nn-mark-all__loading {
+    animation: none;
+  }
+}
+
+.nn-mark-all :deep(svg) {
+  flex-shrink: 0;
 }
 
 .nn-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 16px;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
   cursor: pointer;
   transition: background-color 0.15s ease;
 }
 
 .nn-item:hover {
-  background-color: rgba(69, 125, 176, 0.08);
+  background-color: var(--el-fill-color-light);
+}
+
+.nn-item:last-child {
+  border-bottom: none;
+}
+
+.nn-item.is-unread {
+  background-color: color-mix(in srgb, var(--el-color-primary) 5%, transparent);
+}
+
+.nn-item.is-unread:hover {
+  background-color: color-mix(in srgb, var(--el-color-primary) 9%, transparent);
 }
 
 .nn-item:focus-visible {
   outline: 2px solid var(--color-primary, #457ab0);
   outline-offset: -2px;
-}
-
-.nn-icon {
-  flex-shrink: 0;
-  width: 10px;
-  height: 10px;
-  margin-top: 5px;
-  border-radius: 50%;
-}
-
-.nn-icon--critical {
-  background-color: var(--color-error);
-}
-
-.nn-icon--warning {
-  background-color: var(--color-warning);
-}
-
-.nn-icon--insight {
-  background-color: var(--color-primary, #457ab0);
-}
-
-.nn-icon--info {
-  background-color: var(--color-grey-5, #bfbfbf);
 }
 
 .nn-item-body {
@@ -407,22 +515,28 @@ onUnmounted(() => {
 .nn-item-title {
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.35;
-  color: var(--color-text-title, #303133);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  color: var(--el-text-color-primary);
 }
 
-.nn-item-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+.nn-item-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   margin-top: 4px;
-  font-size: 12px;
-  color: var(--color-text-tertiary, #909399);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--el-text-color-regular);
 }
 
-.nn-item-sep {
-  color: var(--color-border, #d9d9d9);
+.nn-item-time {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .nn-unread-dot {
@@ -432,5 +546,11 @@ onUnmounted(() => {
   margin-top: 6px;
   background-color: var(--color-primary, #457ab0);
   border-radius: 50%;
+}
+</style>
+
+<style>
+.nn-popover.el-popper {
+  box-shadow: var(--el-box-shadow-light);
 }
 </style>

@@ -10,7 +10,7 @@ Use the product reference for how HyperFileLens works and what it supports. Use 
 ## Product reference
 
 - [Core Concepts](/docs/reference/): Understand organizations, backup sources, target storage, jobs, snapshots, restores, and Data Gateways.
-- [Governance](/docs/governance/): Manage organizations, members, roles, groups, resources, and usage quotas.
+- [Organization Management](/docs/governance/): Manage organizations, members, roles, groups, resources, and usage quotas.
 - [Supported Configurations](/docs/reference/support-matrix): Check supported platforms, backup sources, target storage, and Insights capabilities.
 - [Limitations and Security Guidance](/docs/reference/limitations-security): Review product limits and guidance for credentials, networks, deletion, and recovery.
 

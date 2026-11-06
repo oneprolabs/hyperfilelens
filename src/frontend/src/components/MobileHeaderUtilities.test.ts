@@ -58,7 +58,7 @@ describe('mobile header utilities', () => {
     const returnIndex = platformOpsShell.indexOf('class="platform-ops-return"')
     const timezoneIndex = platformOpsShell.indexOf('class="platform-ops-timezone platform-ops-header__desktop-utility"')
     const languageIndex = platformOpsShell.indexOf('<LanguageSwitcher variant="navigation" />')
-    const userIndex = platformOpsShell.indexOf('<NavUserMenu />')
+    const userIndex = platformOpsShell.indexOf('<NavUserMenu platform />')
 
     expect(returnIndex).toBeGreaterThan(-1)
     expect(timezoneIndex).toBeGreaterThan(returnIndex)

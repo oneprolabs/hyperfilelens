@@ -74,6 +74,18 @@ describe('NavUserMenu product identity', () => {
     if (mocks.user) mocks.user.value = { ...mocks.defaultUser }
   })
 
+  it('opens personal settings inside the matching tenant or Admin Console surface', async () => {
+    mocks.fetchDeployProfile.mockResolvedValue(null)
+    const wrapper = mountMenu()
+    const button = wrapper.findAll('button').find(button => button.text().includes('Personal Settings'))!
+    await button.trigger('click')
+    expect(mocks.push).toHaveBeenLastCalledWith('/account/profile')
+    await wrapper.setProps({ platform: true })
+    await button.trigger('click')
+    expect(mocks.push).toHaveBeenLastCalledWith('/platform-ops/account/profile')
+    wrapper.unmount()
+  })
+
   it('shows the public Release version and Enterprise edition', async () => {
     mocks.fetchDeployProfile.mockResolvedValue({
       product_version: '0.2.1',

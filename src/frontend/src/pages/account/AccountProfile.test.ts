@@ -19,11 +19,16 @@ vi.mock('../../composables/useAuth', () => ({
     clearAuth: mocks.clearAuth,
   }),
 }))
-function render() {
-  return mount(AccountProfile, { global: {
+function render(showOrganizationRole = true) {
+  return mount(AccountProfile, { props: { showOrganizationRole }, global: {
     plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
     stubs: {
-      ResetPasswordCard: { name: 'ResetPasswordCard', props: { initialEmail: String, lockEmail: Boolean, embedded: Boolean }, template: '<div data-test="recovery" />' },
+      ResetPasswordCard: {
+        name: 'ResetPasswordCard',
+        props: { initialEmail: String, lockEmail: Boolean, embedded: Boolean, allowCancel: Boolean, setPassword: Boolean },
+        emits: ['cancel', 'password-reset'],
+        template: '<div data-test="recovery" />',
+      },
       ElButton: { template: '<button><slot /></button>' },
       ElForm: { template: '<form><slot /></form>' }, ElInput: true,
     },
@@ -33,6 +38,87 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.userTimezone = undefined
 })
+
+describe('personal settings layout', () => {
+  it('can hide organization-role identity in the platform account view', async () => {
+    mocks.api.mockResolvedValue({ has_usable_password: true })
+    const wrapper = render(false)
+    try {
+      await flushPromises()
+      expect(wrapper.find('.account-role-badge').exists()).toBe(false)
+      expect(wrapper.findAll('h2').map(title => title.text())).toEqual([
+        'Account Info', 'Change Password', 'Last Sign-In',
+      ])
+      expect(wrapper.find('.account-overview__name').text()).toBe('account@example.com')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+  it('keeps three stacked sections with matching read-only field grids', async () => {
+    mocks.api.mockResolvedValue({ has_usable_password: true })
+    const wrapper = render()
+    try {
+      await flushPromises()
+      expect(wrapper.findAll('h2').map(title => title.text())).toEqual([
+        'Account Info', 'Change Password', 'Last Sign-In',
+      ])
+      const grids = wrapper.findAll('.account-details-grid')
+      expect(grids).toHaveLength(2)
+      expect(grids[0].findAll('dt').map(label => label.text())).toEqual([
+        'Username', 'Email', 'Created At',
+      ])
+      expect(grids[1].findAll('dt').map(label => label.text())).toEqual([
+        'Time', 'IP Address', 'Location',
+      ])
+      expect(wrapper.find('.account-overview__email').exists()).toBe(false)
+      expect(grids[0].text()).toContain('account@example.com')
+      expect(wrapper.findAll('form label').map(label => label.attributes('for'))).toEqual([
+        'account-current-password', 'account-new-password', 'account-confirm-password',
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('places recovery and password update together without changing the recovery flow', async () => {
+    mocks.api.mockResolvedValue({ has_usable_password: true, password_reset_available: true })
+    const wrapper = render()
+    try {
+      await flushPromises()
+      const actions = wrapper.get('.account-password-actions')
+      expect(actions.findAll('button').map(button => button.text())).toEqual([
+        'Reset by Email', 'Change Password',
+      ])
+      const recoveryButton = actions.get('.account-password-recovery-button')
+      expect(recoveryButton.attributes('link')).toBeUndefined()
+      await recoveryButton.trigger('click')
+      expect(wrapper.find('[data-test="recovery"]').exists()).toBe(true)
+      expect(wrapper.find('form').exists()).toBe(false)
+      const recovery = wrapper.findComponent({ name: 'ResetPasswordCard' })
+      expect(recovery.props('allowCancel')).toBe(true)
+      expect(recovery.props('setPassword')).toBe(false)
+      expect(wrapper.text()).not.toContain(en.account.passwordRecoveryBack)
+      recovery.vm.$emit('cancel')
+      await flushPromises()
+      expect(wrapper.find('form').exists()).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('keeps the password update action when email recovery is unavailable', async () => {
+    mocks.api.mockResolvedValue({ has_usable_password: true, password_reset_available: false })
+    const wrapper = render()
+    try {
+      await flushPromises()
+      expect(wrapper.get('.account-password-actions').findAll('button').map(button => button.text()))
+        .toEqual([en.account.btnUpdatePassword])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+})
+
 describe('account timestamp display', () => {
   it.each([
     { profileTimezone: 'UTC', authTimezone: 'UTC' },
@@ -124,6 +210,8 @@ describe('account password settings', () => {
     const card = wrapper.findComponent({ name: 'ResetPasswordCard' })
     expect(card.props('initialEmail')).toBe('account@example.com')
     expect(card.props('lockEmail')).toBe(true)
+    expect(card.props('allowCancel')).toBe(false)
+    expect(card.props('setPassword')).toBe(true)
     card.vm.$emit('password-reset')
     await flushPromises()
     expect(mocks.clearAuth).toHaveBeenCalledOnce()

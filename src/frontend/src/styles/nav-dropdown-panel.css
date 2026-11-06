@@ -189,7 +189,7 @@
     color 0.15s ease;
 }
 
-.nav-dropdown-panel__foot-link:hover {
+.nav-dropdown-panel__foot-link:hover:not(:disabled) {
   background: var(--color-primary-light);
   border-color: var(--color-primary-border);
 }

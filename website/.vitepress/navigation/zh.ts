@@ -59,9 +59,9 @@ const product: DefaultTheme.SidebarItem[] = [
 
 const governance: DefaultTheme.SidebarItem[] = [
   {
-    text: '治理',
+    text: '组织管理',
     items: [
-      { text: '治理概述', link: '/zh/docs/governance/' },
+      { text: '概述', link: '/zh/docs/governance/' },
       { text: '组织', link: '/zh/docs/governance/organization' },
       { text: '成员', link: '/zh/docs/governance/members' },
       { text: '组', link: '/zh/docs/governance/groups' },
@@ -159,7 +159,7 @@ export const zhThemeConfig: DefaultTheme.Config = {
       activeMatch: '^/zh/docs/(product|backup-restore|insights)/',
     },
     {
-      text: '治理',
+      text: '组织管理',
       link: '/zh/docs/governance/',
       activeMatch: '^/zh/docs/governance/',
     },

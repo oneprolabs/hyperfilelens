@@ -8,6 +8,10 @@ import { lazyRoute } from '../router/lazyRoute'
 export const platformOpsRoutes = [
   { path: '', redirect: '/platform-ops/engine/ai-settings' },
   {
+    path: 'account/profile',
+    component: lazyRoute(() => import('./pages/account/PersonalSettings.vue')),
+  },
+  {
     path: 'platform/email',
     name: 'PlatformOpsSettingsEmail',
     meta: { analytics: { pageKey: 'platform.email', pageGroup: 'platform', pageSurface: 'admin', titleKey: 'platformOps.settings.emailTitle' } },

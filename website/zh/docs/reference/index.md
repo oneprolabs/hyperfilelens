@@ -17,7 +17,7 @@ description: 理解 HyperFileLens 中组织、备份源、目标存储、任务�
 | 组 | 在组织内划分成员与资源的协作范围；见[组](/zh/docs/governance/groups) |
 | 用量与配额 | 组织限额、占用以及配额申请与审批；见[用量与配额](/zh/docs/governance/usage) |
 
-完整组织治理说明见[治理概述](/zh/docs/governance/)。
+完整组织治理说明见[组织管理概述](/zh/docs/governance/)。
 
 ## 数据保护
 

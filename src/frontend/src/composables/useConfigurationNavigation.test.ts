@@ -37,6 +37,7 @@ function navigation() {
     return () => null
   } }), { global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] } })
   const paths = () => sidebar.value.flatMap(section => section.children?.map(item => item.to) || [])
+    .filter(path => path?.startsWith('/node/'))
   return { primary, sidebar, wrapper, paths }
 }
 
@@ -48,12 +49,15 @@ describe('Configuration navigation consistency', () => {
     registered.value = configurationPages.map(page => page.path.slice(1))
   })
 
-  it('hides Configuration on both navigation surfaces, including the empty sidebar section', () => {
+  it('keeps Account available while hiding unauthorized organization navigation', () => {
     organization.value = ['protection.source_hosts.view', 'insights.chats.view', 'operations.tasks.view']
     const { primary, sidebar, wrapper } = navigation()
-    expect(primary.items.value.map(item => item.to)).toEqual(['/', '/protection', '/insight', '/ops'])
-    expect(primary.itemsWithActiveState.value.some(item => item.to === '/node')).toBe(false)
-    expect(sidebar.value).toEqual([])
+    expect(primary.items.value.map(item => item.to)).toEqual(['/', '/protection', '/insight', '/node', '/ops'])
+    expect(primary.itemsWithActiveState.value.some(item => item.to === '/node')).toBe(true)
+    expect(sidebar.value.map(section => section.label)).toEqual(['Account'])
+    expect(sidebar.value[0].children?.map(item => item.to)).toEqual([
+      '/account/profile', '/account/notifications',
+    ])
     wrapper.unmount()
   })
 
@@ -63,15 +67,16 @@ describe('Configuration navigation consistency', () => {
     expect(primary.items.value.some(item => item.to === '/node')).toBe(true)
     expect(paths()).toEqual([page.path])
     organization.value = []
-    expect(primary.itemsWithActiveState.value.some(item => item.to === '/node')).toBe(false)
-    expect(sidebar.value).toEqual([])
+    expect(primary.itemsWithActiveState.value.some(item => item.to === '/node')).toBe(true)
+    expect(paths()).toEqual([])
+    expect(sidebar.value.map(section => section.label)).toEqual(['Account'])
     wrapper.unmount()
   })
 
   it.each(configurationPages)('uses only supported Group grants for $path', page => {
     group.value = [page.permission]
     const { primary, paths, wrapper } = navigation()
-    expect(primary.items.value.some(item => item.to === '/node')).toBe(!page.organizationOnly)
+    expect(primary.items.value.some(item => item.to === '/node')).toBe(true)
     expect(paths()).toEqual(page.organizationOnly ? [] : [page.path])
     wrapper.unmount()
   })
@@ -90,7 +95,7 @@ describe('Configuration navigation consistency', () => {
     expect(primary.items.value.some(item => item.to === '/node')).toBe(true)
     expect(paths()).toEqual(['/node/subscription'])
     registered.value = []
-    expect(primary.items.value.some(item => item.to === '/node')).toBe(false)
+    expect(primary.items.value.some(item => item.to === '/node')).toBe(true)
     expect(paths()).toEqual([])
     wrapper.unmount()
   })

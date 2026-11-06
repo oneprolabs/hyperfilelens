@@ -17,7 +17,7 @@ These concepts explain how product pages and jobs relate to one another. For ste
 | Group | A collaboration boundary for members and resources inside an organization; see [Groups](/docs/governance/groups) |
 | Usage and quotas | Organization limits, consumption, and quota increase requests; see [Usage and quotas](/docs/governance/usage) |
 
-For the full organization governance guide, see [Governance overview](/docs/governance/).
+For the full organization governance guide, see [Organization Management Overview](/docs/governance/).
 
 ## Data protection
 

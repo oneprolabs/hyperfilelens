@@ -5,7 +5,7 @@ description: Review the organization resource directory, ownership, and group ac
 
 # Resources
 
-The Resources page lists the organization’s backup sources, repositories, gateways, and similar objects, along with who owns them. Open <span class="hfl-path">Configuration → Governance → Resources</span> to confirm ownership and access match how your teams actually work.
+The Resources page lists the organization’s backup sources, repositories, gateways, and similar objects, along with who owns them. Open <span class="hfl-path">Configuration → Organization Management → Resources</span> to confirm ownership and access match how your teams actually work.
 
 ## View the resource directory
 

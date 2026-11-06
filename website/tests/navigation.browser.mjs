@@ -123,7 +123,7 @@ test('mobile and tablet navigation stays inside the viewport with usable languag
     await page.locator('.VPNavBarHamburger').click()
     const screen = page.locator('#VPNavScreen')
     await screen.waitFor()
-    await screen.getByRole('link', { name: 'Governance', exact: true }).waitFor()
+    await screen.getByRole('link', { name: 'Organization Management', exact: true }).waitFor()
     await screen.getByRole('link', { name: 'Try free', exact: true }).waitFor()
     await screen.locator('.hfl-doc-languages--screen a[hreflang="zh"]').click()
     await page.waitForFunction(() => document.documentElement.lang === 'zh-Hans'

@@ -14,6 +14,8 @@ const props = withDefaults(
     initialEmail?: string
     lockEmail?: boolean
     embedded?: boolean
+    allowCancel?: boolean
+    setPassword?: boolean
   }>(),
   {
     initialEmail: '',
@@ -24,6 +26,7 @@ const emit = defineEmits<{
   'back-to-login': [email?: string]
   'update:step': [step: 'request' | 'reset']
   'password-reset': []
+  cancel: []
 }>()
 
 const { t, locale } = useI18n()
@@ -67,6 +70,8 @@ const showConfirmPassword = ref(false)
 const resetError = ref('')
 const resendCooldown = ref(0)
 const emailNotRegistered = ref(false)
+const sendError = ref('')
+let disposed = false
 
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 let successTimer: ReturnType<typeof setTimeout> | null = null
@@ -90,6 +95,7 @@ const maskedEmail = computed(() => maskEmail(savedEmail.value))
 
 const canSendResetCode = computed(() => {
   if (submitLoading.value) return false
+  if (props.embedded && (resendCooldown.value > 0 || resetLoading.value || resetSuccess.value)) return false
   if (isTurnstilePending.value) return false
   if (isTurnstileBlocked.value) return false
   if (isTurnstileReady.value) return Boolean(turnstileToken.value)
@@ -121,6 +127,7 @@ const confirmPasswordError = computed(() => {
 
 const canUpdatePassword = computed(() => {
   if (resetLoading.value || resetSuccess.value) return false
+  if (props.embedded && (submitLoading.value || !savedEmail.value)) return false
   if (!/^\d{6}$/.test(resetCode.value.trim())) return false
   if (checkPassword(newPassword.value)) return false
   return Boolean(confirmPassword.value) && newPassword.value === confirmPassword.value
@@ -296,8 +303,14 @@ function resetRequestErrorMessage(errorCode?: string, fallback?: string): string
   return fallback || t('findPwd.sendFailed')
 }
 
+function reportSendError(message: string) {
+  if (props.embedded) sendError.value = safeErrorDetailText(message)
+  else ElMessage.error({ message, grouping: true })
+}
+
 async function sendResetCode() {
   if (submitLoading.value) return
+  if (props.embedded && (resendCooldown.value > 0 || resetLoading.value || resetSuccess.value)) return
   if (!validateRequestForm()) return
 
   submitLoading.value = true
@@ -305,6 +318,7 @@ async function sendResetCode() {
   formItems.email.showError = false
   turnstileError.value = ''
   emailNotRegistered.value = false
+  sendError.value = ''
 
   try {
     const postData = {
@@ -316,28 +330,32 @@ async function sendResetCode() {
       method: 'POST',
       body: JSON.stringify(postData),
     })
+    if (props.embedded && disposed) return
 
     if (res.code === '0000') {
-      savedEmail.value = formItems.email.value.trim().toLowerCase()
       if (res.data?.pending_registration) {
+        if (props.embedded) {
+          reportSendError(t('findPwd.pendingRegistration'))
+          return
+        }
         ElMessage.warning({ message: t('findPwd.pendingRegistration'), grouping: true })
         router.push({
           path: '/register',
-          query: { email: savedEmail.value },
+          query: { email: formItems.email.value.trim().toLowerCase() },
         })
         return
       }
+      savedEmail.value = formItems.email.value.trim().toLowerCase()
       startResendCooldown()
-      switchToResetView()
+      if (props.embedded) resetError.value = ''
+      else switchToResetView()
     } else if (res.error?.fields) {
       handleSendResetFieldsError(res.error.fields, res.error.error_code)
     } else {
-      ElMessage.error({
-        message: resetRequestErrorMessage(res.error?.error_code, res.error?.message),
-        grouping: true,
-      })
+      reportSendError(resetRequestErrorMessage(res.error?.error_code, res.error?.message))
     }
   } catch (err: unknown) {
+    if (props.embedded && disposed) return
     const errObj = err as {
       message?: string
       errorCode?: string
@@ -346,10 +364,7 @@ async function sendResetCode() {
     if (errObj.fields && Object.keys(errObj.fields).length > 0) {
       handleSendResetFieldsError(errObj.fields, errObj.errorCode)
     } else {
-      ElMessage.error({
-        message: resetRequestErrorMessage(errObj.errorCode, errObj.message),
-        grouping: true,
-      })
+      reportSendError(resetRequestErrorMessage(errObj.errorCode, errObj.message))
     }
   } finally {
     resetTurnstile()
@@ -418,6 +433,7 @@ function passwordResetErrorMessage(error: unknown): string {
 
 async function handleUpdatePassword() {
   if (resetLoading.value || resetSuccess.value) return
+  if (props.embedded && (submitLoading.value || !savedEmail.value)) return
   if (!validateResetForm()) return
 
   resetLoading.value = true
@@ -432,13 +448,16 @@ async function handleUpdatePassword() {
         password: newPassword.value,
       }),
     })
+    if (props.embedded && disposed) return
 
     if (res.code === '0000') {
       resetSuccess.value = true
       emit('password-reset')
-      successTimer = setTimeout(() => {
-        emit('back-to-login', savedEmail.value)
-      }, 1000)
+      if (!props.embedded) {
+        successTimer = setTimeout(() => {
+          emit('back-to-login', savedEmail.value)
+        }, 1000)
+      }
     } else {
       resetError.value = passwordResetErrorMessage({
         message: res.error?.message,
@@ -448,6 +467,7 @@ async function handleUpdatePassword() {
       })
     }
   } catch (error: unknown) {
+    if (props.embedded && disposed) return
     resetError.value = passwordResetErrorMessage(error)
   } finally {
     // Always release the request lock; form validity still controls availability.
@@ -461,6 +481,7 @@ watch(locale, () => {
   confirmPasswordTouched.value = false
   resetError.value = ''
   turnstileError.value = ''
+  sendError.value = ''
 })
 
 onMounted(async () => {
@@ -469,6 +490,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  disposed = true
   if (cooldownTimer) clearInterval(cooldownTimer)
   if (successTimer) clearTimeout(successTimer)
 })
@@ -479,7 +501,190 @@ onUnmounted(() => {
     class="reset-password-card"
     :class="{ 'reset-password-card--embedded': props.embedded }"
   >
+    <ElForm
+      v-if="props.embedded"
+      class="embedded-reset-form"
+      @submit.prevent="handleUpdatePassword"
+    >
+      <div class="embedded-reset-row">
+        <span class="embedded-reset-label">{{ t('account.fieldEmail') }}</span>
+        <div class="embedded-reset-control">
+          <p class="embedded-reset-email">
+            {{ props.initialEmail }}
+          </p>
+          <p
+            v-if="formItems.email.showError"
+            class="embedded-reset-error"
+            role="alert"
+          >
+            {{ formItems.email.errorMsg }}
+          </p>
+        </div>
+      </div>
+      <div class="embedded-reset-row">
+        <label
+          for="reset-verification-code"
+          class="embedded-reset-label"
+        >{{ t('account.verificationCode') }}</label>
+        <div class="embedded-reset-control">
+          <div class="embedded-reset-code">
+            <ElInput
+              id="reset-verification-code"
+              v-model="resetCode"
+              inputmode="numeric"
+              maxlength="6"
+              autocomplete="one-time-code"
+              :aria-describedby="resetError ? 'reset-form-error' : undefined"
+              @input="clearResetError"
+            />
+            <ElButton
+              class="embedded-send-code"
+              :disabled="!canSendResetCode"
+              :loading="submitLoading"
+              @click="sendResetCode"
+            >
+              {{ resendCooldown > 0
+                ? t('account.resendCodeCountdown', { seconds: resendCooldown })
+                : t(savedEmail ? 'account.resendCode' : 'account.sendCode') }}
+            </ElButton>
+          </div>
+          <p
+            v-if="sendError"
+            class="embedded-reset-error"
+            role="alert"
+          >
+            {{ sendError }}
+          </p>
+          <p
+            v-else-if="savedEmail"
+            class="embedded-reset-hint"
+            role="status"
+          >
+            {{ t('account.codeSent') }}
+          </p>
+        </div>
+      </div>
+      <div
+        v-if="isTurnstileReady || isTurnstileBlocked || turnstileError"
+        class="embedded-reset-row embedded-reset-verification"
+      >
+        <span aria-hidden="true" />
+        <div class="embedded-reset-control">
+          <AuthTurnstileField
+            ref="turnstileFieldRef"
+            :ready="isTurnstileReady"
+            :blocked="isTurnstileBlocked"
+            :verified="Boolean(turnstileToken)"
+            :site-key="turnstileSiteKey"
+            action="forgot_password"
+            :blocked-message="t('login.captchaUnavailable')"
+            :retry-label="t('login.captchaRetry')"
+            :manual-retry-label="t('login.captchaManualRetry')"
+            :error-code-label="turnstileErrorCode ? t('login.captchaReferenceCode', { code: turnstileErrorCode }) : ''"
+            :error-message="turnstileError"
+            @retry="retryTurnstile"
+            @success="onTurnstileSuccess"
+            @expire="onTurnstileExpire"
+            @invalidate="onTurnstileInvalidate"
+            @error="onTurnstileError"
+            @load-failed="onTurnstileLoadFailed"
+          />
+        </div>
+      </div>
+      <div class="embedded-reset-row">
+        <label
+          for="reset-new-password"
+          class="embedded-reset-label"
+        >{{ t('account.fieldNewPassword') }}</label>
+        <div class="embedded-reset-control">
+          <ElInput
+            id="reset-new-password"
+            v-model="newPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            @input="clearResetError"
+          />
+          <div
+            v-if="newPassword"
+            class="embedded-reset-strength"
+          >
+            <div class="embedded-reset-strength__bar">
+              <div
+                class="embedded-reset-strength__fill"
+                :style="{ width: `${passwordStrength.level / 3 * 100}%`, background: passwordStrength.color }"
+              />
+            </div>
+            <span :style="{ color: passwordStrength.color }">{{ passwordStrength.text }}</span>
+          </div>
+          <p class="embedded-reset-hint">
+            {{ t('account.securityPwdHint') }}
+          </p>
+        </div>
+      </div>
+      <div class="embedded-reset-row">
+        <label
+          for="reset-confirm-password"
+          class="embedded-reset-label"
+        >{{ t('account.fieldConfirmPassword') }}</label>
+        <div class="embedded-reset-control">
+          <ElInput
+            id="reset-confirm-password"
+            v-model="confirmPassword"
+            type="password"
+            show-password
+            autocomplete="new-password"
+            :aria-invalid="Boolean(confirmPasswordError)"
+            :aria-describedby="confirmPasswordError ? 'reset-confirm-password-error' : undefined"
+            @input="onConfirmPasswordInput"
+            @blur="confirmPasswordTouched = true"
+          />
+          <p
+            v-if="confirmPasswordError"
+            id="reset-confirm-password-error"
+            class="embedded-reset-error"
+            role="alert"
+          >
+            {{ confirmPasswordError }}
+          </p>
+          <p
+            v-if="resetError"
+            id="reset-form-error"
+            class="embedded-reset-error"
+            role="alert"
+          >
+            {{ resetError }}
+          </p>
+        </div>
+      </div>
+      <div class="embedded-reset-row embedded-reset-row--actions">
+        <span
+          class="embedded-reset-spacer"
+          aria-hidden="true"
+        />
+        <div class="embedded-reset-control embedded-reset-actions">
+          <ElButton
+            v-if="props.allowCancel"
+            :disabled="submitLoading || resetLoading || resetSuccess"
+            @click="emit('cancel')"
+          >
+            {{ t('common.cancel') }}
+          </ElButton>
+          <ElButton
+            type="primary"
+            native-type="submit"
+            class="embedded-confirm-password"
+            :disabled="!canUpdatePassword"
+            :loading="resetLoading"
+            @click.prevent="handleUpdatePassword"
+          >
+            {{ t(props.setPassword ? 'account.setPassword' : 'account.btnUpdatePassword') }}
+          </ElButton>
+        </div>
+      </div>
+    </ElForm>
     <Transition
+      v-else
       name="reset-view-fade"
       mode="out-in"
     >
@@ -492,39 +697,15 @@ onUnmounted(() => {
         @submit.prevent="sendResetCode"
       >
         <p class="reset-subtitle">
-          {{ t(props.embedded && props.lockEmail ? 'account.passwordCodeDestinationHint' : 'findPwd.requestSubtitle') }}
+          {{ t('findPwd.requestSubtitle') }}
         </p>
 
-        <dl
-          v-if="props.embedded && props.lockEmail"
-          class="account-email-summary"
-        >
-          <dt class="field-label">
-            {{ t('account.fieldEmail') }}
-          </dt>
-          <dd class="account-email-summary__value">
-            <Mail
-              class="input-icon"
-              :size="18"
-              aria-hidden="true"
-            />
-            <span>{{ props.initialEmail }}</span>
-          </dd>
-          <dd
-            v-if="formItems.email.showError"
-            class="error-msg"
-            role="alert"
-          >
-            {{ formItems.email.errorMsg }}
-          </dd>
-        </dl>
         <div
-          v-else
           class="input-wrapper"
           :class="{ 'has-error': formItems.email.showError }"
         >
           <label
-            :class="props.embedded ? 'field-label' : 'sr-only'"
+            class="sr-only"
             for="reset-request-email"
           >{{ t('findPwd.emailPlaceholder') }}</label>
           <div class="input-row">
@@ -595,7 +776,7 @@ onUnmounted(() => {
           :loading="submitLoading"
           @click="sendResetCode"
         >
-          {{ submitLoading ? t('findPwd.btnSubmitLoading') : t(props.embedded ? 'account.sendPasswordCode' : 'findPwd.sendResetCode') }}
+          {{ submitLoading ? t('findPwd.btnSubmitLoading') : t('findPwd.sendResetCode') }}
         </ElButton>
       </form>
 
@@ -613,7 +794,7 @@ onUnmounted(() => {
 
         <div class="input-wrapper">
           <label
-            :class="props.embedded ? 'field-label' : 'sr-only'"
+            class="sr-only"
             for="reset-verification-code"
           >{{ t('findPwd.digitCodePh') }}</label>
           <div class="captcha-row">
@@ -654,7 +835,7 @@ onUnmounted(() => {
 
         <div class="input-wrapper">
           <label
-            :class="props.embedded ? 'field-label' : 'sr-only'"
+            class="sr-only"
             for="reset-new-password"
           >{{ t('findPwd.newPasswordPlaceholder') }}</label>
           <div class="input-row">
@@ -697,7 +878,7 @@ onUnmounted(() => {
 
         <div class="input-wrapper">
           <label
-            :class="props.embedded ? 'field-label' : 'sr-only'"
+            class="sr-only"
             for="reset-confirm-password"
           >{{ t('findPwd.confirmPasswordPlaceholder') }}</label>
           <div class="input-row">
@@ -814,124 +995,145 @@ onUnmounted(() => {
 
 .reset-password-card--embedded {
   width: 100%;
-  max-width: 520px;
-  margin-top: 16px;
-  color: var(--color-text-primary);
-}
-
-.reset-password-card--embedded .reset-view {
-  gap: 16px;
-}
-
-.reset-password-card--embedded .reset-subtitle,
-.reset-password-card--embedded .reset-email-hint,
-.reset-password-card--embedded .register-hint {
-  color: var(--color-text-secondary);
-}
-
-.field-label {
-  color: var(--color-text-primary);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.account-email-summary {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-}
-
-.account-email-summary__value {
-  display: flex;
-  align-items: flex-start;
-  margin: 0;
-  padding: 12px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--el-border-radius-base);
-  background: var(--color-grey-2);
-  color: var(--color-text-primary);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.account-email-summary__value .input-icon {
-  margin-top: 2px;
-}
-
-.account-email-summary__value span {
+  max-width: 832px;
   min-width: 0;
+  color: var(--color-text-primary);
+}
+
+.embedded-reset-row {
+  display: grid;
+  grid-template-columns: minmax(128px, 168px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  min-height: 42px;
+  padding: 6px 0;
+}
+
+.embedded-reset-row + .embedded-reset-row {
+  margin-top: 6px;
+}
+
+.embedded-reset-label {
+  color: var(--color-text-secondary, var(--el-text-color-secondary));
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 34px;
+}
+
+.embedded-reset-control {
+  width: 100%;
+  max-width: 640px;
+  min-width: 0;
+}
+
+.embedded-reset-email {
+  margin: 0;
+  color: var(--color-text-title, var(--el-text-color-primary));
+  font-size: 14px;
+  line-height: 34px;
   overflow-wrap: anywhere;
 }
 
-.reset-password-card--embedded .input-row {
-  background: var(--color-card-bg);
-  border-color: var(--color-border);
-  border-radius: var(--el-border-radius-base);
+.embedded-reset-code {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.reset-password-card--embedded .input-row:has(input[readonly]) {
-  background: var(--color-grey-2);
+.embedded-reset-code .el-input {
+  min-width: 0;
 }
 
-.reset-password-card--embedded .input-row:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
+.embedded-reset-code .el-button {
+  flex-shrink: 0;
 }
 
-.reset-password-card--embedded .input-row input {
-  color: var(--color-text-primary);
+.embedded-reset-form :deep(.el-input__wrapper) {
+  min-height: 34px;
 }
 
-.reset-password-card--embedded .input-row input::placeholder {
-  color: var(--color-text-placeholder);
+.embedded-reset-hint,
+.embedded-reset-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.reset-password-card--embedded .input-icon,
-.reset-password-card--embedded .eye-btn {
-  color: var(--color-text-secondary);
+.embedded-reset-hint {
+  color: var(--color-text-secondary, var(--el-text-color-secondary));
 }
 
-.reset-password-card--embedded .eye-btn:hover {
-  color: var(--color-text-primary);
-  background: var(--color-grey-2);
+.embedded-reset-error {
+  color: var(--color-error, var(--el-color-danger));
 }
 
-.reset-password-card--embedded .resend-btn {
-  border-color: var(--color-primary-border);
-  color: var(--color-primary);
+.embedded-reset-strength {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1;
 }
 
-.reset-password-card--embedded .resend-btn:hover:not(:disabled) {
-  background: var(--color-primary-light);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+.embedded-reset-strength__bar {
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  background: var(--color-grey-3, var(--el-fill-color-light));
+  border-radius: 2px;
 }
 
-.reset-password-card--embedded .input-wrapper.has-error .input-row {
-  background: var(--color-error-light);
-  border-color: var(--color-error);
+.embedded-reset-strength__fill {
+  height: 100%;
 }
 
-.reset-password-card--embedded .error-msg {
-  color: var(--color-error-text);
+.embedded-reset-row--actions {
+  padding-top: 12px;
+  padding-bottom: 0;
 }
 
-.reset-password-card--embedded .reset-error {
-  text-align: left;
+.embedded-reset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
-.reset-password-card--embedded .strength-bar {
-  background: var(--color-grey-3);
+.embedded-reset-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
-.reset-password-card--embedded .submit-btn {
-  width: fit-content;
-  max-width: 100%;
-  min-width: 160px;
-  border-radius: var(--el-border-radius-base);
-  align-self: flex-start;
+@media (max-width: 640px) {
+  .embedded-reset-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    min-height: 0;
+    padding: 0;
+  }
+
+  .embedded-reset-row + .embedded-reset-row {
+    margin-top: 14px;
+  }
+
+  .embedded-reset-label {
+    line-height: 20px;
+  }
+
+  .embedded-reset-spacer,
+  .embedded-reset-verification > span {
+    display: none;
+  }
+
+  .embedded-reset-row--actions {
+    margin-top: 18px;
+  }
+
+  .embedded-reset-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .reset-view {
