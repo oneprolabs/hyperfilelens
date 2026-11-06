@@ -264,7 +264,7 @@ grep -Fq 'LENSNODE_PLANNING_REASONING_EFFORT=medium' \
 	"${online}/sourcelens/env.example"
 grep -Fq 'LENSNODE_EXECUTION_BACKEND=trusted_container' \
 	"${online}/sourcelens/env.example"
-grep -Fq 'LENSNODE_MAX_CONCURRENT_RUNS=1' \
+grep -Fq 'LENSNODE_MAX_CONCURRENT_RUNS=8' \
 	"${online}/sourcelens/env.example"
 if grep -q '^LENSNODE_HEAVY_WORK_CONCURRENCY=' \
 	"${online}/sourcelens/env.example"; then

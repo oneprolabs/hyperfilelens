@@ -117,7 +117,7 @@ grep -Fx 'SENTRY_DSN=https://backend@sentry.example.com/41' "${sl_env}" >/dev/nu
 grep -Fx 'SENTRY_SEND_DEFAULT_PII=false' "${sl_env}" >/dev/null
 grep -Fx 'LENSNODE_PLANNING_REASONING_EFFORT=medium' "${sl_env}" >/dev/null
 grep -Fx 'LENSNODE_EXECUTION_BACKEND=trusted_container' "${sl_env}" >/dev/null
-grep -Fx 'LENSNODE_MAX_CONCURRENT_RUNS=1' "${sl_env}" >/dev/null
+grep -Fx 'LENSNODE_MAX_CONCURRENT_RUNS=8' "${sl_env}" >/dev/null
 if grep -q '^LENSNODE_HEAVY_WORK_CONCURRENCY=' "${sl_env}"; then
 	printf 'ERROR: retired SourceLens heavy-work concurrency remained configured\n' >&2
 	exit 1
