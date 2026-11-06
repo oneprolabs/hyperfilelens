@@ -793,6 +793,8 @@
       "dirTreeHint": "Expanda para cargar las rutas secundarias, seleccione archivos o carpetas y haga clic en Añadir. No se pueden seleccionar a la vez una ruta principal y una secundaria.",
       "dirTreeEmptyHost": "No hay rutas disponibles para este origen de copia de seguridad.",
       "dirTreeLoadFailed": "No se pudieron cargar las rutas. Compruebe que la fuente esté en línea y que la ruta sea accesible.",
+      "sourceDirectoryTimedOut": "La carga del directorio agotó el tiempo de espera. Inténtelo de nuevo más tarde.",
+      "sourcePathValidationTimedOut": "La validación de la ruta agotó el tiempo de espera sin obtener un resultado. Inténtelo de nuevo más tarde.",
       "dirTreeFilenameEncodingWarningTitle": "Posible problema de codificación de nombre de archivo SMB",
       "dirTreeFilenameEncodingWarningReasonLabel": "Razón",
       "dirTreeFilenameEncodingWarningReason": "Este origen no está configurado con iocharset=utf8. Los signos de interrogación podrían sustituir caracteres no ASCII del nombre original, por lo que la ruta mostrada podría no ser la real.",
