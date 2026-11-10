@@ -26,6 +26,19 @@ func NewRepoRepo(db *DB) *RepoRepo {
 	return &RepoRepo{db: db}
 }
 
+// RelocateConfigPaths switches only exact, verified migration sources. Task
+// history is intentionally immutable; redelivered paths are resolved at use.
+func (r *RepoRepo) RelocateConfigPaths(ctx context.Context, paths map[string]string) error {
+	return r.db.WithTx(ctx, func(tx *sql.Tx) error {
+		for source, target := range paths {
+			if _, err := tx.ExecContext(ctx, `UPDATE repos SET config_file=? WHERE config_file=?`, target, source); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // ConnectInput registers or updates a repo alias.
 type ConnectInput struct {
 	Name        string

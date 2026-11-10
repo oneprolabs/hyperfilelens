@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"hyperfilelens/agent/internal/infra/kopialayout"
 )
 
 type ephemeralKopiaServerClientState struct {
@@ -42,7 +44,7 @@ func (e *Engine) acquireEphemeralKopiaServerClientState(
 		return func() {}
 	}
 	configFile := e.repositoryConfigPath(spec)
-	configRoot := managedRepositoryCacheRoot(e.current())
+	configRoot := kopialayout.ConfigDir(agentDataDir(e.current()))
 	if !managedRepositoryConfigPath(configFile, configRoot) {
 		slog.WarnContext(ctx, "ephemeral repository client uses unmanaged config; local cleanup skipped")
 		return func() {}
@@ -95,7 +97,14 @@ func (e *Engine) ephemeralKopiaServerClientRelease(
 			ephemeralKopiaServerClients.Unlock()
 
 			go func() {
-				e.cleanupEphemeralKopiaServerClient(configFile)
+				// This cleanup outlives Engine.Run; hold its own usage lock.
+				release, err := kopialayout.AcquireUsage(context.Background(), agentDataDir(e.current()))
+				if err != nil {
+					slog.Warn("ephemeral repository cleanup deferred", "err", err)
+				} else {
+					e.cleanupEphemeralKopiaServerClient(configFile)
+					release()
+				}
 
 				ephemeralKopiaServerClients.Lock()
 				if ephemeralKopiaServerClients.states[configFile] == state {

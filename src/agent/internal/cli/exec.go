@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"hyperfilelens/agent/internal/engine"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/database"
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 )
 
@@ -36,7 +38,7 @@ func (s cliSink) OnProgress(_ context.Context, progress map[string]any) error {
 
 func runEngineCommand(ctx context.Context, store *config.Store, kind string, payload map[string]any, asJSON, quiet bool) error {
 	cfg := store.Current()
-	dataRoot, _, _, err := app.ResolveLayout(cfg)
+	dataRoot, logDir, _, err := app.ResolveLayout(cfg)
 	if err != nil {
 		return err
 	}
@@ -46,6 +48,9 @@ func runEngineCommand(ctx context.Context, store *config.Store, kind string, pay
 	}
 	defer db.Close()
 
+	if err := migrateKopiaLayout(ctx, dataRoot, logDir, db); err != nil {
+		return err
+	}
 	repo := database.NewTaskRepo(db)
 	taskID, err := newTaskID()
 	if err != nil {
@@ -108,6 +113,22 @@ func runEngineCommand(ctx context.Context, store *config.Store, kind string, pay
 		return fmt.Errorf("%s", out.Error)
 	}
 	return fmt.Errorf("command failed")
+}
+
+func migrateKopiaLayout(ctx context.Context, root, logDir string, db *database.DB) error {
+	// A running service has already completed startup migration. Do not request
+	// an exclusive migration lock from a CLI command while it serves tasks.
+	ready, err := kopialayout.Ready(root)
+	if err != nil || ready {
+		return err
+	}
+	err = kopialayout.Migrate(ctx, root, logDir, database.NewRepoRepo(db).RelocateConfigPaths)
+	var incomplete *kopialayout.IncompleteError
+	if errors.As(err, &incomplete) {
+		fmt.Fprintln(os.Stderr, incomplete.Error())
+		return nil
+	}
+	return err
 }
 
 func openConfigStore(ctx context.Context, dataDirOverride string) (*config.Store, error) {

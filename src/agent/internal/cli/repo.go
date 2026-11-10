@@ -24,6 +24,10 @@ func resolveKopiaConfig(ctx context.Context, dataDir, repoName, configFile strin
 	case repoName == "" && configFile == "":
 		return "", fmt.Errorf("one of --repo or --config-file is required")
 	case configFile != "":
+		// Preserve the historical external-config fast path. The engine applies
+		// the managed legacy alias after it has opened the installation and run
+		// migration; standalone callers must not be forced to initialize an
+		// Agent database or cache merely to use their own Kopia config.
 		return configFile, nil
 	}
 
@@ -55,13 +59,17 @@ func openRepoDB(ctx context.Context, dataDir string) (*database.DB, *database.Re
 		return nil, nil, err
 	}
 	cfg := store.Current()
-	dataRoot, _, _, err := app.ResolveLayout(cfg)
+	dataRoot, logDir, _, err := app.ResolveLayout(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
 	db, err := database.Open(ctx, database.DefaultPath(dataRoot))
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := migrateKopiaLayout(ctx, dataRoot, logDir, db); err != nil {
+		_ = db.Close()
+		return nil, nil, err
 	}
 	return db, database.NewRepoRepo(db), nil
 }

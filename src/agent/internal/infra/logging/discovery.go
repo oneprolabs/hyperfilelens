@@ -16,6 +16,43 @@ import (
 
 var serverSessionName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var kopiaLogName = regexp.MustCompile(`^kopia-[0-9]{8}-[0-9]{6}-([0-9]+)-[A-Za-z0-9_-]+(?:[.][0-9]+)?[.]log$`)
+var legacyKopiaLogDir = regexp.MustCompile(`^legacy-[a-f0-9]{16}$`)
+
+type kopiaLogEntry struct {
+	path  string
+	entry os.DirEntry
+}
+
+func kopiaLogEntries(dir string) ([]kopiaLogEntry, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	if len(entries) > 8192 {
+		return nil, errors.New("Kopia log scan bound exceeded")
+	}
+	var files []kopiaLogEntry
+	scanned := len(entries)
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if entry.IsDir() && legacyKopiaLogDir.MatchString(entry.Name()) && plainDirectory(path) {
+			children, err := os.ReadDir(path)
+			if err != nil {
+				return nil, err
+			}
+			scanned += len(children)
+			if scanned > 8192 {
+				return nil, errors.New("Kopia log scan bound exceeded")
+			}
+			for _, child := range children {
+				files = append(files, kopiaLogEntry{filepath.Join(path, child.Name()), child})
+			}
+		} else {
+			files = append(files, kopiaLogEntry{path, entry})
+		}
+	}
+	return files, nil
+}
 
 func plainDirectory(path string) bool {
 	info, err := os.Lstat(path)
@@ -104,14 +141,15 @@ func SweepKopiaLogs(root string, days, budget int, now time.Time) error {
 		if !plainDirectory(dir) {
 			return errors.New("Kopia log scope is unavailable")
 		}
-		entries, err := os.ReadDir(dir)
+		entries, err := kopiaLogEntries(dir)
 		if err != nil {
 			return err
 		}
 		if len(entries) > 8192 {
 			return errors.New("Kopia log scan bound exceeded")
 		}
-		for _, entry := range entries {
+		for _, item := range entries {
+			entry := item.entry
 			match := kopiaLogName.FindStringSubmatch(entry.Name())
 			if match == nil || entry.Type()&os.ModeSymlink != 0 {
 				continue
@@ -129,7 +167,7 @@ func SweepKopiaLogs(root string, days, budget int, now time.Time) error {
 			if err != nil || exists {
 				continue
 			}
-			candidates = append(candidates, logCandidate{filepath.Join(dir, entry.Name()), info.Size(), info.ModTime(), info})
+			candidates = append(candidates, logCandidate{item.path, info.Size(), info.ModTime(), info})
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].modified.Before(candidates[j].modified) })

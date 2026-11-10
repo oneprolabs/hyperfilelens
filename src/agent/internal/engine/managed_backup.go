@@ -27,12 +27,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/performance"
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/process"
 	"hyperfilelens/agent/internal/platform/tlsclient"
-	"hyperfilelens/agent/internal/platform/vfs"
 	nassvc "hyperfilelens/agent/internal/service/nas"
 )
 
@@ -439,12 +439,9 @@ func stringValue(raw any) string {
 
 func (e *Engine) repositoryConfigPath(spec repositorySpec) string {
 	if spec.ConfigFile != "" {
-		return spec.ConfigFile
+		return kopialayout.ResolveConfig(agentDataDir(e.current()), spec.ConfigFile)
 	}
-	base := strings.TrimSpace(e.current().DataDir)
-	if base == "" {
-		base = os.TempDir()
-	}
+	base := agentDataDir(e.current())
 	filename := "repository.config"
 	if spec.Type == "kopia_server" {
 		token := repositoryServerConfigToken(spec)
@@ -462,7 +459,7 @@ func (e *Engine) repositoryConfigPath(spec repositorySpec) string {
 	} else if spec.ID > 0 {
 		filename = fmt.Sprintf("repo-%d.config", spec.ID)
 	}
-	return filepath.Join(vfs.AgentCacheDir(base), "repositories", filename)
+	return filepath.Join(kopialayout.ConfigDir(base), filename)
 }
 
 func repositoryNamespaceToken(namespace string) string {
@@ -510,11 +507,11 @@ func (e *Engine) prepareManagedRepository(
 	}
 
 	configFile := e.repositoryConfigPath(spec)
-	if mkErr := os.MkdirAll(filepath.Dir(configFile), 0o700); mkErr != nil {
+	if mkErr := kopialayout.PrepareConfigDir(agentDataDir(e.current()), configFile); mkErr != nil {
 		return "", nil, nil, repositorySpec{}, mkErr.Error()
 	}
 	lockStarted := time.Now()
-	return withRepositoryPrepareLock(ctx, configFile, func() (string, map[string]string, map[string]any, repositorySpec, string) {
+	return withRepositoryPrepareLock(ctx, agentDataDir(e.current()), configFile, func() (string, map[string]string, map[string]any, repositorySpec, string) {
 		slog.Info("managed_repository", "event", "prepare_lock_acquired", "task_id", taskID, "wait_ms", time.Since(lockStarted).Milliseconds())
 		return e.prepareManagedRepositoryLocked(ctx, rep, taskID, p, spec, bin, configFile, mode)
 	})

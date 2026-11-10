@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/kopia"
@@ -98,6 +99,13 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 			Result: pathPermissionDeniedResult(scopeErr, p.Path),
 			Error:  scopeErr.Error(),
 		}
+	}
+	if p.Extra["repository"] != nil {
+		release, err := kopialayout.AcquireUsage(ctx, agentDataDir(e.current()))
+		if err != nil {
+			return Result{Status: "failed", Error: err.Error()}
+		}
+		defer release()
 	}
 	if spec, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr == nil && ok {
 		releaseClientState := e.acquireEphemeralKopiaServerClientState(ctx, spec)
@@ -691,6 +699,15 @@ func (e *Engine) runKopia(
 	if len(args) == 0 {
 		return "failed", nil, "missing kopia args in payload"
 	}
+	args, configFile, env, err := e.rawKopiaLayout(args, p.Env)
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	releaseUsage, err := kopialayout.AcquireUsage(ctx, agentDataDir(e.current()))
+	if err != nil {
+		return "failed", nil, err.Error()
+	}
+	defer releaseUsage()
 
 	runCtx, cancel := context.WithCancel(ctx)
 	e.setActiveCancel(cancel)
@@ -701,7 +718,8 @@ func (e *Engine) runKopia(
 		"args":  args,
 	})
 
-	kopiaEnv, envErr := ensureKopiaProcessEnv(e.current(), p.Env)
+	env["KOPIA_CACHE_DIRECTORY"] = managedRepositoryCacheDir(e.current(), configFile)
+	kopiaEnv, envErr := ensureKopiaProcessEnv(e.current(), env)
 	if envErr != nil {
 		return "failed", nil, envErr.Error()
 	}

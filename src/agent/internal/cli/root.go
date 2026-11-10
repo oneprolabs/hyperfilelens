@@ -47,6 +47,8 @@ func Run(args []string) error {
 		return runPackage(args[1:])
 	case "database":
 		return runDatabase(args[1:])
+	case "cache-layout":
+		return runCacheLayout(args[1:])
 	case "config":
 		return config.RunCLI(context.Background(), args[1:])
 	case "tasks":
@@ -150,6 +152,7 @@ func printRootHelp() {
 Usage:
   hfl-agent run [flags]             Run agent daemon (WebSocket control plane)
   hfl-agent version                 Print version and exit
+  hfl-agent cache-layout status     Show cache migration safety status
   hfl-agent package verify          Verify a release package manifest and checksums
   hfl-agent package check-space     Check local upgrade paths before stopping the Agent
   hfl-agent database backup         Create a consistent local database backup
@@ -235,7 +238,7 @@ func parseWireStatus(s string) (string, error) {
 // IsSubcommand reports whether arg is a CLI subcommand (not daemon flags).
 func IsSubcommand(arg string) bool {
 	switch arg {
-	case "help", "-h", "--help", "version", "package", "database", "config", "configure", "tasks", "fs", "snapshot", "restore", "repo":
+	case "help", "-h", "--help", "version", "package", "database", "cache-layout", "config", "configure", "tasks", "fs", "snapshot", "restore", "repo":
 		return true
 	default:
 		return false

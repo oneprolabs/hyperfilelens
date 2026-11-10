@@ -1272,6 +1272,15 @@ verify_upgrade_package() {
 	log_ok "upgrade package manifest and checksums verified"
 }
 
+check_upgrade_cache_users() {
+	local root="$1" data_dir="$2" output
+	# The incoming verified binary knows the new layout even on the first
+	# upgrade from an Agent whose CLI predates this safety check.
+	if ! output="$("${root}/bin/hfl-agent" cache-layout check-users --data-dir "${data_dir}" 2>&1)"; then
+		log_fail "Upgrade deferred; active repository users were not stopped${output:+: ${output}}." 2
+	fi
+}
+
 upgrade_workspace_dir() {
 	local data_dir="$1"
 	echo "$(agent_runtime_dir "${data_dir}")/workspace"
@@ -2921,6 +2930,7 @@ cmd_upgrade() {
 	local installed_role gateway_scope
 	installed_role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
 	verify_upgrade_package "${src_root}" "${installed_role:-agent}" "${new_ver}"
+	check_upgrade_cache_users "${src_root}" "${data_dir}"
 	update_lifecycle_lock_target "${new_ver}" "${src_root}/MANIFEST.json"
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
 		gateway_scope="$(read_env_value "${env_file}" "HFL_GATEWAY_SCOPE" || true)"
@@ -2966,6 +2976,7 @@ cmd_upgrade() {
 	# keeps a stop failure non-destructive and preserves a standalone consistent
 	# SQLite snapshot for any later deployment failure.
 	upgrade_disk_preflight "${data_dir}" "${src_root}"
+	check_upgrade_cache_users "${src_root}" "${data_dir}"
 	UPGRADE_STOP_ATTEMPTED=1
 	write_upgrade_state "${data_dir}" "stopping"
 	stop_service

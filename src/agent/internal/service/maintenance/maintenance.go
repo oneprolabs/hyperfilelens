@@ -2,11 +2,13 @@ package maintenance
 
 import (
 	"context"
-	"os"
+	"fmt"
 	"path/filepath"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/platform/kopia"
 	"hyperfilelens/agent/internal/platform/process"
+	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 // Service performs repository maintenance and local housekeeping.
@@ -23,13 +25,32 @@ func NewService(kopiaPath string) (*Service, error) {
 	return &Service{binary: bin}, nil
 }
 
-// RunGC triggers ``kopia maintenance run``.
+// RunGC runs Kopia's full repository maintenance command.
 func (s *Service) RunGC(ctx context.Context, configFile string) (process.Result, error) {
+	root := vfs.DefaultAgentDataDir()
+	configFile = kopialayout.ResolveConfig(root, configFile)
+	if configFile == "" || configFile == "." {
+		return process.Result{}, fmt.Errorf("an explicit Kopia configuration is required")
+	}
+	if err := kopialayout.PrepareConfigDir(root, configFile); err != nil {
+		return process.Result{}, err
+	}
+	release, err := kopialayout.AcquireUsage(ctx, root)
+	if err != nil {
+		return process.Result{}, err
+	}
+	defer release()
+	env, err := kopialayout.ProcessEnv(root, vfs.AgentLogDir(root), map[string]string{
+		"KOPIA_CACHE_DIRECTORY": kopialayout.CacheDir(root, configFile),
+	})
+	if err != nil {
+		return process.Result{}, err
+	}
 	args := []string{"maintenance", "run", "--full"}
 	if configFile != "" {
 		args = append([]string{"--config-file=" + configFile}, args...)
 	}
-	return process.Run(ctx, s.binary, args, nil, "")
+	return process.Run(ctx, s.binary, args, env, "")
 }
 
 // RotateLogs is a placeholder for local log rotation (see infra/logging).
@@ -40,18 +61,13 @@ func (s *Service) RotateLogs(ctx context.Context, logDir string) error {
 	return nil
 }
 
-// CleanCache removes files under cacheDir (non-recursive top-level only).
+// CleanCache accepts only an installation's verified disposable cache root.
 func (s *Service) CleanCache(ctx context.Context, cacheDir string) error {
-	_ = ctx
 	if cacheDir == "" {
 		return nil
 	}
-	entries, err := os.ReadDir(cacheDir)
-	if err != nil {
-		return err
+	if !filepath.IsAbs(cacheDir) || filepath.Base(filepath.Clean(cacheDir)) != "cache" {
+		return fmt.Errorf("cache cleanup requires the managed installation cache root")
 	}
-	for _, e := range entries {
-		_ = os.RemoveAll(filepath.Join(cacheDir, e.Name()))
-	}
-	return nil
+	return kopialayout.ClearCache(ctx, filepath.Dir(filepath.Clean(cacheDir)))
 }

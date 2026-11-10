@@ -471,6 +471,25 @@ func TestInstallShellCapturesUpgradeServiceStateBeforeLegacyMigration(t *testing
 	}
 }
 
+func TestInstallShellDefersUpgradeBeforeStoppingRepositoryUsers(t *testing.T) {
+	source := readPackagingInstallShell(t)
+	start := strings.Index(source, "cmd_upgrade() {")
+	if start < 0 {
+		t.Fatal("upgrade entrypoint missing")
+	}
+	upgrade := source[start:]
+	first := strings.Index(upgrade, `check_upgrade_cache_users "${src_root}" "${data_dir}"`)
+	legacy := strings.Index(upgrade, "\n\t\tmigrate_legacy_layout")
+	last := strings.LastIndex(upgrade, `check_upgrade_cache_users "${src_root}" "${data_dir}"`)
+	stop := strings.Index(upgrade, "\n\tUPGRADE_STOP_ATTEMPTED=1")
+	if first < 0 || first >= legacy || last <= first || last >= stop {
+		t.Fatal("upgrade must check active users before legacy migration and immediately before service stop")
+	}
+	if !strings.Contains(source, `"${root}/bin/hfl-agent" cache-layout check-users --data-dir "${data_dir}"`) {
+		t.Fatal("first upgrade must use the incoming verified Agent for cache-user checks")
+	}
+}
+
 func TestInstallShellInitializesDependentUpgradeLocalsInOrder(t *testing.T) {
 	body := readPackagingInstallShell(t)
 	for _, unsafeDeclaration := range []string{

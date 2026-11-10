@@ -48,8 +48,14 @@ func TestEnsureKopiaProcessEnvUsesDataDirCache(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cacheDir, "server-contents")); err != nil {
 		t.Fatalf("expected server content cache dir: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cacheDir, "kopia", "cli-logs")); err != nil {
-		t.Fatalf("expected kopia cli log cache dir: %v", err)
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "logs", "kopia", "cli-logs")); err != nil {
+		t.Fatalf("expected persistent Kopia log directory: %v", err)
+	}
+	if env["KOPIA_LOG_DIR"] != filepath.Join(cfg.DataDir, "logs", "kopia") {
+		t.Fatal("Kopia logging can fall back into cache")
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "kopia", "cli-logs")); !os.IsNotExist(err) {
+		t.Fatal("Kopia logs were created inside cache")
 	}
 	if got := env["KOPIA_USE_KEYRING"]; got != "false" {
 		t.Fatalf("KOPIA_USE_KEYRING = %q, want false", got)
@@ -76,9 +82,9 @@ func TestEnsureKopiaProcessEnvUsesDataDirCache(t *testing.T) {
 	}
 }
 
-func TestEnsureKopiaProcessEnvRespectsExistingValues(t *testing.T) {
+func TestEnsureKopiaProcessEnvKeepsManagedPathsAndPreservesOtherValues(t *testing.T) {
 	cfg := &model.AgentConfig{DataDir: t.TempDir()}
-	customCache := filepath.Join(t.TempDir(), "custom-cache")
+	customCache := filepath.Join(cfg.DataDir, "cache", "repositories", "custom-cache")
 	env, err := ensureKopiaProcessEnv(cfg, map[string]string{
 		"KOPIA_CACHE_DIRECTORY":                customCache,
 		"HOME":                                 "/custom/home",
@@ -97,19 +103,19 @@ func TestEnsureKopiaProcessEnvRespectsExistingValues(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(customCache, "server-contents")); err != nil {
 		t.Fatalf("expected custom server content cache dir: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(customCache, "kopia", "cli-logs")); err != nil {
-		t.Fatalf("expected custom kopia cli log cache dir: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(cfg.DataDir, "cache", "kopia", "cli-logs")); err != nil {
-		t.Fatalf("expected default kopia cli log cache dir: %v", err)
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "logs", "kopia", "cli-logs")); err != nil {
+		t.Fatalf("expected Kopia log directory: %v", err)
 	}
 	if env["HOME"] != "/custom/home" {
 		t.Fatalf("HOME overwritten: %q", env["HOME"])
 	}
-	if env["XDG_CACHE_HOME"] != "/custom/xdg" {
-		t.Fatalf("XDG_CACHE_HOME overwritten: %q", env["XDG_CACHE_HOME"])
+	if env["XDG_CACHE_HOME"] != filepath.Join(cfg.DataDir, "cache") {
+		t.Fatalf("XDG_CACHE_HOME can escape managed root: %q", env["XDG_CACHE_HOME"])
 	}
-	if env["LOCALAPPDATA"] != `C:\custom\local` {
+	if runtime.GOOS == "windows" && env["LOCALAPPDATA"] != filepath.Join(cfg.DataDir, "cache") {
+		t.Fatal("LOCALAPPDATA can escape managed root")
+	}
+	if runtime.GOOS != "windows" && env["LOCALAPPDATA"] != `C:\custom\local` {
 		t.Fatalf("LOCALAPPDATA overwritten: %q", env["LOCALAPPDATA"])
 	}
 	if env["USERPROFILE"] != `C:\custom\profile` {
@@ -120,5 +126,14 @@ func TestEnsureKopiaProcessEnvRespectsExistingValues(t *testing.T) {
 	}
 	if env["KOPIA_PERSIST_CREDENTIALS_ON_CONNECT"] != "true" {
 		t.Fatalf("KOPIA_PERSIST_CREDENTIALS_ON_CONNECT overwritten: %q", env["KOPIA_PERSIST_CREDENTIALS_ON_CONNECT"])
+	}
+}
+
+func TestEnsureKopiaProcessEnvRejectsAlternateCacheRoot(t *testing.T) {
+	cfg := &model.AgentConfig{DataDir: t.TempDir()}
+	if _, err := ensureKopiaProcessEnv(cfg, map[string]string{
+		"KOPIA_CACHE_DIRECTORY": filepath.Join(t.TempDir(), "alternate"),
+	}); err == nil {
+		t.Fatal("an undisclosed alternate managed cache root was accepted")
 	}
 }

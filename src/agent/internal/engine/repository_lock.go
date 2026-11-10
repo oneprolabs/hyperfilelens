@@ -4,16 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"hyperfilelens/agent/internal/infra/kopialayout"
+	"hyperfilelens/agent/internal/platform/filelock"
 )
 
 var repositoryPrepareLocks sync.Map
 var insightRepositoryOperationLocks sync.Map
 
-func withRepositoryPrepareLock(ctx context.Context, configFile string, fn func() (string, map[string]string, map[string]any, repositorySpec, string)) (string, map[string]string, map[string]any, repositorySpec, string) {
+func withRepositoryPrepareLock(ctx context.Context, root, configFile string, fn func() (string, map[string]string, map[string]any, repositorySpec, string)) (string, map[string]string, map[string]any, repositorySpec, string) {
 	if err := ctx.Err(); err != nil {
 		return "", nil, nil, repositorySpec{}, err.Error()
 	}
@@ -25,7 +27,11 @@ func withRepositoryPrepareLock(ctx context.Context, configFile string, fn func()
 	if err := ctx.Err(); err != nil {
 		return "", nil, nil, repositorySpec{}, err.Error()
 	}
-	unlock, err := acquireRepositoryFileLock(configFile)
+	lockPath := kopialayout.LockPath(root, configFile)
+	if err := kopialayout.PrepareLockDir(root, configFile); err != nil {
+		return "", nil, nil, repositorySpec{}, err.Error()
+	}
+	unlock, err := filelock.Acquire(ctx, lockPath, false)
 	if err != nil {
 		return "", nil, nil, repositorySpec{}, err.Error()
 	}
@@ -69,16 +75,4 @@ func acquireInsightRepositoryOperationLock(
 		)
 		return nil, ctx.Err()
 	}
-}
-
-func repositoryLockFile(configFile string) string {
-	return configFile + ".lock"
-}
-
-func openRepositoryLockFile(configFile string) (*os.File, error) {
-	lockPath := repositoryLockFile(configFile)
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
-		return nil, err
-	}
-	return os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 }
