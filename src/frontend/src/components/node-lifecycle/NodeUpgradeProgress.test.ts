@@ -21,9 +21,9 @@ const i18n = createI18n({
         preparingDownload: 'Preparing Agent package download',
         downloadingPackage: 'Downloading Agent package',
         waitingForData: 'Waiting for download data',
-        retryingDownload: 'Download interrupted. Retrying…',
+        retryingDownload: 'The download was interrupted. Retrying…',
         downloadCompleted: 'Agent package downloaded',
-        packageDownloadInterrupted: 'The Agent package download was interrupted. Check the host\'s network connection to the HyperFileLens console and retry.',
+        packageDownloadInterrupted: 'The upgrade package could not be downloaded completely. Check the host\'s network connection, then try the upgrade again. The existing Agent remains installed.',
         downloadedAmount: '{amount} downloaded',
         elapsed: 'Elapsed {duration}',
         attempt: 'Attempt {attempt} of {max}',
@@ -99,7 +99,7 @@ describe('NodeUpgradeProgress download details', () => {
       max_attempts: 3,
     })
 
-    expect(wrapper.text()).toContain('Download interrupted. Retrying…')
+    expect(wrapper.text()).toContain('The download was interrupted. Retrying…')
     expect(wrapper.text()).toContain('Attempt 2 of 3')
   })
 
@@ -123,7 +123,8 @@ describe('NodeUpgradeProgress download details', () => {
       global: { plugins: [i18n] },
     })
 
-    expect(wrapper.text()).toContain('The Agent package download was interrupted.')
+    expect(wrapper.text()).toContain('The upgrade package could not be downloaded completely.')
+    expect(wrapper.text()).toContain('The existing Agent remains installed.')
     expect(wrapper.text()).not.toContain('unexpected EOF')
   })
 })

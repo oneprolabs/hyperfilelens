@@ -2036,6 +2036,44 @@ class NodeLifecycleTests(TestCase):
 
 
 class UpgradeFailureCodeTests(SimpleTestCase):
+    def test_structured_download_failure_survives_generic_host_failure_envelope(self):
+        task = NodeTask(last_error="download stream failed: unexpected EOF")
+
+        self.assertEqual(
+            _upgrade_failure_code(
+                task=task,
+                result={
+                    "failure_code": "HOST_UPGRADE_FAILED",
+                    "error_code": "AGENT_PACKAGE_DOWNLOAD_RETRY_EXHAUSTED",
+                    "host_error": "download stream failed: unexpected EOF",
+                },
+            ),
+            "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED",
+        )
+
+    def test_structured_download_failure_codes_use_user_facing_categories(self):
+        task = NodeTask(last_error="")
+        for code in (
+            "AGENT_PACKAGE_DOWNLOAD_STREAM_FAILED",
+            "AGENT_PACKAGE_DOWNLOAD_NO_PROGRESS",
+            "AGENT_PACKAGE_DOWNLOAD_RETRY_EXHAUSTED",
+        ):
+            with self.subTest(code=code):
+                self.assertEqual(
+                    _upgrade_failure_code(
+                        task=task,
+                        result={"error_code": code},
+                    ),
+                    "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED",
+                )
+        self.assertEqual(
+            _upgrade_failure_code(
+                task=task,
+                result={"error_code": "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT"},
+            ),
+            "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT",
+        )
+
     def test_non_string_agent_error_codes_preserve_existing_fallback(self):
         for agent_code in (None, [], {}, ["unexpected"], {"code": "unknown"}, 42, False):
             for message, expected in (
