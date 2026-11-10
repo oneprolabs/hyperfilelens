@@ -902,6 +902,18 @@ recover_interrupted_upgrade() {
 		;;
 	preparing|package_resolved)
 		log_warn "discarding incomplete pre-deployment upgrade state (${phase})"
+		# package_resolved is also written after the real service state is
+		# captured and before legacy migration. If that migration is interrupted
+		# after stopping an active service, restore the previous lifecycle state
+		# before discarding the incomplete transaction.
+		if [[ "${phase}" == "package_resolved" \
+			&& "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 \
+			&& agent_manages_service ]]; then
+			(start_service_only) \
+				|| log_fail "Interrupted upgrade recovery could not restart the previous Agent service." 70
+			upgrade_health_check "${data_dir}" "${UPGRADE_PREVIOUS_VERSION}" 1 \
+				|| log_fail "Interrupted upgrade recovery could not verify the previous Agent." 70
+		fi
 		rm -rf "$(agent_backup_dir "${data_dir}")/rollback" 2>/dev/null || true
 		clear_upgrade_state
 		return 0
@@ -1585,7 +1597,10 @@ upgrade_rollback_on_error() {
 			fi
 		fi
 		if [[ "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 ]] && agent_manages_service; then
-			(start_service) >/dev/null 2>&1 || rollback_ok=0
+			# Restore the pre-upgrade running state without changing the
+			# service's enablement policy. An active-but-disabled service must
+			# remain disabled after rollback as well.
+			(start_service_only) >/dev/null 2>&1 || rollback_ok=0
 		fi
 		if [[ "${UPGRADE_SERVICE_WAS_ENABLED}" -eq 0 ]] && agent_manages_service && agent_uses_systemd; then
 			hfl_systemctl disable hyperfilelens-agent.service >/dev/null 2>&1 || rollback_ok=0
@@ -1966,6 +1981,30 @@ service_status_line() {
 	active="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
 	enabled="$(hfl_systemctl is-enabled hyperfilelens-agent.service 2>/dev/null || echo disabled)"
 	echo "${active} (${enabled})"
+}
+
+capture_upgrade_service_state() {
+	# Capture the state before migration or stop_service can change it. In
+	# particular, legacy layout migration stops the old service while copying
+	# its state, so sampling systemd afterwards would incorrectly make an
+	# active Agent look like an intentionally stopped one.
+	UPGRADE_SERVICE_WAS_ACTIVE=0
+	UPGRADE_SERVICE_WAS_ENABLED=0
+	if ! agent_manages_service; then
+		return 0
+	fi
+	if agent_uses_launchd; then
+		launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1 \
+			&& UPGRADE_SERVICE_WAS_ACTIVE=1
+		return 0
+	fi
+	if hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1; then
+		UPGRADE_SERVICE_WAS_ACTIVE=1
+	fi
+	if agent_uses_systemd \
+		&& hfl_systemctl is-enabled hyperfilelens-agent.service >/dev/null 2>&1; then
+		UPGRADE_SERVICE_WAS_ENABLED=1
+	fi
 }
 
 resolve_data_dir() {
@@ -2896,7 +2935,14 @@ cmd_upgrade() {
 	fi
 
 	upgrade_preflight "${data_dir}" "${src_root}"
+	# Capture the pre-upgrade lifecycle state before legacy migration. Migration
+	# may stop the old service while it archives the old layout; the upgrade
+	# must still restore the state that existed when the operation began.
+	capture_upgrade_service_state
 	install_nas_deps "${installed_role}" "${src_root}"
+	# Persist the captured state before migration can stop the service, so an
+	# interrupted command does not lose the original lifecycle decision.
+	write_upgrade_state "${data_dir}" "package_resolved"
 	# Do not mutate or stop a running legacy service until the requested target
 	# version has passed confirmation and downgrade checks.
 	if [[ "${legacy_upgrade}" -eq 1 ]]; then
@@ -2909,17 +2955,6 @@ cmd_upgrade() {
 	UPGRADE_STATE_SNAPSHOT_READY=0
 	UPGRADE_DEPLOYMENT_STARTED=0
 	UPGRADE_STOP_ATTEMPTED=0
-	UPGRADE_SERVICE_WAS_ACTIVE=0
-	if agent_manages_service; then
-		if agent_uses_launchd; then
-			launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1 && UPGRADE_SERVICE_WAS_ACTIVE=1
-		elif hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1; then
-			UPGRADE_SERVICE_WAS_ACTIVE=1
-		fi
-		if agent_uses_systemd && hfl_systemctl is-enabled hyperfilelens-agent.service >/dev/null 2>&1; then
-			UPGRADE_SERVICE_WAS_ENABLED=1
-		fi
-	fi
 	UPGRADE_TRANSACTION_ACTIVE=1
 	trap upgrade_rollback_on_error ERR
 

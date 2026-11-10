@@ -351,6 +351,22 @@ func TestInstallShellUpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
 	if !strings.Contains(upgradeBody, "start_service_only") {
 		t.Fatal("install.sh upgrade must restart an active Agent without changing its systemd enable policy")
 	}
+	rollbackFunction := strings.Index(body, "upgrade_rollback_on_error() {")
+	if rollbackFunction < 0 {
+		t.Fatal("install.sh is missing upgrade_rollback_on_error")
+	}
+	rollbackStart := strings.Index(body[rollbackFunction:], `if [[ "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 ]] && agent_manages_service; then`)
+	if rollbackStart < 0 {
+		t.Fatal("install.sh rollback is missing active-service restoration")
+	}
+	rollbackStart += rollbackFunction
+	rollbackEnd := strings.Index(body[rollbackStart:], "\n\t\tfi")
+	if rollbackEnd < 0 {
+		t.Fatal("install.sh rollback active-service restoration has no end")
+	}
+	if !strings.Contains(body[rollbackStart:rollbackStart+rollbackEnd], "(start_service_only)") {
+		t.Fatal("install.sh rollback must restore an active-but-disabled service without enabling it")
+	}
 	startOnly := strings.Index(body, "start_service_only() {")
 	if startOnly < 0 {
 		t.Fatal("install.sh is missing start_service_only")
@@ -377,6 +393,81 @@ func TestInstallShellUpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
 	}
 	if strings.Index(body, `process_started_at`) > strings.Index(body, `printf '%s\n' "$$" >"${lock_dir}/pid"`) {
 		t.Fatal("install.sh must publish the lifecycle lock PID after owner metadata")
+	}
+}
+
+func TestInstallShellCapturesUpgradeServiceStateBeforeLegacyMigration(t *testing.T) {
+	body := readPackagingInstallShell(t)
+	captureStart := strings.Index(body, "capture_upgrade_service_state() {")
+	if captureStart < 0 {
+		t.Fatal("install.sh is missing capture_upgrade_service_state")
+	}
+	captureEnd := strings.Index(body[captureStart:], "\n}\n")
+	if captureEnd < 0 {
+		t.Fatal("capture_upgrade_service_state has no end")
+	}
+	capture := body[captureStart : captureStart+captureEnd]
+	for _, want := range []string{
+		`UPGRADE_SERVICE_WAS_ACTIVE=0`,
+		`UPGRADE_SERVICE_WAS_ENABLED=0`,
+		`hfl_systemctl is-active hyperfilelens-agent.service`,
+		`hfl_systemctl is-enabled hyperfilelens-agent.service`,
+		`launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}"`,
+	} {
+		if !strings.Contains(capture, want) {
+			t.Fatalf("capture_upgrade_service_state is missing %q", want)
+		}
+	}
+
+	upgradeStart := strings.Index(body, "cmd_upgrade() {")
+	if upgradeStart < 0 {
+		t.Fatal("install.sh is missing cmd_upgrade")
+	}
+	upgradeEnd := strings.Index(body[upgradeStart:], "\ncollect_agent_mount_points() {")
+	if upgradeEnd < 0 {
+		t.Fatal("install.sh cmd_upgrade boundary is missing")
+	}
+	upgrade := body[upgradeStart : upgradeStart+upgradeEnd]
+	captured := strings.Index(upgrade, "\n\tcapture_upgrade_service_state\n")
+	persisted := -1
+	if captured >= 0 {
+		persisted = strings.Index(upgrade[captured:], "\n\twrite_upgrade_state \"${data_dir}\" \"package_resolved\"")
+		if persisted >= 0 {
+			persisted += captured
+		}
+	}
+	migration := strings.Index(upgrade, "\n\t\tmigrate_legacy_layout")
+	if captured < 0 || persisted < 0 || migration < 0 || captured > persisted || persisted > migration {
+		t.Fatalf("upgrade must capture and persist service state before legacy migration: capture=%d persist=%d migration=%d", captured, persisted, migration)
+	}
+	if strings.Contains(upgrade[migration:], "UPGRADE_SERVICE_WAS_ACTIVE=0") ||
+		strings.Contains(upgrade[migration:], "UPGRADE_SERVICE_WAS_ENABLED=0") {
+		t.Fatal("upgrade must not reset captured service state after legacy migration")
+	}
+
+	recoveryStart := strings.Index(body, "recover_interrupted_upgrade() {")
+	if recoveryStart < 0 {
+		t.Fatal("install.sh is missing recover_interrupted_upgrade")
+	}
+	recoveryEnd := strings.Index(body[recoveryStart:], "\n}\n")
+	if recoveryEnd < 0 {
+		t.Fatal("recover_interrupted_upgrade has no end")
+	}
+	recovery := body[recoveryStart : recoveryStart+recoveryEnd]
+	preDeployment := strings.Index(recovery, "preparing|package_resolved)")
+	if preDeployment < 0 {
+		t.Fatal("install.sh is missing pre-deployment recovery handling")
+	}
+	preDeploymentBody := recovery[preDeployment:]
+	for _, want := range []string{
+		`"${phase}" == "package_resolved"`,
+		`"${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1`,
+		`(start_service_only)`,
+		`upgrade_health_check "${data_dir}" "${UPGRADE_PREVIOUS_VERSION}" 1`,
+	} {
+		if !strings.Contains(preDeploymentBody, want) {
+			t.Fatalf("pre-deployment recovery is missing %q", want)
+		}
 	}
 }
 
