@@ -57,8 +57,8 @@ func TestFormatTraceID(t *testing.T) {
 }
 
 func TestSetupCreatesAgentLog(t *testing.T) {
-	t.Cleanup(closeRuntimeLogs)
 	dir := t.TempDir()
+	t.Cleanup(closeRuntimeLogs)
 	if err := Setup(dir, "org-test"); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
