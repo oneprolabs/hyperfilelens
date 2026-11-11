@@ -66,6 +66,21 @@ _TERMINAL_TASK_STATUSES = frozenset(
         NodeTask.Status.CANCELED,
     },
 )
+_PACKAGE_DOWNLOAD_FAILURE_CODES = frozenset(
+    {
+        "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED",
+        "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT",
+        "AGENT_PACKAGE_DOWNLOAD_RETRY_EXHAUSTED",
+        "AGENT_PACKAGE_DOWNLOAD_NO_PROGRESS",
+        "AGENT_PACKAGE_DOWNLOAD_STREAM_FAILED",
+    }
+)
+_PACKAGE_DOWNLOAD_ERROR_MARKERS = (
+    "download stream failed",
+    "unexpected eof",
+    "download size mismatch",
+    "download interrupted",
+)
 
 
 def _correlation_id(*, node_id: int, kind: str) -> str:
@@ -1311,13 +1326,38 @@ def _upgrade_failure_code(
     Older Agents reported interrupted package downloads only as a free-form
     error string. Keep that original error for audit/debugging, but expose a
     stable code to the lifecycle UI so it can provide actionable guidance.
-    Newer structured failure diagnostics always take precedence.
+    Specific structured failure diagnostics take precedence; a generic host
+    failure envelope is refined when it carries download-failure evidence.
     """
     code = result.get("failure_code") or result.get("diagnostic_error_code")
     agent_error_code = result.get("error_code")
+    # An Agent failure may be wrapped in a generic HOST_UPGRADE_FAILED
+    # envelope while retaining the package-download error in
+    # host_error/error_code. Prefer the actionable download category in that
+    # case, but preserve every other structured failure code as the primary
+    # diagnostic.
+    if code and str(code) != "HOST_UPGRADE_FAILED":
+        return str(code)
     if (
-        not code
-        and isinstance(agent_error_code, str)
+        isinstance(agent_error_code, str)
+        and agent_error_code in _PACKAGE_DOWNLOAD_FAILURE_CODES
+    ):
+        if agent_error_code == "AGENT_PACKAGE_DOWNLOAD_PROGRESS_TIMEOUT":
+            return agent_error_code
+        return "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED"
+    error_sources = (
+        result.get("host_error"),
+        task.last_error,
+    )
+    if any(
+        any(marker in str(error or "").lower() for marker in _PACKAGE_DOWNLOAD_ERROR_MARKERS)
+        for error in error_sources
+    ):
+        return "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED"
+    if code:
+        return str(code)
+    if (
+        isinstance(agent_error_code, str)
         and agent_error_code in {
             "AGENT_UPGRADE_DISK_SPACE_INSUFFICIENT",
             "AGENT_UPGRADE_DISK_SPACE_UNAVAILABLE",
@@ -1326,18 +1366,6 @@ def _upgrade_failure_code(
         code = agent_error_code
     if code:
         return str(code)
-
-    error = str(task.last_error or "").lower()
-    if any(
-        marker in error
-        for marker in (
-            "download stream failed",
-            "unexpected eof",
-            "download size mismatch",
-            "download interrupted",
-        )
-    ):
-        return "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED"
 
     return None
 
