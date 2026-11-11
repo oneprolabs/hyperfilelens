@@ -34,6 +34,7 @@ type policyLog struct {
 	queue     chan []byte
 	stop      chan struct{}
 	closing   atomic.Bool
+	done      chan struct{}
 	tailMu    sync.Mutex
 	tail      []byte
 }
@@ -83,6 +84,12 @@ func (p *policyLog) Close() error {
 	if p.closing.CompareAndSwap(false, true) {
 		close(p.stop)
 	}
+	// Windows cannot remove a log file while the lumberjack handle is still
+	// open. Wait for the writer goroutine to close its handle; this also makes
+	// repeated Close calls deterministic for service shutdown and tests.
+	if p.done != nil {
+		<-p.done
+	}
 	return nil
 }
 
@@ -94,6 +101,9 @@ func (p *policyLog) run() {
 		if p.writer != nil {
 			_ = p.writer.Close()
 			p.writer = nil
+		}
+		if p.done != nil {
+			close(p.done)
 		}
 	}()
 	for {
@@ -118,6 +128,23 @@ func (p *policyLog) run() {
 	}
 }
 
+// closeRuntimeLogs stops every registered asynchronous writer and waits for
+// its file handle to close. Setup is normally called once, but making repeated
+// setup safe prevents stale handles in tests and embedded service restarts.
+func closeRuntimeLogs() {
+	policyLogs.Lock()
+	writers := make([]*policyLog, 0, len(policyLogs.files))
+	for _, writer := range policyLogs.files {
+		if writer != nil && !writer.closed {
+			writers = append(writers, writer)
+		}
+	}
+	policyLogs.Unlock()
+	for _, writer := range writers {
+		_ = writer.Close()
+	}
+}
+
 func runtimeLogWriter(path string, mirror bool) *policyLog {
 	if !policyLogs.TryLock() {
 		policyLogs.dropped.Add(1)
@@ -129,7 +156,7 @@ func runtimeLogWriter(path string, mirror bool) *policyLog {
 	if existing := policyLogs.files[path]; existing != nil && !existing.closing.Load() {
 		return existing
 	}
-	writer := &policyLog{path: path, mirror: mirror, queue: make(chan []byte, 64), stop: make(chan struct{})}
+	writer := &policyLog{path: path, mirror: mirror, queue: make(chan []byte, 64), stop: make(chan struct{}), done: make(chan struct{})}
 	writer.writer = &lumberjack.Logger{Filename: path,
 		MaxSize:    max(1, policyLogs.budgetMB/(maxLogBackups+1)),
 		MaxBackups: maxLogBackups, MaxAge: policyLogs.days}

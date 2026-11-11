@@ -27,6 +27,7 @@ func (stderrWriter) Write(p []byte) (int, error) {
 
 // Setup configures the default slog logger with the unified text format.
 func Setup(logDir string, orgKey string) error {
+	closeRuntimeLogs()
 	defaultOrgKey = orgKey
 	hostPID = hostnamePID()
 

@@ -346,7 +346,29 @@ func (m *migrator) copyEntry(e *migrationEntry) error {
 	if e.Kind == "log" {
 		limit = maxLogBytes
 	}
-	data, err := readRegular(m.root, source, limit)
+	// Coordination lock files carry no durable state. On Windows the lock
+	// held above prevents opening the same file through a second handle, so
+	// reading it here would make every first migration fail. The lock was
+	// already validated during inventory; keep only an empty lock target and
+	// verify that the source remains a regular file before removing it.
+	var data []byte
+	if e.Kind == "lock" || e.Kind == "maintenance-lock" {
+		info, statErr := os.Lstat(source)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return statErr
+		}
+		if statErr == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("managed lock changed to a non-regular file")
+			}
+			if info.Size() != 0 {
+				return fmt.Errorf("managed lock contains durable data")
+			}
+		}
+		data = nil
+	} else {
+		data, err = readRegular(m.root, source, limit)
+	}
 	if os.IsNotExist(err) {
 		// The atomic target may have been written immediately before a crash.
 		// Its recorded hash is still sufficient to verify it below, even if
@@ -456,12 +478,18 @@ func (m *migrator) removeEntry(e *migrationEntry) error {
 		if err != nil || digest(verified) != e.TargetHash {
 			return fmt.Errorf("replacement changed before cleanup; original retained")
 		}
-		data, err := readRegular(m.root, source, limit)
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if err == nil && digest(data) != e.SourceHash {
-			return fmt.Errorf("source changed before cleanup; retained")
+		if e.Kind != "lock" && e.Kind != "maintenance-lock" {
+			data, err := readRegular(m.root, source, limit)
+			if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if err == nil && digest(data) != e.SourceHash {
+				return fmt.Errorf("source changed before cleanup; retained")
+			}
+		} else if info, statErr := os.Lstat(source); statErr == nil {
+			if !info.Mode().IsRegular() || info.Size() != 0 {
+				return fmt.Errorf("source lock changed or contains data; retained")
+			}
 		}
 	}
 	if err := os.Remove(source); err != nil {
