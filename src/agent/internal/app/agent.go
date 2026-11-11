@@ -15,6 +15,7 @@ import (
 	"hyperfilelens/agent/internal/enroll"
 	"hyperfilelens/agent/internal/infra/config"
 	"hyperfilelens/agent/internal/infra/database"
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/infra/monitor"
 	"hyperfilelens/agent/internal/infra/observability"
 	"hyperfilelens/agent/internal/model"
@@ -90,6 +91,15 @@ func (a *Agent) Startup(ctx context.Context) error {
 	a.db = db
 	slog.Info("task database ready", "path", db.Path())
 
+	if err := kopialayout.Migrate(ctx, dataRoot, logDir, database.NewRepoRepo(db).RelocateConfigPaths); err != nil {
+		var incomplete *kopialayout.IncompleteError
+		if !errors.As(err, &incomplete) {
+			_ = db.Close()
+			a.db = nil
+			return fmt.Errorf("prepare disposable cache layout: %w", err)
+		}
+		slog.Warn("cache layout migration incomplete; cache is not safe to discard", "retained_entries", incomplete.Count)
+	}
 	repo := database.NewTaskRepo(db)
 	pathSizeConcurrency := 1
 	if cfg.Role == model.RoleProxy || cfg.Role == model.RoleGateway {

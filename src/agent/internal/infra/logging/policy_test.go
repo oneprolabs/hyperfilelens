@@ -72,3 +72,32 @@ func TestKopiaCleanupPreservesLiveUnrelatedAndSymlinkFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestKopiaCleanupIncludesMigratedLogsWithoutFollowingOtherDirectories(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "cli-logs", "legacy-0123456789abcdef")
+	unrelated := filepath.Join(root, "cli-logs", "user-data")
+	name := "kopia-20200101-000000-2147483647-snapshot-create.0.log"
+	for _, dir := range []string{legacy, unrelated} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("historical diagnostics"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-48 * time.Hour)
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := SweepKopiaLogs(root, 1, 32, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(legacy, name)); !os.IsNotExist(err) {
+		t.Fatal("migrated logs escaped existing retention policy")
+	}
+	if _, err := os.Stat(filepath.Join(unrelated, name)); err != nil {
+		t.Fatal("unrelated directory was swept")
+	}
+}

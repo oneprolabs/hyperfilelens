@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/infra/logging"
 	"hyperfilelens/agent/internal/performance"
 	"hyperfilelens/agent/internal/platform/process"
@@ -208,6 +209,17 @@ func (e *Engine) runRepositoryServerStart(
 	}
 	logHandle := logging.RuntimeLog(logFile)
 
+	releaseUsage, err := kopialayout.AcquireUsage(ctx, agentDataDir(e.current()))
+	if err != nil {
+		_ = logHandle.Close()
+		return "failed", result, err.Error()
+	}
+	usageTransferred := false
+	defer func() {
+		if !usageTransferred {
+			releaseUsage()
+		}
+	}()
 	cmd := exec.Command(bin, args...)
 	if err := process.Configure(ctx, cmd, process.Options{}); err != nil {
 		_ = os.Remove(certFile)
@@ -262,7 +274,9 @@ func (e *Engine) runRepositoryServerStart(
 		logTail: func() string { return logging.RuntimeLogTail(logHandle) },
 	}
 	repositoryServerProcesses.Store(sessionID, managedProcess)
+	usageTransferred = true
 	go func() {
+		defer releaseUsage()
 		err := cmd.Wait()
 		_ = logHandle.Close()
 		managedProcess.mu.Lock()
@@ -741,10 +755,7 @@ func certificateFingerprint(path string) (string, error) {
 }
 
 func (e *Engine) repositoryServerSessionDir(sessionID string) string {
-	base := strings.TrimSpace(e.current().DataDir)
-	if base == "" {
-		base = os.TempDir()
-	}
+	base := agentDataDir(e.current())
 	return filepath.Join(vfs.AgentRuntimeDir(base), "workspace", "server-sessions", sanitizeSessionToken(sessionID))
 }
 

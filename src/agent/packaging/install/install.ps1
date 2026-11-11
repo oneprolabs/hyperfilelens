@@ -764,6 +764,18 @@ function Confirm-HflSameVersionUpgrade {
   throw "Same-version upgrade requires interactive confirmation or -Yes."
 }
 
+function Test-HflUpgradeCacheUsers {
+  param(
+    [Parameter(Mandatory = $true)][string]$Root,
+    [Parameter(Mandatory = $true)][string]$DataRoot
+  )
+  $verifier = Join-Path $Root "bin\hfl-agent.exe"
+  $output = (& $verifier cache-layout check-users --data-dir $DataRoot 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) {
+    throw "Upgrade deferred; active repository users were not stopped: $output"
+  }
+}
+
 function Verify-HflUpgradePackage {
   param(
     [Parameter(Mandatory = $true)][string]$Root,
@@ -2546,6 +2558,7 @@ function Invoke-Upgrade {
     }
     $effectiveRole = if ($installedRole) { $installedRole } else { "agent" }
     Verify-HflUpgradePackage -Root $srcRoot -RoleName $effectiveRole -Version $newVer
+    Test-HflUpgradeCacheUsers -Root $srcRoot -DataRoot $dataRoot
     Update-HflLifecycleLockTarget -Version $newVer -Manifest (Join-Path $srcRoot "MANIFEST.json")
     Test-HflUpgradeDiskSpace -DataRoot $dataRoot -SrcRoot $srcRoot
     if ($legacyUpgrade) { Invoke-LegacyMigration }
@@ -2580,6 +2593,7 @@ function Invoke-Upgrade {
       # Agent. A stop failure must remain non-destructive, while a later
       # deployment failure still has a complete rollback snapshot.
       Test-HflUpgradeDiskSpace -DataRoot $dataRoot -SrcRoot $srcRoot
+      Test-HflUpgradeCacheUsers -Root $srcRoot -DataRoot $dataRoot
       $script:UpgradeStopAttempted = $true
       Write-HflUpgradeState -DataRoot $dataRoot -Phase "stopping"
       Stop-AgentForUpgrade

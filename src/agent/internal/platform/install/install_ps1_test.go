@@ -8,6 +8,22 @@ import (
 	"testing"
 )
 
+func TestInstallPs1DefersUpgradeBeforeStoppingRepositoryUsers(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	start := strings.Index(source, "function Invoke-Upgrade {")
+	if start < 0 {
+		t.Fatal("upgrade entrypoint missing")
+	}
+	upgrade := source[start:]
+	first := strings.Index(upgrade, "Test-HflUpgradeCacheUsers -Root $srcRoot -DataRoot $dataRoot")
+	legacy := strings.Index(upgrade, "if ($legacyUpgrade) { Invoke-LegacyMigration }")
+	last := strings.LastIndex(upgrade, "Test-HflUpgradeCacheUsers -Root $srcRoot -DataRoot $dataRoot")
+	stop := strings.Index(upgrade, "$script:UpgradeStopAttempted = $true")
+	if first < 0 || first >= legacy || last <= first || last >= stop {
+		t.Fatal("upgrade must check active users before legacy migration and immediately before service stop")
+	}
+}
+
 func TestInstallPs1HelpUsesConsistentPathsAndShellExamples(t *testing.T) {
 	source := readPackagingInstallScript(t)
 	start := strings.Index(source, "function Show-HflUsage {")

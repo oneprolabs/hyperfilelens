@@ -175,6 +175,26 @@ jobs:
           ./tools/quality/test-agent-download-slots.sh
           ./tools/quality/test-agent-download-nginx.sh
 
+  agent-cache-layout:
+    name: Agent cache layout (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: src/agent/go.mod
+          cache-dependency-path: src/agent/go.sum
+      - name: Native filesystem migration and locking checks
+        working-directory: src/agent
+        run: go test ./internal/infra/kopialayout ./internal/platform/filelock ./internal/infra/database ./internal/infra/logging
+
   commit-log:
     name: Commit messages use English
     runs-on: ubuntu-24.04

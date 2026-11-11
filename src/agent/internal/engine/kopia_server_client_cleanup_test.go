@@ -19,6 +19,9 @@ func TestEphemeralKopiaServerClientCleansAfterLastUser(t *testing.T) {
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(configFile, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}

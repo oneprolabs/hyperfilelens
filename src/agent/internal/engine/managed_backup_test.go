@@ -1111,8 +1111,8 @@ func TestRepositoryConfigPathSeparatesKopiaServerSessions(t *testing.T) {
 	}
 
 	got := engine.repositoryConfigPath(spec)
-	if !strings.Contains(filepath.ToSlash(got), "/cache/repositories/") {
-		t.Fatalf("repository config must stay under AgentRoot/cache/repositories, got %q", got)
+	if !strings.Contains(filepath.ToSlash(got), "/data/kopia/repositories/") {
+		t.Fatalf("repository config must stay under AgentRoot/data/kopia/repositories, got %q", got)
 	}
 	if !strings.Contains(filepath.Base(got), "repo-50-server-backup-task-1-repo-50") {
 		t.Fatalf("expected session-scoped kopia server config path, got %q", got)

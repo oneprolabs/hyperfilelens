@@ -560,8 +560,11 @@ func removeRepositoryLocalState(configFile string) (int, error) {
 	paths := []string{
 		configFile,
 		strings.TrimSuffix(configFile, filepath.Ext(configFile)) + ".maintenance.config",
-		repositoryLockFile(configFile),
+		s3ConnectionFingerprintPath(configFile),
+		s3ConnectionFingerprintPath(configFile) + ".part",
 	}
+	// Runtime locks remain at a stable path. Unlinking a lock during cleanup
+	// would let another process acquire a different inode for the same config.
 	removed := 0
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil {
