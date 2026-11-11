@@ -185,8 +185,19 @@ func (m *migrator) run(ctx context.Context) error {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	// Hold all surviving old prepare locks until the migration has committed.
-	// Never take an unverified arbitrary file as a lock.
+	// Hold all surviving old prepare locks while copying and switching durable
+	// references. Never take an unverified arbitrary file as a lock.
+	//
+	// The handles must be closed before removing the old lock files. Windows
+	// permits a delete-pending file to remain visible to the open handle, so
+	// deferring these releases until function return leaves the old cache
+	// undeletable during cleanup (and can make a subsequent upgrade fail).
+	var oldLockReleases []func()
+	defer func() {
+		for i := len(oldLockReleases) - 1; i >= 0; i-- {
+			oldLockReleases[i]()
+		}
+	}()
 	for _, key := range keys {
 		entry := m.state.Entries[key]
 		if entry.Kind != "lock" && entry.Kind != "maintenance-lock" || entry.Phase == "removed" {
@@ -203,7 +214,7 @@ func (m *migrator) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		defer unlock()
+		oldLockReleases = append(oldLockReleases, unlock)
 	}
 	if err := m.checkUsers(ctx, m.root, false); err != nil {
 		return err
@@ -239,6 +250,13 @@ func (m *migrator) run(ctx context.Context) error {
 	if err := m.checkpoint("references_switched"); err != nil {
 		return err
 	}
+	// Durable references now point at the new configuration. Close the old
+	// prepare-lock handles before deleting their files; the deferred cleanup
+	// remains as a safety net for interrupted migrations.
+	for i := len(oldLockReleases) - 1; i >= 0; i-- {
+		oldLockReleases[i]()
+	}
+	oldLockReleases = nil
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return err

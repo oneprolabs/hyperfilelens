@@ -162,7 +162,10 @@ func runtimeLogWriter(path string, mirror bool) *policyLog {
 		MaxBackups: maxLogBackups, MaxAge: policyLogs.days}
 	policyLogs.files[path] = writer
 	go writer.run()
-	go func() { policyLogs.Lock(); defer policyLogs.Unlock(); reconfigureLogsLocked() }()
+	// Reconfigure while holding the registry lock. The writer goroutine uses
+	// the same lock for writes, so this is safe and avoids a late background
+	// reconfiguration racing with test/service shutdown.
+	reconfigureLogsLocked()
 	return writer
 }
 
