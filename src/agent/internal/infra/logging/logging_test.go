@@ -58,6 +58,8 @@ func TestFormatTraceID(t *testing.T) {
 
 func TestSetupCreatesAgentLog(t *testing.T) {
 	dir := t.TempDir()
+	// Register after TempDir so this cleanup closes the Windows file handle
+	// before testing removes the temporary directory.
 	t.Cleanup(closeRuntimeLogs)
 	if err := Setup(dir, "org-test"); err != nil {
 		t.Fatalf("Setup: %v", err)
