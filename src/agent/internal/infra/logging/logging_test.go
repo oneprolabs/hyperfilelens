@@ -61,6 +61,7 @@ func TestSetupCreatesAgentLog(t *testing.T) {
 	// Register after TempDir so this cleanup closes the Windows file handle
 	// before testing removes the temporary directory.
 	// This keeps the cross-platform ownership contract explicit.
+	// The production logger still owns and closes the handle.
 	t.Cleanup(closeRuntimeLogs)
 	if err := Setup(dir, "org-test"); err != nil {
 		t.Fatalf("Setup: %v", err)
