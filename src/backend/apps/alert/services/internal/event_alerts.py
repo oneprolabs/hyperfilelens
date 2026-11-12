@@ -78,6 +78,7 @@ def handle_platform_event(
     resource_id: str = "",
     resource_name: str = "",
     metadata: dict | None = None,
+    audit_log_id: int | None = None,
 ) -> int:
     if not _event_in_catalog(event_category, event_type):
         return 0
@@ -110,7 +111,7 @@ def handle_platform_event(
             continue
         if rule_types and event_type not in rule_types:
             continue
-        fire_alert(
+        alert = fire_alert(
             policy,
             resource=_resource_stub(resource_id, resource_name or title),
             title=title,
@@ -126,8 +127,9 @@ def handle_platform_event(
                 "organization_id": organization.id,
                 "organization_key": organization.key,
             },
+            audit_log_id=audit_log_id,
         )
-        fired += 1
+        fired += int(alert is not None)
     return fired
 
 
@@ -139,6 +141,7 @@ def handle_audit_event(
     resource_id: str = "",
     resource_name: str = "",
     metadata: dict | None = None,
+    audit_log_id: int | None = None,
 ) -> int:
     mapped = _audit_action_to_event(action)
     if mapped is None:
@@ -154,5 +157,6 @@ def handle_audit_event(
         resource_type=resource_type,
         resource_id=resource_id,
         resource_name=resource_name,
-        metadata={"audit_action": action, **(metadata or {})},
+        metadata={**(metadata or {}), "audit_action": action},
+        audit_log_id=audit_log_id,
     )

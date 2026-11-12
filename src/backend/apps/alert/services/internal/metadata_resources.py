@@ -10,6 +10,41 @@ from apps.storage.repositories.models import Repository
 from apps.task.models import Task
 
 
+def _scoped(request, queryset, kind):
+    if request is None:
+        return queryset
+    from apps.iam.resource_access import filter_resource_queryset, filter_task_queryset
+    if kind == "task":
+        from apps.iam.query_authorization import request_authorization
+        from apps.iam.task_projection import filter_task_detail_queryset
+
+        queryset = filter_task_queryset(request, queryset)
+        if getattr(request, "hfl_support_readonly", False):
+            return queryset
+        context = request_authorization(request)
+        if context is None:
+            return queryset
+        # Options and persisted selections disclose raw display names, not
+        # merely the basic status projection available through Tasks.
+        return filter_task_detail_queryset(
+            queryset, context, action="operations.tasks.view",
+        )
+    return filter_resource_queryset(request, queryset, kind, action="resource.view")
+
+
+def _scoped_users(request, queryset, organization_id):
+    from apps.iam.models import Membership
+    queryset = queryset.filter(pk__in=Membership.objects.filter(
+        organization_id=organization_id, is_active=True,
+    ).values("user_id"))
+    if request is not None:
+        from apps.iam.query_authorization import request_authorization
+        context = request_authorization(request)
+        if context is not None and not context.has_org_action("configuration.members.view"):
+            return queryset.none()
+    return queryset
+
+
 def _option(item_id, name: str, status: str = "active") -> dict:
     return {"id": str(item_id), "name": name, "status": status}
 
@@ -19,12 +54,15 @@ def resource_options(
     organization_id: int | None,
     resource_type: str | None,
     owner_scope: str | None = None,
+    request=None,
 ) -> list[dict]:
     from common.resource_scope import ResourceScope
 
     if not resource_type:
         return []
     if resource_type == ResourceType.SYSTEM:
+        if request is not None and organization_id is not None:
+            return []
         return [
             {
                 "id": "00000000-0000-0000-0000-000000000000",
@@ -40,7 +78,7 @@ def resource_options(
             if platform_owned
             else qs.filter(organization_id=organization_id)
         )
-        return [_option(n.id, n.name, n.status) for n in qs.order_by("name")[:300]]
+        return [_option(n.id, n.name, n.status) for n in _scoped(request, qs, "node").order_by("name")[:300]]
     if resource_type == ResourceType.AGENT_PROXY:
         qs = Node.objects.filter(role=NodeRole.AGENT)
         qs = (
@@ -48,7 +86,7 @@ def resource_options(
             if platform_owned
             else qs.filter(organization_id=organization_id)
         )
-        return [_option(n.id, n.name, n.status) for n in qs.order_by("name")[:300]]
+        return [_option(n.id, n.name, n.status) for n in _scoped(request, qs, "node").order_by("name")[:300]]
     if resource_type == ResourceType.GATEWAY:
         qs = Node.objects.filter(role=NodeRole.GATEWAY)
         qs = (
@@ -56,7 +94,7 @@ def resource_options(
             if platform_owned
             else qs.filter(organization_id=organization_id)
         )
-        return [_option(n.id, n.name, n.status) for n in qs.order_by("name")[:300]]
+        return [_option(n.id, n.name, n.status) for n in _scoped(request, qs, "node").order_by("name")[:300]]
     if platform_owned:
         # Platform policies do not target tenant repositories / tasks / sources.
         return []
@@ -67,13 +105,13 @@ def resource_options(
         qs = Repository.objects.filter(organization_id=organization_id)
         return [
             _option(r.id, r.name, getattr(r, "status", "active") or "active")
-            for r in qs.order_by("name")[:300]
+            for r in _scoped(request, qs, "repository").order_by("name")[:300]
         ]
     if resource_type == ResourceType.TASK:
         qs = Task.objects.filter(organization_id=organization_id)
         return [
             _option(j.task_uuid, f"{j.task_type} / {j.display_name}", j.status)
-            for j in qs.order_by("-created_at", "-id")[:300]
+            for j in _scoped(request, qs, "task").order_by("-created_at", "-id")[:300]
         ]
     if resource_type == ResourceType.USER:
         from django.contrib.auth import get_user_model
@@ -85,7 +123,7 @@ def resource_options(
                 getattr(u, "email", None) or str(u.id),
                 "active" if u.is_active else "inactive",
             )
-            for u in User.objects.order_by("email")[:300]
+            for u in _scoped_users(request, User.objects.all(), organization_id).order_by("email")[:300]
         ]
     if resource_type == ResourceType.SOURCE_RESOURCE:
         try:
@@ -93,17 +131,15 @@ def resource_options(
 
             return [
                 _option(r.id, r.name, r.status)
-                for r in SourceResource.objects.filter(organization_id=organization_id).order_by(
-                    "name"
-                )[:300]
+                for r in _scoped(request, SourceResource.objects.filter(organization_id=organization_id), "source_resource").order_by("name")[:300]
             ]
         except Exception:
             return []
     return []
 
 
-def organization_resource_options(org: Organization, resource_type: str | None) -> list[dict]:
-    return resource_options(organization_id=org.id, resource_type=resource_type)
+def organization_resource_options(org: Organization, resource_type: str | None, *, request=None) -> list[dict]:
+    return resource_options(organization_id=org.id, resource_type=resource_type, request=request)
 
 
 def selected_resource_options(
@@ -112,6 +148,7 @@ def selected_resource_options(
     resource_type: str | None,
     resource_ids: list,
     owner_scope: str | None = None,
+    request=None,
 ) -> list[dict]:
     """Resolve persisted policy resource IDs without changing their order."""
     from common.resource_scope import ResourceScope
@@ -122,6 +159,7 @@ def selected_resource_options(
             organization_id=organization_id,
             resource_type=resource_type,
             owner_scope=owner_scope,
+            request=request,
         )
     if not ids:
         return []
@@ -148,7 +186,7 @@ def selected_resource_options(
             node_qs = node_qs.filter(organization_id=organization_id)
         rows = [
             _option(node.id, node.name, node.status)
-            for node in node_qs
+            for node in _scoped(request, node_qs, "node")
         ]
     elif platform_owned:
         rows = []
@@ -158,18 +196,16 @@ def selected_resource_options(
     }:
         rows = [
             _option(repo.id, repo.name, repo.status)
-            for repo in Repository.objects.filter(
-                organization_id=organization_id,
-                id__in=ids,
-            )
+            for repo in _scoped(request, Repository.objects.filter(
+                organization_id=organization_id, id__in=ids,
+            ), "repository")
         ]
     elif resource_type == ResourceType.TASK:
         rows = [
             _option(task.task_uuid, f"{task.task_type} / {task.display_name}", task.status)
-            for task in Task.objects.filter(
-                organization_id=organization_id,
-                task_uuid__in=ids,
-            )
+            for task in _scoped(request, Task.objects.filter(
+                organization_id=organization_id, task_uuid__in=ids,
+            ), "task")
         ]
     elif resource_type == ResourceType.SOURCE_RESOURCE:
         try:
@@ -177,10 +213,9 @@ def selected_resource_options(
 
             rows = [
                 _option(resource.id, resource.name, resource.status)
-                for resource in SourceResource.objects.filter(
-                    organization_id=organization_id,
-                    id__in=ids,
-                )
+                for resource in _scoped(request, SourceResource.objects.filter(
+                    organization_id=organization_id, id__in=ids,
+                ), "source_resource")
             ]
         except Exception:
             rows = []

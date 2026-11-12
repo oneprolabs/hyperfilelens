@@ -11,6 +11,7 @@ const RESOURCE_TYPE_KEYS: Record<string, string> = {
   'Restore Plan': 'restorePlan',
   'Backup Policy': 'backupPolicy',
   'File Filter': 'fileFilter',
+  'Tag': 'tag',
   'Alert Rule': 'alertRule',
   'Notification Channel': 'notificationChannel',
 }

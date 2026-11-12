@@ -8,6 +8,7 @@ import {
   setBackupSourcePipelineStep,
   listSourcesForTag,
   listSourceTagFilterOptions,
+  listSourceTagPage,
   createSourceTag,
   bulkUpdateSourceTags,
   updateSourceTag,
@@ -42,6 +43,22 @@ describe('setBackupSourcePipelineStep', () => {
 })
 
 describe('source tag editing', () => {
+  it('uses server-side tag pagination and preserves capability hints', async () => {
+    const result = {
+      results: [{ id: 4, name: 'Own tag', can_manage: false, can_delete: false }],
+      count: 21,
+      can_create: false,
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(result), {
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    await expect(listSourceTagPage(2, 10, { signal: controller.signal })).resolves.toEqual(result)
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/source/tags/?page=2&page_size=10',
+      expect.objectContaining({ signal: controller.signal }))
+  })
+
   it('loads tag totals and the visible untagged source count for filters', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       results: [{ id: 2, name: 'Production', description: '', color: 'blue', source_count: 5 }],

@@ -96,6 +96,7 @@ def write_audit_log(
             resource_id=str(resource_id or "")[:120] or str(target_id or "")[:120],
             resource_name=str(resource_name or "")[:255],
             metadata=metadata or {},
+            audit_log_id=log.pk,
         )
     except Exception:
         pass

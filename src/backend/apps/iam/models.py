@@ -51,6 +51,9 @@ class MembershipQuerySet(models.QuerySet):
         from django.db import transaction
 
         role = kwargs.pop("role", None)
+        resource_scope = kwargs.pop("resource_scope", None)
+        if resource_scope is not None and role is None:
+            raise ValueError("A resource scope requires a Role assignment.")
         with transaction.atomic():
             obj = super().create(**kwargs)
             # Seed EE role for inactive rows too (reactivate must not invent OPERATOR).
@@ -61,6 +64,7 @@ class MembershipQuerySet(models.QuerySet):
                     user_id=obj.user_id,
                     organization_id=obj.organization_id,
                     role=role,
+                    resource_scope=resource_scope,
                 )
             return obj
 

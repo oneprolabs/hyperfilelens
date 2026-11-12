@@ -9,6 +9,7 @@ from rest_framework.views import APIView
 from apps.iam.permissions_org import IsOrgMember
 from apps.notification.api.views._org import require_org
 from apps.notification.models import UserNotification
+from apps.iam.notification_inbox_access import filter_user_notification_queryset
 
 
 def _notification_queryset(*, user, organization_id):
@@ -46,10 +47,9 @@ class UserNotificationInboxView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        queryset = _notification_queryset(
-            user=request.user,
-            organization_id=organization.id,
-        )
+        queryset = filter_user_notification_queryset(request, _notification_queryset(
+            user=request.user, organization_id=organization.id,
+        ))
         count = queryset.count()
         unread_count = queryset.filter(read_at__isnull=True).count()
         start = (page - 1) * page_size
@@ -68,11 +68,9 @@ class UserNotificationReadView(APIView):
 
     def post(self, request, notification_id):
         organization = require_org(request)
-        updated = UserNotification.objects.filter(
-            id=notification_id,
-            user=request.user,
-            organization_id=organization.id,
-        ).update(read_at=timezone.now())
+        updated = filter_user_notification_queryset(request, UserNotification.objects.filter(
+            id=notification_id, user=request.user, organization_id=organization.id,
+        )).update(read_at=timezone.now())
         if not updated:
             return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -83,11 +81,9 @@ class UserNotificationMarkAllReadView(APIView):
 
     def post(self, request):
         organization = require_org(request)
-        UserNotification.objects.filter(
-            user=request.user,
-            organization=organization,
-            read_at__isnull=True,
-        ).update(
+        filter_user_notification_queryset(request, UserNotification.objects.filter(
+            user=request.user, organization=organization, read_at__isnull=True,
+        )).update(
             read_at=timezone.now(),
         )
         return Response(status=status.HTTP_204_NO_CONTENT)

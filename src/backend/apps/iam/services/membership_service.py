@@ -23,14 +23,20 @@ class MembershipPolicyError(ValidationError):
     pass
 
 
-def sync_member_role(*, user_id: int, organization_id: int, role: str | None) -> None:
+def sync_member_role(
+    *, user_id: int, organization_id: int, role: str | None,
+    resource_scope: str | None = None,
+) -> None:
     """Forward role writes to the plugin AuthzProvider when present."""
     provider = get_authz_provider()
     if provider is None:
+        if resource_scope is not None:
+            raise MembershipPolicyError({"resource_scope": "Resource scopes require organization governance."})
         return
     try:
+        scope_fields = {"resource_scope": resource_scope} if resource_scope is not None else {}
         provider.sync_member_role(
-            user_id=user_id, organization_id=organization_id, role=role
+            user_id=user_id, organization_id=organization_id, role=role, **scope_fields,
         )
     except DjangoValidationError as exc:
         detail = getattr(exc, "message_dict", None) or {
@@ -66,6 +72,17 @@ def authoritative_role(membership: Membership) -> str:
 
 # Back-compat alias for callers/tests.
 _authoritative_role = authoritative_role
+
+
+def authoritative_resource_scope(membership: Membership) -> str | None:
+    """Read stored assignment scope without inferring it from a Role name."""
+    provider = get_authz_provider()
+    if provider is None:
+        return "organization"
+    resolver = getattr(provider, "stored_member_resource_scope", None)
+    return resolver(
+        user_id=membership.user_id, organization_id=membership.organization_id,
+    ) if callable(resolver) else None
 
 
 def active_owner_count(
@@ -141,6 +158,7 @@ def create_org_membership(
     user,
     role: str,
     is_active: bool = True,
+    resource_scope: str | None = None,
 ) -> Membership:
     Organization.objects.select_for_update(no_key=True).get(pk=organization.pk)
     assert_role_assignable(role, organization=organization)
@@ -169,6 +187,7 @@ def create_org_membership(
                 organization=organization,
                 is_active=is_active,
                 role=role,
+                resource_scope=resource_scope,
             )
     except IntegrityError as exc:
         if Membership.objects.filter(user=user, organization=organization).exists():
@@ -191,6 +210,10 @@ def update_org_membership(membership: Membership, **fields) -> Membership:
         .get(pk=membership.pk)
     )
     new_role = fields.get("role")
+    if "resource_scope" in fields and new_role is None:
+        new_role = authoritative_role(membership)
+        if not new_role:
+            raise MembershipPolicyError({"role": "Set an enabled Role before assigning a resource scope."})
     if new_role is not None:
         assert_role_assignable(new_role, organization=membership.organization)
 
@@ -235,5 +258,6 @@ def update_org_membership(membership: Membership, **fields) -> Membership:
             user_id=membership.user_id,
             organization_id=membership.organization_id,
             role=new_role,
+            resource_scope=fields.get("resource_scope"),
         )
     return membership

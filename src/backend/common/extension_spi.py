@@ -27,7 +27,17 @@ class AuthzProvider(Protocol):
         ...
 
     def resource_scope_for_role(self, user: Any, org_key: str) -> str | None:
-        """Return the effective resource scope: ``own`` or ``organization``."""
+        """Return organization-assignment scope, not a union of Group scopes."""
+        ...
+
+    def stored_member_resource_scope(self, *, user_id: int, organization_id: int) -> str | None:
+        """Read assignment scope for display, including dormant memberships."""
+        ...
+
+    def stored_member_resource_scopes(
+        self, refs: Sequence[tuple[int, int]],
+    ) -> dict[tuple[int, int], str]:
+        """Batch display-only scopes keyed by (user_id, organization_id)."""
         ...
 
     def visible_resource_refs(
@@ -56,6 +66,35 @@ class AuthzProvider(Protocol):
         """
         ...
 
+    def can_evaluate_alert_target(
+        self, policy: Any, resource_type: str, resource_id: Any, *,
+        audit_log_id: int | None = None,
+    ) -> bool:
+        """Optional live scope; deletion evidence must match a persisted audit."""
+        ...
+
+    def can_deliver_alert(
+        self, alert: Any, *, channel_id: int | None = None,
+        recipient_user_id: int | None = None,
+    ) -> bool:
+        """Optional raw-content authorization at actual send/retry time."""
+        ...
+
+    def authorized_alert_channels(self, policy: Any, channel_ids: Sequence[int]) -> list[int]:
+        """Optional current-owner channel scope for tenant rule delivery."""
+        ...
+
+    def filter_deleted_alert_records(self, queryset: Any, context: Any, *, action: str) -> Any:
+        """Optional SQL history scope using verified deletion evidence."""
+        ...
+
+    def validate_resource_name(
+        self, *, organization_id: int, resource_type: str,
+        resource_id: int, name: str,
+    ) -> None:
+        """Optional owner-local name validation under the governance lock."""
+        ...
+
     def record_resource_owner(
         self,
         *,
@@ -78,9 +117,10 @@ class AuthzProvider(Protocol):
         ...
 
     def sync_member_role(
-        self, *, user_id: int, organization_id: int, role: str | None
+        self, *, user_id: int, organization_id: int, role: str | None,
+        resource_scope: str | None = None,
     ) -> None:
-        """Upsert plugin role row, or delete when ``role`` is None."""
+        """Upsert an assignment; omitted scope preserves it, new rows default own."""
         ...
 
     def count_active_owners(

@@ -105,11 +105,12 @@ describe('tag management table', () => {
   it('requires one selected tag to rename or delete from More Actions', () => {
     const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/SourceTags.vue'), 'utf8')
     expect(page).toContain('type="selection"')
-    expect(page).toContain('selectedTags.value.length === 1 && !loading.value && !saving.value')
+    expect(page).toContain('selectedTags.value.length === 1 && selectedTags.value[0].can_manage !== false')
+    expect(page).toContain('selectedTags.value[0].can_delete !== false')
     expect(page).toContain('canManageSelected && openTagDialog(selectedTags[0])')
-    expect(page).toContain('canManageSelected && remove(selectedTags[0])')
+    expect(page).toContain('canDeleteSelected && remove(selectedTags[0])')
     expect(page).toContain('class="hfl-list-footer__selected"')
-    expect(page).toContain('watch(page, clearSelection)')
+    expect(page).toContain('watch(page, () => { clearSelection(); void load() })')
     expect(page).toContain('  clearSelection()\n  try {')
   })
 
@@ -130,7 +131,7 @@ describe('tag management table', () => {
 
   it('shows tag name errors inline on blur and blocks invalid submits', () => {
     const page = readFileSync(resolve(process.cwd(), 'src/pages/protection/SourceTags.vue'), 'utf8')
-    expect(page).toContain("sourceTagNameIssue(form.value.name, rows.value, editingTag.value?.id)")
+    expect(page).toContain("sourceTagNameIssue(form.value.name, [], editingTag.value?.id)")
     expect(page).toContain(':error="nameError"')
     expect(page).toContain('@blur="validateNameOnBlur"')
     expect(page).toContain('if (saving.value || !validateForm()) return')

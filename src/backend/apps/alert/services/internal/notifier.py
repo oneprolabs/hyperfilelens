@@ -11,6 +11,7 @@ from apps.alert.services.internal.alert_email import (
     build_alert_email_model,
     send_organization_alert_email,
 )
+from apps.alert.services.internal.delivery_access import can_deliver_alert
 from apps.configuration.services.runtime_settings import email_delivery_configured
 from apps.iam.models import Organization
 from apps.iam.services.organization_owner import resolve_organization_owner_user
@@ -41,6 +42,11 @@ def _channel_ids_for_alert(alert: AlertRecord) -> list[int]:
             ids.append(int(item))
         except (TypeError, ValueError):
             continue
+    if policy.organization_id is not None:
+        from common.extension_spi import get_authz_provider
+        gate = getattr(get_authz_provider(), "authorized_alert_channels", None)
+        if callable(gate):
+            return gate(policy, ids)
     return ids
 
 
@@ -115,6 +121,8 @@ def _send_owner_email_fallback(alert: AlertRecord, *, resolved: bool) -> None:
             alert.id,
         )
         return
+    if not can_deliver_alert(alert, recipient_user_id=owner.pk):
+        return
     recipient = str(getattr(owner, "email", "") or "").strip()
     if not recipient:
         logger.warning(
@@ -176,6 +184,8 @@ def _send_owner_email_fallback(alert: AlertRecord, *, resolved: bool) -> None:
 
 
 def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
+    if not can_deliver_alert(alert):
+        return
     channel_ids = _channel_ids_for_alert(alert)
     if not channel_ids:
         _send_owner_email_fallback(alert, resolved=resolved)
@@ -193,6 +203,8 @@ def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
             is_active=True,
         ).first()
         if channel is None:
+            continue
+        if not can_deliver_alert(alert, channel_id=channel_id):
             continue
         log_status = NotifyStatus.FAILED
         error_message = ""

@@ -1240,7 +1240,7 @@ class _LensGatewayViewSetBase(OrgScopedMixin, viewsets.ViewSet):
                         "chat_queue_capacity": int(link.chat_queue_capacity),
                     },
                 )
-        return Response(gateway_chat_queue.chat_workload_payload(gateway_link=link))
+        return Response(gateway_chat_queue.chat_workload_payload(gateway_link=link, user=request.user))
 
     @action(detail=True, methods=["get"], url_path="browse")
     def browse(self, request, pk=None):
@@ -1251,6 +1251,7 @@ class _LensGatewayViewSetBase(OrgScopedMixin, viewsets.ViewSet):
                 gateway_id=int(pk),
                 path=path,
                 expected_scope=LensGatewayLink.GatewayScope.ORGANIZATION,
+                requesting_user=request.user,
             )
         except ValidationError as exc:
             return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)

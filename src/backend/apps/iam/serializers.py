@@ -43,11 +43,25 @@ class OrganizationSerializer(serializers.ModelSerializer):
         return obj.memberships.filter(is_active=True).count()
 
 
+class MembershipListSerializer(serializers.ListSerializer):
+    def to_representation(self, data):
+        from common.extension_spi import get_authz_provider
+
+        rows = list(data.all() if hasattr(data, "all") else data)
+        resolver = getattr(get_authz_provider(), "stored_member_resource_scopes", None)
+        if callable(resolver):
+            self.context["_membership_scopes"] = resolver([
+                (row.user_id, row.organization_id) for row in rows
+            ])
+        return super().to_representation(rows)
+
+
 class MembershipSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_username = serializers.CharField(source="user.username", read_only=True)
     organization_name = serializers.CharField(source="organization.name", read_only=True)
     role = serializers.SerializerMethodField()
+    resource_scope = serializers.SerializerMethodField()
     email = serializers.EmailField(write_only=True, required=False, max_length=254)
     management = serializers.SerializerMethodField()
     user_is_active = serializers.BooleanField(source="user.is_active", read_only=True)
@@ -55,6 +69,7 @@ class MembershipSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Membership
+        list_serializer_class = MembershipListSerializer
         fields = [
             "id",
             "organization",
@@ -63,6 +78,7 @@ class MembershipSerializer(serializers.ModelSerializer):
             "user_email",
             "user_username",
             "role",
+            "resource_scope",
             "is_active",
             "created_at",
             "email",
@@ -80,6 +96,21 @@ class MembershipSerializer(serializers.ModelSerializer):
         if obj.pk not in roles:
             roles[obj.pk] = authoritative_role(obj)
         return roles[obj.pk]
+
+    def get_resource_scope(self, obj):
+        from apps.iam.services.membership_service import authoritative_resource_scope
+
+        if "_membership_scopes" in self.context:
+            return self.context["_membership_scopes"].get((obj.user_id, obj.organization_id))
+        return authoritative_resource_scope(obj)
+
+    def validate_resource_scope(self, value):
+        from apps.iam.assignment_scope import RESOURCE_SCOPE_CHOICES
+        from common.extension_spi import get_authz_provider
+
+        if not isinstance(value, str) or value not in dict(RESOURCE_SCOPE_CHOICES) or get_authz_provider() is None:
+            raise serializers.ValidationError({"resource_scope": "Select a valid business-resource scope."})
+        return value
 
     def get_requires_password_change(self, obj):
         from apps.iam.services.account_setup import requires_password_change
@@ -122,7 +153,7 @@ class MembershipSerializer(serializers.ModelSerializer):
     def to_internal_value(self, data):
         if not isinstance(data, Mapping):
             return super().to_internal_value(data)
-        allowed = {"role", "is_active"} if self.instance is not None else {"user", "email", "role", "is_active"}
+        allowed = {"role", "resource_scope", "is_active"} if self.instance is not None else {"user", "email", "role", "resource_scope", "is_active"}
         unknown = set(data) - allowed
         if unknown:
             raise serializers.ValidationError({key: "Unsupported membership field." for key in sorted(unknown)})
@@ -132,6 +163,8 @@ class MembershipSerializer(serializers.ModelSerializer):
             role = data.get("role")
             self.validate_role(role)
             ret["role"] = role
+        if "resource_scope" in data:
+            ret["resource_scope"] = self.validate_resource_scope(data["resource_scope"])
         return ret
 
     def validate(self, attrs):
@@ -158,8 +191,10 @@ class MembershipSerializer(serializers.ModelSerializer):
             assert_eligible_member_account(attrs["user"])
             return attrs
         if not attrs:
-            raise serializers.ValidationError("Provide a role or membership status.")
+            raise serializers.ValidationError("Provide a role, resource scope or membership status.")
         if authoritative_role(instance) == Membership.Role.OWNER:
+            if attrs.get("resource_scope") not in (None, "organization"):
+                raise serializers.ValidationError({"resource_scope": "The organization Owner has organization-wide scope."})
             if "role" in attrs and attrs["role"] != Membership.Role.OWNER:
                 raise serializers.ValidationError(
                     {"role": "Owner role cannot be changed via membership API."}
@@ -181,6 +216,7 @@ class MembershipSerializer(serializers.ModelSerializer):
                 user=validated_data["user"],
                 role=validated_data.get("role", Membership.Role.OPERATOR),
                 is_active=validated_data.get("is_active", True),
+                resource_scope=validated_data.get("resource_scope"),
             )
         except MembershipPolicyError as exc:
             raise serializers.ValidationError(exc.detail) from exc
@@ -198,11 +234,14 @@ class MemberOnboardingSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, max_length=254)
     user = serializers.IntegerField(required=False, min_value=1)
     role = serializers.CharField(required=False, max_length=64)
+    resource_scope = serializers.ChoiceField(
+        choices=("own", "organization"), required=False,
+    )
     is_active = serializers.BooleanField(default=True)
 
     def to_internal_value(self, data):
         if isinstance(data, Mapping):
-            unknown = set(data) - {"email", "user", "role", "is_active"}
+            unknown = set(data) - {"email", "user", "role", "resource_scope", "is_active"}
             if unknown:
                 raise serializers.ValidationError({key: "Unsupported membership field." for key in sorted(unknown)})
         return super().to_internal_value(data)
@@ -216,6 +255,8 @@ class MemberOnboardingSerializer(serializers.Serializer):
             raise serializers.ValidationError({"role": "Select an allowed organization role."})
         if attrs.get("role") is not None:
             MembershipSerializer(context=self.context).validate_role(attrs["role"])
+        if "resource_scope" in attrs:
+            MembershipSerializer(context=self.context).validate_resource_scope(attrs["resource_scope"])
         return attrs
 
 

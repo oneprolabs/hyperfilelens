@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from django.db.models import Count, Q, QuerySet
+from django.db.models import Case, Count, F, Q, QuerySet, When
 from django.utils import timezone
 
 from apps.task.models import Task, TaskEvent, TaskStep
@@ -47,6 +47,7 @@ def list_tasks(
     resource_id: int | None = None,
     search: str | None = None,
     search_field: str | None = None,
+    raw_detail_queryset: QuerySet[Task] | None = None,
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     finished_after: datetime | None = None,
@@ -54,6 +55,7 @@ def list_tasks(
     terminal_only: bool = False,
     collapse_replacements: bool = False,
 ) -> QuerySet[Task]:
+    """List tasks, projecting searchable names when raw-detail scope is supplied."""
     queryset = (
         Task.objects.filter(organization_id=organization_id)
         .select_related(
@@ -92,21 +94,36 @@ def list_tasks(
     if search:
         text = search.strip()
         if text:
+            name_field = "display_name"
+            command_scope = Q()
+            if raw_detail_queryset is not None:
+                raw_ids = raw_detail_queryset.order_by().values("pk")
+                queryset = queryset.alias(_hfl_search_name=Case(
+                    When(pk__in=raw_ids, then=F("display_name")),
+                    default=F("task_type"),
+                ))
+                name_field = "_hfl_search_name"
+                command_scope = Q(pk__in=raw_ids)
+            name_filter = Q(**{f"{name_field}__icontains": text})
             if search_field == "name":
-                search_filter = Q(display_name__icontains=text)
+                search_filter = name_filter
             elif search_field == "uuid":
                 try:
                     value = UUID(text)
-                    search_filter = Q(task_uuid=value) | Q(node_tasks__id=value)
+                    search_filter = Q(task_uuid=value) | (
+                        command_scope & Q(node_tasks__id=value)
+                    )
                 except ValueError:
                     search_filter = Q(pk__in=[])
             else:
-                search_filter = Q(display_name__icontains=text) | Q(
+                search_filter = name_filter | Q(
                     error_code__icontains=text
                 )
                 try:
                     value = UUID(text)
-                    search_filter |= Q(task_uuid=value) | Q(node_tasks__id=value)
+                    search_filter |= Q(task_uuid=value) | (
+                        command_scope & Q(node_tasks__id=value)
+                    )
                 except ValueError:
                     pass
             queryset = queryset.filter(search_filter).distinct()

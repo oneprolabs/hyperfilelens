@@ -11,7 +11,7 @@ from apps.alert.constants import (
 )
 from apps.alert.models import AlertPolicy
 from apps.alert.selectors.interface import notification_channels_for_policy
-from apps.alert.services.internal.metadata_resources import selected_resource_options
+from apps.alert.services.internal.metadata_resources import selected_resource_options, _scoped
 from apps.alert.services.internal.recovery import supports_numeric_recovery
 
 _DEFAULT_EVALUATION_INTERVAL_SECONDS = 60
@@ -359,6 +359,7 @@ class AlertPolicySerializer(serializers.ModelSerializer):
                     owner_scope=ResourceScope.ORGANIZATION,
                     organization=org,
                 )
+            channel_qs = _scoped(self.context.get("request") if org is not None else None, channel_qs, "notification_channel")
             found = set(channel_qs.values_list("id", flat=True))
             missing_ids = [cid for cid in int_ids if cid not in found]
             if missing_ids:
@@ -369,6 +370,23 @@ class AlertPolicySerializer(serializers.ModelSerializer):
                         )
                     }
                 )
+        request = self.context.get("request")
+        org = self.context.get("organization") or getattr(instance, "organization", None)
+        if request is not None and org is not None:
+            from apps.iam.query_authorization import request_authorization
+            authority = request_authorization(request, fresh=True)
+            if authority is not None:
+                if resource_type in (ResourceType.SYSTEM, ResourceType.USER) and not authority.has_organization_resource_scope():
+                    raise serializers.ValidationError({"resource_type": "Use platform or organization administration for this target."})
+                if scope != PolicyScope.SELECTED and not authority.has_organization_resource_scope():
+                    raise serializers.ValidationError({"scope": "Select resources within your assigned scope."})
+                if scope == PolicyScope.SELECTED and resource_ids:
+                    choices = selected_resource_options(
+                        organization_id=org.pk, resource_type=resource_type,
+                        resource_ids=resource_ids, request=request,
+                    )
+                    if len(choices) != len(resource_ids) or any(row.get("available") is False for row in choices):
+                        raise serializers.ValidationError({"resource_ids": "Select resources within your assigned scope."})
         return attrs
 
     def create(self, validated_data):
@@ -389,6 +407,12 @@ class AlertPolicySerializer(serializers.ModelSerializer):
 
     def get_notification_channels(self, obj):
         org = obj.organization
+        if org is not None and self.context.get("request") is not None:
+            from apps.notification.models import NotificationChannel
+            rows = _scoped(self.context["request"], NotificationChannel.objects.filter(
+                organization=org, pk__in=obj.notification_channel_ids or [],
+            ), "notification_channel")
+            return [{"id": ch.pk, "name": ch.name, "type": ch.channel_type, "enabled": ch.is_active} for ch in rows]
         return notification_channels_for_policy(obj, org)
 
     def get_monitoring_resources(self, obj):
@@ -399,6 +423,7 @@ class AlertPolicySerializer(serializers.ModelSerializer):
             resource_type=obj.resource_type,
             resource_ids=obj.resource_ids or [],
             owner_scope=obj.owner_scope,
+            request=self.context.get("request") if obj.organization_id is not None else None,
         )
 
     def get_is_default(self, obj: AlertPolicy) -> bool:

@@ -77,6 +77,20 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {"resource_id": "resource_id must be an integer."}
             ) from exc
+        raw_details = None
+        if (params.get("search") or "").strip() and not getattr(
+            self.request, "hfl_support_readonly", False,
+        ):
+            from apps.iam.query_authorization import request_authorization
+            from apps.iam.task_projection import filter_task_detail_queryset
+
+            context = request_authorization(self.request)
+            if context is not None:
+                # Search the same names the serializer can disclose, never a
+                # hidden filename through matching rows or aggregate totals.
+                raw_details = filter_task_detail_queryset(
+                    Task.objects.all(), context, action="operations.tasks.view",
+                )
         queryset = list_tasks(
             organization_id=self._organization_id(),
             status=params.get("status") or None,
@@ -91,6 +105,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             resource_id=resource_id_int,
             search=params.get("search") or None,
             search_field=search_field or None,
+            raw_detail_queryset=raw_details,
             created_after=parse_datetime(params.get("created_after") or ""),
             created_before=parse_datetime(params.get("created_before") or ""),
             finished_after=parse_datetime(params.get("finished_after") or ""),
@@ -214,7 +229,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise NotFound("task not found") from exc
         except DjangoValidationError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
-        return Response(TaskSerializer(task).data)
+        return Response(self.get_serializer(task).data)
 
     @action(detail=True, methods=["post"], url_path="retry")
     def retry(self, request, task_uuid=None):
@@ -299,16 +314,24 @@ class TaskViewSet(viewsets.ModelViewSet):
             raise NotFound("task not found") from exc
         except DjangoValidationError as exc:
             raise ValidationError({"detail": str(exc)}) from exc
-        return Response(TaskSerializer(task).data)
+        return Response(self.get_serializer(task).data)
+
+    def _assert_raw_details(self, task):
+        from apps.iam.task_projection import task_detail_projection
+        projection = task_detail_projection(self.request, [task])
+        if projection is not None and not projection[task.pk]["details"]:
+            raise NotFound("Task details are outside your authorized resource scope.")
 
     @action(detail=True, methods=["get"], url_path="steps")
     def steps(self, request, task_uuid=None):
         task = self.get_object()
+        self._assert_raw_details(task)
         return Response(TaskStepSerializer(list_task_steps(task=task), many=True).data)
 
     @action(detail=True, methods=["get"], url_path="events")
     def events(self, request, task_uuid=None):
         task = self.get_object()
+        self._assert_raw_details(task)
         params = request.query_params
         after_seq = params.get("after_seq")
         try:

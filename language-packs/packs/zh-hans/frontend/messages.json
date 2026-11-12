@@ -5949,10 +5949,10 @@
       },
       "descriptions": {
         "owner": "完全管理组织及其资源。这是组织级角色，不是平台管理员角色。",
-        "admin": "在组织层面管理成员、数据保护、智能洞察和运维，可访问组织全部资源。",
-        "manager": "管理组织治理。业务资源访问按归属与组授权确定。",
-        "operator": "执行数据保护操作、使用智能洞察并查看运维信息。可访问自身资源及组内角色授权的资源。",
-        "auditor": "只读查看组织治理及自身或组授权资源的数据保护和运维信息，不修改配置。",
+        "admin": "管理组织成员、数据保护、洞察和运维。资源范围在分配角色时单独配置。",
+        "manager": "管理组织治理。业务资源访问由角色分配范围及组授权共同决定。",
+        "operator": "在授权资源范围内执行数据保护、使用洞察并查看运维信息。",
+        "auditor": "只读查看授权资源范围内的组织治理、数据保护和运维信息，不修改配置。",
         "group_admin": "管理本组成员及资源，不管理组织角色、用量或平台设置。",
         "group_operator": "在本组资源范围内执行数据保护操作并使用智能洞察。",
         "group_member": "查看本组资源并在许可范围内使用智能洞察，不管理数据保护或运维配置。",
@@ -6001,7 +6001,6 @@
         "configuration_groups_manage_members": "管理组成员",
         "configuration_groups_manage_resources": "管理组资源",
         "configuration_resources_view": "查看资源目录",
-        "configuration_resources_access_all": "访问组织全部资源",
         "configuration_resources_change_owner": "修改资源所有者",
         "configuration_subscriptions_view": "查看用量",
         "configuration_subscriptions_manage": "管理用量申请",
@@ -6159,7 +6158,6 @@
         "remove": "移除",
         "manage_members": "管理成员",
         "manage_resources": "管理资源",
-        "access_all": "访问所有资源",
         "change_owner": "修改所有者"
       },
       "actionHints": {
@@ -6180,7 +6178,6 @@
         "remove": "将成员移出组织，不会删除其账号或资源。",
         "manage_members": "添加或移除组成员，并为成员分配其在此组中的角色。",
         "manage_resources": "添加或移除此组资源范围中的资源。",
-        "access_all": "将范围扩展到组织中的所有资源，查看或操作各类资源仍需单独的权限。",
         "change_owner": "交接资源所有权，不会改变资源标识、配置、数据或组关联。"
       },
       "selectPermissions": "选择权限",
@@ -6188,7 +6185,7 @@
         "configuration_organizations_view": "查看组织详情和成员数量。",
         "configuration_members_view": "查看组织成员及其角色分配。",
         "configuration_members_manage": "添加组织成员，并启用或禁用其组织成员资格。",
-        "configuration_members_assign_role": "为组织成员分配角色，这可能改变其在组织中的权限。",
+        "configuration_members_assign_role": "为组织成员分配角色，并配置每次分配的业务资源范围。",
         "configuration_members_remove": "将成员移出组织，不会删除其账号或资源。",
         "configuration_roles_view": "查看角色及其权限集合。",
         "configuration_roles_manage": "添加角色，并修改其权限和设置。",
@@ -6199,8 +6196,7 @@
         "configuration_groups_manage_members": "添加或移除组成员，并分配其在组内的角色。",
         "configuration_groups_manage_resources": "添加或移除组资源范围中的资源。",
         "configuration_resources_view": "查看资源名称、类型、所有者等目录信息。",
-        "configuration_resources_access_all": "将资源范围扩展到组织中的所有资源，查看或操作资源仍需相应权限。",
-        "configuration_resources_change_owner": "将资源所有权交接给其他组织成员，已有组关联保持不变。",
+        "configuration_resources_change_owner": "在组织内将资源所有权交接给符合条件的成员，不受你的业务资源范围限制。已有组关联保持不变。",
         "configuration_subscriptions_view": "查看组织的资源用量、配额限制以及配额申请历史。",
         "configuration_subscriptions_manage": "提交并取消组织的配额提升申请。",
         "protection_source_hosts_view": "查看源主机详情和状态。",
@@ -6374,7 +6370,8 @@
       "backupPolicy": "备份策略",
       "fileFilter": "文件过滤器",
       "alertRule": "告警规则",
-      "notificationChannel": "通知渠道"
+      "notificationChannel": "通知渠道",
+      "tag": "标签"
     },
     "nav": {
       "organizationHub": "组织",
@@ -6689,7 +6686,7 @@
       "add": "添加成员",
       "email": "邮箱",
       "actions": "操作",
-      "editRole": "修改组织角色",
+      "editRole": "编辑授权",
       "deactivate": "停用",
       "activate": "启用",
       "remove": "移出组织",
@@ -6700,7 +6697,7 @@
       "saved": "组织成员信息已更新。",
       "operationFailed": "无法更新组织成员信息。",
       "addNotice": "通过邮箱添加成员。账号不存在时将创建普通账号，不会额外创建组织，并校验成员配额。",
-      "organizationRoleNotice": "这里只调整组织级权限，组内角色需在组页面单独管理。不能在这里修改组织所有者或自己的成员关系。",
+      "organizationRoleNotice": "组授权在组页面单独管理。此处不能修改组织所有者或您自己的成员授权。",
       "deactivateConfirm": "停用「{name}」在此组织中的成员身份？",
       "deactivateWarning": "将阻止组织访问，保留组关联以便后续启用。不会修改账号、资源、数据或其他组织中的成员关系。",
       "activateConfirm": "启用「{name}」在此组织中的成员身份？",
@@ -6711,10 +6708,14 @@
       "basicInformation": "基本信息",
       "saveChanges": "保存更改",
       "addPageDescription": "添加成员到当前组织并分配角色。",
-      "editPageDescription": "修改此成员的组织角色，不改变组关联。",
+      "editPageDescription": "修改成员的组织角色及业务资源范围，不改变组授权。",
       "general": "基本信息",
       "group": "组",
-      "noGroupAssignments": "尚未加入任何组。"
+      "noGroupAssignments": "尚未加入任何组。",
+      "resourceScope": "业务资源范围",
+      "ownedResources": "自有资源",
+      "allOrganizationResources": "全组织资源",
+      "resourceScopeNotice": "限制业务资源访问，不限制组织管理或所有者交接。组授权单独生效。"
     },
     "governanceActions": {
       "organizationChanged": "当前组织已切换。请关闭此弹窗，刷新后重试。",

@@ -387,7 +387,7 @@ def _associated_sources_queryset(request, *, organization_id, repository_id):
     )
     from apps.iam.query_authorization import request_authorization
     context = request_authorization(request)
-    all_scope = bool(context and context.has_org_action("configuration.resources.access_all"))
+    all_scope = bool(context and context.has_organization_resource_scope())
     # Organization-wide readers may inspect retained configuration references
     # even after the live source disappeared. Scoped readers need a live grant.
     host_condition = Q(source_type="agent")

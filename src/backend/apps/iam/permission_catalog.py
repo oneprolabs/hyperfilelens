@@ -1,7 +1,7 @@
 """Tenant permission contract shared by Host endpoints and Enterprise roles.
 
-Categories organize the editor only. Every key is an independent capability;
-``access_all`` changes resource scope, never the set of allowed operations.
+Categories organize the editor only. Every key is an operation capability.
+Business-resource scope belongs to Role assignments, never Role definitions.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ _RESOURCES = (
         "configuration",
         "resources",
         "Resources",
-        ("view", "access_all", "change_owner"),
+        ("view", "change_owner"),
     ),
     ("configuration", "subscriptions", "Subscription", ("view", "manage")),
     (
@@ -148,7 +148,6 @@ _NAMES = {
     "configuration.members.remove": "Remove Members",
     "configuration.groups.manage_members": "Manage Group Members",
     "configuration.groups.manage_resources": "Manage Group Resources",
-    "configuration.resources.access_all": "Access All Resources",
     "configuration.resources.change_owner": "Change Owner",
     "protection.backup_configurations.run": "Run Backups",
     "protection.backup_configurations.cancel": "Cancel Backups",
@@ -171,7 +170,6 @@ SENSITIVE_ACTIONS = frozenset(
         "configuration.roles.manage",
         "configuration.groups.manage_members",
         "configuration.groups.manage_resources",
-        "configuration.resources.access_all",
         "configuration.resources.change_owner",
         "protection.restore_plans.run",
         "protection.backup_data.download",
@@ -192,8 +190,6 @@ def _build_catalog() -> dict[str, Permission]:
                     module == "configuration"
                     and key not in GROUP_CONFIGURATION_ACTIONS
                     or key == "insights.usage.view"
-                    or resource == "tags"
-                    and action in ("manage", "delete")
                 )
                 else ("organization", "group")
             )
@@ -211,8 +207,6 @@ def _build_catalog() -> dict[str, Permission]:
                     "configuration.groups.view",
                     "configuration.resources.view",
                 )
-            if key == "configuration.resources.access_all":
-                dependencies = ()
             catalog[key] = Permission(
                 key,
                 _NAMES.get(key, f"{_VERBS.get(action, action)} {name}"),
@@ -226,7 +220,6 @@ def _build_catalog() -> dict[str, Permission]:
 
 PERMISSIONS = _build_catalog()
 PERMISSION_KEYS = frozenset(PERMISSIONS)
-ORGANIZATION_SCOPE_PERMISSION = "configuration.resources.access_all"
 
 
 def normalize_permissions(values) -> frozenset[str]:
@@ -247,6 +240,7 @@ RESOURCE_PERMISSION_PREFIXES = {
     "restore_plan": "protection.restore_plans",
     "backup_policy": "protection.backup_policies",
     "file_filter_rule": "protection.file_filters",
+    "source_tag": "protection.tags",
     "source_resource": "protection.source_nas",
     "alert_policy": "operations.alert_rules",
     "notification_channel": "operations.notification_channels",
@@ -299,7 +293,6 @@ ORG_CALL_ALIASES = {
     "group.view": "configuration.groups.view",
     "group.members.manage": "configuration.groups.manage_members",
     "group.resources.manage": "configuration.groups.manage_resources",
-    "resources.organization_view": ORGANIZATION_SCOPE_PERMISSION,
 }
 
 

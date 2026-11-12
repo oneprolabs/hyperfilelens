@@ -344,14 +344,13 @@ def filter_task_queryset(request: Any, queryset: QuerySet) -> QuerySet:
     return queryset.filter(id__in=allowed_task_ids)
 
 
-def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
+def _filter_task_sql(queryset: QuerySet, context: Any, *, action="operations.tasks.view") -> QuerySet:
     """Task reads use current grants, including retained resource identities."""
     from django.db.models import BigIntegerField, Case, F, Q, Value, When
     from django.db.models.fields.json import KeyTextTransform
     from django.db.models.functions import Cast
     from apps.task.models import TaskResource
 
-    action = "operations.tasks.view"
     if not context.has_action("backup_config", action):
         return queryset.none()
     fence = getattr(context, "fence_queryset", None)
@@ -359,7 +358,26 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
         return queryset.none()
     queryset = fence(queryset)
     queryset = queryset.filter(organization_id=context.org.pk)
-    if context.has_org_action(action) and context.has_org_action("configuration.resources.access_all"):
+    # Private Chat restore work never becomes organization-wide task data.
+    from apps.lens_bridge.models import LensSessionLink, LensWorkspaceBinding
+    from apps.restore.models import RestoreRecord
+    from apps.task.models import Task
+
+    personal_sources = LensSessionLink.objects.filter(
+        organization_id=context.org.pk, hfl_user_id=context.user.pk,
+    ).values("knowledge_source_id")
+    workspaces = LensWorkspaceBinding.objects.filter(
+        organization_id=context.org.pk, knowledge_source_id__in=personal_sources,
+    ).values("pk")
+    chat_restores = RestoreRecord.objects.filter(
+        organization_id=context.org.pk, purpose=RestoreRecord.Purpose.LENS_WORKSPACE,
+    )
+    queryset = queryset.filter(
+        (~Q(task_type=Task.Type.INSIGHT_WORKSPACE_RESTORE)
+         & ~Q(pk__in=chat_restores.values("task_id")))
+        | Q(pk__in=chat_restores.filter(workspace_binding_id__in=workspaces).values("task_id"))
+    )
+    if context.has_org_action(action) and context.has_organization_resource_scope():
         # History belongs to the organization, even after its live target is
         # removed. The actor/Role fence above still observes revocation.
         return queryset
@@ -398,7 +416,15 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
             When(numeric, then=Cast(F(field), BigIntegerField())),
             default=Value(None), output_field=BigIntegerField(),
         )})
-    condition = Q(pk__in=references.filter(allowed_bindings).order_by().values("task_id"))
+    primary_ids = references.filter(is_primary=True).order_by().values("task_id")
+    allowed_primary = references.filter(allowed_bindings, is_primary=True).order_by().values("task_id")
+    # Never authorize a primary target through an unrelated owned dependency.
+    # Legacy rows without a primary target must have no unauthorized binding.
+    denied_ids = references.filter(recognized).exclude(allowed_bindings).order_by().values("task_id")
+    condition = Q(pk__in=allowed_primary) | (
+        ~Q(pk__in=primary_ids) & ~Q(pk__in=denied_ids)
+        & Q(pk__in=references.filter(allowed_bindings).order_by().values("task_id"))
+    )
     config = history_scope(
         context.resource_model("backup_config").objects.all(), "backup_config", action=action,
     )
@@ -412,5 +438,35 @@ def _filter_task_sql(queryset: QuerySet, context: Any) -> QuerySet:
             request_payload__source_type=source_type,
             _hfl_source_ref__in=allowed.order_by().values("pk"),
         )
-    condition |= ~Q(pk__in=references.filter(recognized).order_by().values("task_id")) & fallback
-    return queryset.filter(condition)
+    condition |= ~Q(pk__in=primary_ids) & ~Q(pk__in=references.filter(recognized).order_by().values("task_id")) & fallback
+    from apps.iam.restore_access import filter_restore_record_scope
+
+    # Restore tasks are projections of the record's plan/configuration, not
+    # independent grants on a shared execution source or repository.
+    records = RestoreRecord.objects.filter(organization_id=context.org.pk)
+    readable_restores = filter_restore_record_scope(
+        records, context, action=action, task_history=True,
+    )
+    from apps.iam.task_projection import numeric_payload_reference
+
+    queryset, plan_ref = numeric_payload_reference(queryset, "restore_plan_id")
+    plans = context.filter_queryset(
+        context.resource_model("restore_plan").objects.all(),
+        "restore_plan", action=action,
+    ).order_by().values("pk")
+    legacy_plan = Q(**{f"{plan_ref}__in": plans})
+    no_legacy_plan = (
+        Q(request_payload__restore_plan_id__isnull=True)
+        | Q(request_payload__restore_plan_id=None)
+    )
+    no_record_link = (
+        Q(request_payload__restore_record_id__isnull=True)
+        | Q(request_payload__restore_record_id=None)
+    )
+    return queryset.filter(
+        Q(pk__in=readable_restores.order_by().values("task_id"))
+        | (
+            ~Q(pk__in=records.order_by().values("task_id")) & no_record_link
+            & (legacy_plan | (no_legacy_plan & condition))
+        )
+    )

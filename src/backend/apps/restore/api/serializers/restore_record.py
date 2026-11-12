@@ -71,6 +71,39 @@ class RestoreRecordSerializer(serializers.ModelSerializer):
     failed_item_count = serializers.SerializerMethodField()
     cancelled_item_count = serializers.SerializerMethodField()
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request is None:
+            return data
+        from apps.iam.restore_access import restore_record_detail_projection
+
+        if "restore_record_detail_ids" not in self.context:
+            records = (
+                self.parent.instance
+                if isinstance(self.parent, serializers.ListSerializer) else [instance]
+            )
+            self.context["restore_record_detail_ids"] = restore_record_detail_projection(
+                request, records,
+            )
+        allowed = self.context["restore_record_detail_ids"]
+        if allowed is None or instance.pk in allowed:
+            return data
+        for field in ("request_payload", "expanded_payload"):
+            data[field] = None
+        for field in ("target_path", "target_display_path", "source_snapshot_uid"):
+            data[field] = ""
+        for field in ("source_ref_id", "target_ref_id", "backup_config_id", "source_snapshot_id"):
+            data[field] = None
+        for item in data["items"]:
+            for field in ("repository_id", "node_task_id", "last_progress_snapshot", "result_payload"):
+                item[field] = None
+            for field in ("kopia_snapshot_id", "source_path", "target_path", "target_display_path",
+                          "error_code", "error_message"):
+                item[field] = ""
+            item["selected_paths"] = []
+        return data
+
     @staticmethod
     def _item_count(obj: RestoreRecord, status: str) -> int:
         return sum(1 for item in obj.items.all() if item.status == status)

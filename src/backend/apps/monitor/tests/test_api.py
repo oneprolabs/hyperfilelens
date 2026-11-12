@@ -23,6 +23,7 @@ class SystemMonitorApiTests(TestCase):
             username="monitor-api@test.local",
             email="monitor-api@test.local",
             password="test-pass",
+            is_staff=True,
         )
         self.org = Organization.objects.create(key="monitor-test-org", name="Monitor Test Org")
         Membership.objects.create(
@@ -36,6 +37,12 @@ class SystemMonitorApiTests(TestCase):
         anon = APIClient()
         resp = anon.get("/api/v1/monitors/system/")
         self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_system_monitor_rejects_ordinary_authenticated_user(self):
+        self.user.is_staff = False
+        self.user.save(update_fields=["is_staff"])
+        resp = self.client.get("/api/v1/monitors/system/")
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_system_monitor_returns_payload(self):
         from apps.monitor.services.interface import collect_and_persist_sample

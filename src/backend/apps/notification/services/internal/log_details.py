@@ -12,12 +12,13 @@ def notification_log_detail(
     alert_record=None,
     policy=None,
     channel=None,
+    resolved=False,
 ) -> dict:
-    if alert_record is None and log.alert_record_id:
+    if not resolved and alert_record is None and log.alert_record_id:
         alert_record = AlertRecord.objects.filter(id=log.alert_record_id).first()
     if channel is None:
         channel = log.channel
-    if policy is None and alert_record and alert_record.policy_id:
+    if not resolved and policy is None and alert_record and alert_record.policy_id:
         policy = AlertPolicy.objects.filter(id=alert_record.policy_id).first()
 
     return {
@@ -63,13 +64,17 @@ def notification_log_detail(
     }
 
 
-def notification_log_details(logs: list[NotificationLog]) -> list[dict]:
+def notification_log_details(logs: list[NotificationLog], *, request=None) -> list[dict]:
     alert_ids = [log.alert_record_id for log in logs if log.alert_record_id]
     channel_ids = [log.channel_id for log in logs]
     alert_records = AlertRecord.objects.filter(id__in=alert_ids)
     alert_map = {record.id: record for record in alert_records}
     policy_ids = [r.policy_id for r in alert_records if r.policy_id]
-    policy_map = {p.id: p for p in AlertPolicy.objects.filter(id__in=policy_ids)}
+    policies = AlertPolicy.objects.filter(id__in=policy_ids)
+    if request is not None:
+        from apps.iam.resource_access import filter_resource_queryset
+        policies = filter_resource_queryset(request, policies, "alert_policy", action="resource.view")
+    policy_map = {p.id: p for p in policies}
     channel_map = {
         ch.id: ch for ch in NotificationChannel.objects.filter(id__in=channel_ids)
     }
@@ -85,6 +90,7 @@ def notification_log_details(logs: list[NotificationLog]) -> list[dict]:
                 alert_record=alert_record,
                 policy=policy,
                 channel=channel_map.get(log.channel_id),
+                resolved=True,
             )
         )
     return results

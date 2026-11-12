@@ -5949,10 +5949,10 @@
       },
       "descriptions": {
         "owner": "Control completo de la organización y sus recursos. Es un rol de organización, no de administrador de plataforma.",
-        "admin": "Administración de miembros, protección, Insights y operaciones a nivel de organización, con acceso a todos sus recursos.",
-        "manager": "Gestiona la gobernanza de la organización. El acceso a recursos depende de la propiedad y de los permisos de grupo.",
-        "operator": "Opera la protección, utiliza Insights y consulta operaciones. Accede a recursos propios y a los autorizados por roles de grupo.",
-        "auditor": "Consulta gobernanza, protección y operaciones de recursos propios o autorizados por grupos sin cambiar la configuración.",
+        "admin": "Administre miembros, protección, Insights y operaciones. El ámbito de recursos se configura al asignar el rol.",
+        "manager": "Gestione la organización. El acceso a los recursos depende del ámbito de la asignación y de los permisos de los grupos.",
+        "operator": "Opere la protección, use Insights y consulte operaciones dentro de los ámbitos asignados.",
+        "auditor": "Consulte información de organización, protección y operaciones dentro de los ámbitos asignados, sin modificar la configuración.",
         "group_admin": "Gestiona miembros y recursos del grupo, no roles de organización, Uso ni ajustes de plataforma.",
         "group_operator": "Opera recursos protegidos y utiliza Insights dentro del ámbito de este grupo.",
         "group_member": "Consulta recursos del grupo y utiliza Insights cuando se permite, sin gestionar protección ni operaciones.",
@@ -6001,7 +6001,6 @@
         "configuration_groups_manage_members": "Gestionar miembros del Grupo",
         "configuration_groups_manage_resources": "Gestionar recursos del Grupo",
         "configuration_resources_view": "Ver Directorio de recursos",
-        "configuration_resources_access_all": "Acceder a todos los recursos de la organización",
         "configuration_resources_change_owner": "Cambiar propietario del recurso",
         "configuration_subscriptions_view": "Ver Uso",
         "configuration_subscriptions_manage": "Gestionar solicitudes de uso",
@@ -6159,7 +6158,6 @@
         "remove": "Quitar",
         "manage_members": "Gestionar miembros",
         "manage_resources": "Gestionar recursos",
-        "access_all": "Acceder a todos los recursos",
         "change_owner": "Cambiar propietario"
       },
       "actionHints": {
@@ -6180,7 +6178,6 @@
         "remove": "Quitar a un miembro de la organización sin eliminar su cuenta ni sus recursos.",
         "manage_members": "Añadir o quitar miembros de un Grupo y asignar sus roles dentro de ese Grupo.",
         "manage_resources": "Añadir o quitar recursos del alcance de un Grupo.",
-        "access_all": "Ampliar el alcance a todos los recursos de la organización. Se necesitan permisos independientes para consultar u operar cada tipo de recurso.",
         "change_owner": "Transferir la propiedad de un recurso sin cambiar su identidad, configuración, datos ni asignaciones a Grupos."
       },
       "selectPermissions": "Seleccionar permisos",
@@ -6188,7 +6185,7 @@
         "configuration_organizations_view": "Consultar los detalles de la organización y el número de miembros.",
         "configuration_members_view": "Consultar los miembros de la organización y sus roles asignados.",
         "configuration_members_manage": "Añadir miembros a la organización y habilitar o deshabilitar su pertenencia.",
-        "configuration_members_assign_role": "Asignar roles a los miembros de la organización. Esto puede cambiar sus permisos en toda la organización.",
+        "configuration_members_assign_role": "Asigne roles a los miembros y configure el ámbito de recursos de cada asignación.",
         "configuration_members_remove": "Quitar miembros de la organización sin eliminar sus cuentas ni sus recursos.",
         "configuration_roles_view": "Consultar los roles y sus conjuntos de permisos.",
         "configuration_roles_manage": "Añadir roles y modificar sus permisos y configuración.",
@@ -6199,8 +6196,7 @@
         "configuration_groups_manage_members": "Añadir o quitar miembros de un grupo y asignar sus roles dentro del grupo.",
         "configuration_groups_manage_resources": "Añadir o quitar recursos del alcance de acceso de un grupo.",
         "configuration_resources_view": "Consultar nombres, tipos, propietarios y otros datos del directorio de recursos.",
-        "configuration_resources_access_all": "Ampliar el alcance a todos los recursos de la organización. Consultarlos u operarlos sigue requiriendo permisos independientes.",
-        "configuration_resources_change_owner": "Transferir la propiedad de un recurso a otro miembro de la organización. Se conservan las asignaciones a grupos.",
+        "configuration_resources_change_owner": "Transfiere la propiedad de los recursos entre miembros aptos de la organización, sin quedar limitado por tu ámbito de recursos de negocio. Se conservan las asignaciones a grupos.",
         "configuration_subscriptions_view": "Consultar el uso de recursos, los límites de cuota y el historial de solicitudes de cuota de la organización.",
         "configuration_subscriptions_manage": "Enviar y cancelar solicitudes de aumento de cuota de la organización.",
         "protection_source_hosts_view": "Consultar los detalles y el estado de los hosts de origen.",
@@ -6374,7 +6370,8 @@
       "backupPolicy": "Política de copia de seguridad",
       "fileFilter": "Filtro de archivos",
       "alertRule": "Regla de alerta",
-      "notificationChannel": "Canal de notificación"
+      "notificationChannel": "Canal de notificación",
+      "tag": "Etiqueta"
     },
     "nav": {
       "organizationHub": "Organización",
@@ -6689,7 +6686,7 @@
       "add": "Añadir miembro",
       "email": "Correo electrónico",
       "actions": "Acciones",
-      "editRole": "Cambiar rol de organización",
+      "editRole": "Editar acceso",
       "deactivate": "Desactivar",
       "activate": "Activar",
       "remove": "Quitar de la organización",
@@ -6700,7 +6697,7 @@
       "saved": "Membresía de organización actualizada.",
       "operationFailed": "No se pudo actualizar la membresía de organización.",
       "addNotice": "Añade un miembro por correo electrónico. Si no existe una cuenta, se crea una cuenta normal sin otra organización. Se aplica la cuota de miembros.",
-      "organizationRoleNotice": "Solo cambia permisos de organización. Los roles de grupo se gestionan en Grupos. Aquí no se puede cambiar al propietario ni la membresía propia.",
+      "organizationRoleNotice": "Las asignaciones a grupos se gestionan en Grupos. No puede cambiar al propietario ni su propia asignación aquí.",
       "deactivateConfirm": "¿Desactivar a \"{name}\" en esta organización?",
       "deactivateWarning": "Se bloquea el acceso a la organización y se conservan los grupos para una activación posterior. No cambia la cuenta, los recursos, los datos ni otras organizaciones.",
       "activateConfirm": "¿Activar a \"{name}\" en esta organización?",
@@ -6711,10 +6708,14 @@
       "basicInformation": "Información básica",
       "saveChanges": "Guardar cambios",
       "addPageDescription": "Añade un miembro a esta organización y asígnale un rol.",
-      "editPageDescription": "Actualiza el rol de organización de este miembro sin cambiar sus asignaciones a Grupos.",
+      "editPageDescription": "Actualice el rol de organización y su ámbito de recursos. Las asignaciones a grupos no cambian.",
       "general": "General",
       "group": "Grupo",
-      "noGroupAssignments": "No pertenece a ningún grupo."
+      "noGroupAssignments": "No pertenece a ningún grupo.",
+      "resourceScope": "Ámbito de recursos de trabajo",
+      "ownedResources": "Recursos propios",
+      "allOrganizationResources": "Todos los recursos de la organización",
+      "resourceScopeNotice": "Se aplica al acceso a recursos de negocio, no a la administración de la organización ni a los cambios de propietario. Los permisos de los grupos se aplican por separado."
     },
     "governanceActions": {
       "organizationChanged": "La organización ha cambiado. Cierra este diálogo y actualiza la página antes de volver a intentarlo.",

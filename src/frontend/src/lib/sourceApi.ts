@@ -259,6 +259,8 @@ export type SourceTag = {
   color: SourceTagColor
   created_at?: string
   source_count?: number
+  can_manage?: boolean
+  can_delete?: boolean
 }
 
 export type SourceTagInput = Pick<SourceTag, 'name' | 'description' | 'color'>
@@ -268,6 +270,14 @@ export async function listSourceTags(init?: RequestInit): Promise<SourceTag[]> {
     await api<unknown>(`${tagsBase}/`, { ...init, headers: orgHeaders() }),
   )
   return data.results
+}
+
+export async function listSourceTagPage(page: number, pageSize: number, init?: RequestInit): Promise<{
+  results: SourceTag[]; count: number; can_create: boolean
+}> {
+  return unwrapApiPayload(await api<unknown>(`${tagsBase}/?page=${page}&page_size=${pageSize}`, {
+    ...init, headers: orgHeaders(),
+  }))
 }
 
 export async function listSourceTagFilterOptions(init?: RequestInit): Promise<{

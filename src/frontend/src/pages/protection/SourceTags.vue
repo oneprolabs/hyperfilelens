@@ -13,7 +13,7 @@ import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerW
 import { apiErrorMessage } from '../../lib/api'
 import { formatAppDateTime } from '../../lib/dateTime'
 import { notifyError, notifySuccess } from '../../lib/notify'
-import { createSourceTag, deleteSourceTag, listSourceTags, listSourcesForTag, updateSourceTag, type SourceTag, type SourceTagInput, type TaggedSource } from '../../lib/sourceApi'
+import { createSourceTag, deleteSourceTag, listSourceTagPage, listSourcesForTag, updateSourceTag, type SourceTag, type SourceTagInput, type TaggedSource } from '../../lib/sourceApi'
 import { SOURCE_TAG_COLORS } from '../../lib/sourceTagColor'
 import { sourceTagNameIssue } from '../../lib/sourceTagName'
 
@@ -21,6 +21,10 @@ const { t } = useI18n()
 const menus = useProtectionSideNav()
 const { drawerSize } = useResponsiveDrawerWidth(3)
 const rows = ref<SourceTag[]>([])
+const total = ref(0)
+const canCreate = ref(false)
+let listRequest = 0
+let listController: AbortController | null = null
 const loading = ref(false)
 const saving = ref(false)
 const error = ref(false)
@@ -29,8 +33,9 @@ const pageSize = ref(30)
 const tableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const selectedTags = ref<SourceTag[]>([])
 const moreActionsOpen = ref(false)
-const canManageSelected = computed(() => selectedTags.value.length === 1 && !loading.value && !saving.value)
-const visibleRows = computed(() => rows.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+const canManageSelected = computed(() => selectedTags.value.length === 1 && selectedTags.value[0].can_manage !== false && !loading.value && !saving.value)
+const canDeleteSelected = computed(() => selectedTags.value.length === 1 && selectedTags.value[0].can_delete !== false && !loading.value && !saving.value)
+const visibleRows = computed(() => rows.value)
 const dialogOpen = ref(false)
 const editingTag = ref<SourceTag | null>(null)
 const form = ref<SourceTagInput>({ name: '', description: '', color: 'neutral' })
@@ -112,36 +117,47 @@ watch(usageOpen, (open) => {
     usageLoading.value = false
   }
 })
-onUnmounted(() => usageController?.abort())
+onUnmounted(() => { usageController?.abort(); listController?.abort() })
 
 function clearSelection() {
   selectedTags.value = []
   tableRef.value?.clearSelection()
 }
 
-watch(page, clearSelection)
+watch(page, () => { clearSelection(); void load() })
 watch(pageSize, () => {
+  const firstPage = page.value === 1
   page.value = 1
   clearSelection()
+  if (firstPage) void load()
 })
 
 async function load() {
+  const request = ++listRequest
+  listController?.abort()
+  const controller = new AbortController()
+  listController = controller
   loading.value = true
   error.value = false
   clearSelection()
   try {
-    rows.value = await listSourceTags()
-    page.value = Math.min(page.value, Math.max(1, Math.ceil(rows.value.length / pageSize.value)))
+    const response = await listSourceTagPage(page.value, pageSize.value, { signal: controller.signal })
+    if (request !== listRequest) return
+    rows.value = response.results
+    total.value = response.count
+    canCreate.value = response.can_create
+    page.value = Math.min(page.value, Math.max(1, Math.ceil(total.value / pageSize.value)))
   } catch (e) {
+    if (request !== listRequest || controller.signal.aborted) return
     error.value = true
     notifyError(apiErrorMessage(e, t('errors.pageLoad.loadFailed.title')))
   } finally {
-    loading.value = false
+    if (request === listRequest) loading.value = false
   }
 }
 
 function openTagDialog(tag?: SourceTag) {
-  if (saving.value || loading.value) return
+  if (saving.value || loading.value || (tag ? tag.can_manage === false : !canCreate.value)) return
   editingTag.value = tag || null
   form.value = tag
     ? { name: tag.name, description: tag.description, color: tag.color }
@@ -152,7 +168,7 @@ function openTagDialog(tag?: SourceTag) {
 }
 
 function validateName(): void {
-  const issue = sourceTagNameIssue(form.value.name, rows.value, editingTag.value?.id)
+  const issue = sourceTagNameIssue(form.value.name, [], editingTag.value?.id)
   nameError.value = issue ? t(`protection.tags.nameIssues.${issue}`) : ''
 }
 
@@ -229,7 +245,7 @@ onMounted(load)
         <template #toolbar>
           <ElButton
             type="primary"
-            :disabled="loading || saving"
+            :disabled="loading || saving || !canCreate"
             @click="openTagDialog()"
           >
             <Plus :size="16" />
@@ -262,8 +278,8 @@ onMounted(load)
                 <ElDropdownItem
                   divided
                   class="el-dropdown-menu__item--danger"
-                  :disabled="!canManageSelected"
-                  @click="canManageSelected && remove(selectedTags[0])"
+                  :disabled="!canDeleteSelected"
+                  @click="canDeleteSelected && remove(selectedTags[0])"
                 >
                   <span class="el-dropdown-menu__item-content">
                     <Trash2 :size="14" class="shrink-0" />
@@ -368,7 +384,7 @@ onMounted(load)
             v-model:current-page="page"
             v-model:page-size="pageSize"
             class="hfl-list-footer__pagination"
-            :total="rows.length"
+            :total="total"
           />
         </template>
       </HflTablePanel>

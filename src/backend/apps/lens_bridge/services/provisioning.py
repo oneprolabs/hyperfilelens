@@ -1542,6 +1542,7 @@ def browse_gateway_directory(
     gateway_id: int,
     path: str = "",
     expected_scope: str | None = None,
+    requesting_user=None,
     include_platform: bool = False,
     limit: int = 200,
     wait_timeout_seconds: int = 15,
@@ -1619,6 +1620,25 @@ def browse_gateway_directory(
             {"path": "Path must be under the gateway workspace root."}
         ) from exc
 
+    # Managed Chat workspaces remain personal even when the Gateway is shared.
+    visible_workspaces = None
+    if requesting_user is not None:
+        from apps.lens_bridge.models import LensWorkspaceBinding
+        from apps.lens_bridge.services.insight_access import user_knowledge_sources
+        from rest_framework.exceptions import PermissionDenied
+        from apps.lens_bridge.models import LensKnowledgeSource
+        import posixpath
+
+        allowed_sources = user_knowledge_sources(
+            LensKnowledgeSource.objects.all(), organization=org, user=requesting_user,
+        ).values("pk")
+        visible_workspaces = LensWorkspaceBinding.objects.filter(
+            organization=org, gateway_link=link, knowledge_source_id__in=allowed_sources,
+        ).exclude(relative_path="")
+        relative = posixpath.relpath(browse_path, normalized_root).split("/")[0]
+        if relative.startswith("hfl-ks-") and not visible_workspaces.filter(relative_path=relative).exists():
+            raise PermissionDenied("Workspace access is not granted.")
+
     outcome = run_agent_task_sync(
         organization_id=owner_id(execution_org),
         **({"platform": True} if execution_org is None else {}),
@@ -1672,15 +1692,21 @@ def browse_gateway_directory(
     except GatewayPathError:
         parent_path = normalized_root
 
+    entries = _normalize_gateway_browse_entries(result.get("entries"), workspace_root=normalized_root)
+    if visible_workspaces is not None:
+        managed_names = {str(entry["path"]).removeprefix(normalized_root.rstrip("/") + "/").split("/")[0]
+                         for entry in entries}
+        allowed_names = set(visible_workspaces.filter(relative_path__in=managed_names).values_list("relative_path", flat=True))
+        entries = [entry for entry in entries if not (
+            (name := str(entry["path"]).removeprefix(normalized_root.rstrip("/") + "/").split("/")[0]).startswith("hfl-ks-")
+        ) or name in allowed_names]
+
     return {
         "gateway_id": gateway_id,
         "path": listed_path,
         "root_path": normalized_root,
         "parent_path": parent_path,
-        "entries": _normalize_gateway_browse_entries(
-            result.get("entries"),
-            workspace_root=normalized_root,
-        ),
+        "entries": entries,
         "has_more": bool(result.get("has_more")),
         "next_cursor": str(result.get("next_cursor") or ""),
     }
