@@ -171,11 +171,14 @@ def chat_queue_ahead(
     return max(0, active + position - 1)
 
 
-def chat_workload_payload(*, gateway_link: LensGatewayLink) -> dict[str, Any]:
+def chat_workload_payload(*, gateway_link: LensGatewayLink, user=None) -> dict[str, Any]:
     from apps.lens_bridge.services.gateway_ownership import external_gateway_scope
 
     active_count = active_chat_prepare_count(gateway_link_id=gateway_link.id)
     admitted = _admitted_sessions_without_slot(gateway_link.id)
+    if user is not None:
+        active_count = _occupied_slots(gateway_link.id).filter(session_link__hfl_user=user).count()
+        admitted = admitted.filter(hfl_user=user, organization_id=gateway_link.organization_id)
     oldest_at = (
         admitted.order_by("queue_order_at", "id")
         .values_list("queue_order_at", flat=True)

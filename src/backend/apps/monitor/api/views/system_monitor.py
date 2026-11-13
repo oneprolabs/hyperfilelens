@@ -1,10 +1,17 @@
 """REST: control-plane system monitor dashboard."""
 
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
+
+from common.platform_authz import MONITORING_HOST_MONITORING_VIEW, has_platform_permission
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.monitor.services.interface import build_system_monitor_payload, resolve_monitor_time_range
+
+
+class CanViewControlPlaneMonitor(BasePermission):
+    def has_permission(self, request, view):
+        return has_platform_permission(request.user, MONITORING_HOST_MONITORING_VIEW)
 
 
 class SystemMonitorView(APIView):
@@ -15,7 +22,7 @@ class SystemMonitorView(APIView):
     Query: hours (default 24), or start_at + end_at (ISO datetimes).
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, CanViewControlPlaneMonitor]
 
     def get(self, request):
         since, until, error = resolve_monitor_time_range(

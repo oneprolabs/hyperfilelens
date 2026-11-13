@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from django.utils import timezone
 
-from apps.alert.constants import AlertStatus
+from apps.alert.constants import AlertStatus, AlertType
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.alert.services.internal.fingerprint import build_fingerprint
 from apps.alert.services.internal.notifier import send_notification, send_resolved_notification
@@ -103,10 +103,26 @@ def fire_alert(
     current_value=None,
     alert_key: str = "default",
     metadata=None,
-) -> AlertRecord:
+    audit_log_id: int | None = None,
+) -> AlertRecord | None:
     resource_id = getattr(resource, "id", None)
     if resource_id is not None:
         resource_id = str(resource_id)
+    resource_type = policy.resource_type or ""
+    metadata = dict(metadata or {})
+    # Only the audit writer's explicit argument can attach persisted evidence.
+    # Arbitrary event metadata must never act as a deleted-resource bypass.
+    metadata.pop("audit_log_id", None)
+    if policy.type == AlertType.EVENT:
+        resource_type = metadata.get("resource_type") or resource_type
+        if audit_log_id is not None:
+            metadata["audit_log_id"] = audit_log_id
+    if policy.organization_id is not None:
+        from common.extension_spi import get_authz_provider
+        gate = getattr(get_authz_provider(), "can_evaluate_alert_target", None)
+        event_args = {"audit_log_id": audit_log_id} if audit_log_id is not None and policy.type == AlertType.EVENT else {}
+        if callable(gate) and not gate(policy, resource_type, resource_id, **event_args):
+            return None
     resource_name = getattr(resource, "name", None) or getattr(resource, "hostname", None) or ""
     fingerprint = build_fingerprint(policy, resource_id, alert_key)
     now = timezone.now()
@@ -130,6 +146,8 @@ def fire_alert(
 
     if alert:
         previous_status = alert.status
+        alert.resource_type = resource_type
+        alert.resource_name = resource_name
         alert.status = AlertStatus.FIRING
         alert.last_triggered_at = now
         if current_value is not None:
@@ -147,6 +165,8 @@ def fire_alert(
         alert.save(
             update_fields=[
                 "status",
+                "resource_type",
+                "resource_name",
                 "last_triggered_at",
                 "current_value",
                 "threshold_value",
@@ -176,7 +196,7 @@ def fire_alert(
         type=policy.type,
         severity=policy.severity,
         status=AlertStatus.FIRING,
-        resource_type=policy.resource_type or "",
+        resource_type=resource_type,
         resource_id=resource_id or "",
         resource_name=str(resource_name or ""),
         title=title or policy.name,

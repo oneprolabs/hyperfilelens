@@ -8,7 +8,8 @@ from rest_framework.response import Response
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.audit.services.interface import write_audit_log
 from apps.iam.resource_api import GovernedResourceMixin
-from apps.iam.resource_access import filter_resource_queryset, filter_queryset_by_resource_field
+from apps.iam.notification_access import filter_notification_logs
+from apps.iam.resource_access import filter_resource_queryset
 from apps.iam.permissions_org import IsOrgStaffReader, IsOrgWriter
 
 from apps.notification.api.pagination import NotificationPagination
@@ -124,9 +125,8 @@ class _NotificationChannelViewSetBase(viewsets.ModelViewSet):
                     continue
 
         last_delivery_by_channel: dict[int, dict] = {}
-        logs = filter_queryset_by_resource_field(
+        logs = filter_notification_logs(
             self.request, NotificationLog.objects.filter(organization_id=org_id, channel_id__in=ids),
-            "notification_channel", "channel_id", action="operations.notification_records.view",
         ).only("channel_id", "status", "sent_at").order_by("-sent_at", "-id")
         for log in logs:
             channel_id = int(log.channel_id)
@@ -269,9 +269,8 @@ class _NotificationChannelViewSetBase(viewsets.ModelViewSet):
             )
             if channel_id_str in [str(x) for x in (p.notification_channel_ids or [])]
         ]
-        all_logs = filter_queryset_by_resource_field(
+        all_logs = filter_notification_logs(
             request, NotificationLog.objects.filter(organization=channel.organization, channel_id=channel.id),
-            "notification_channel", "channel_id", action="operations.notification_records.view",
         ).order_by("-sent_at")
         recent_logs = list(all_logs[:20])
         success_count = all_logs.filter(status="success").count()
@@ -322,7 +321,7 @@ class _NotificationChannelViewSetBase(viewsets.ModelViewSet):
                     }
                     for r in recent_records
                 ],
-                "notification_logs": notification_log_details(recent_logs),
+                "notification_logs": notification_log_details(recent_logs, request=request),
                 "stats": {
                     "policies_count": len(policies) if may_read_policies else None,
                     "alerts_count": (

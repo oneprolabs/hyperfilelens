@@ -7,7 +7,7 @@ from apps.protection.models import BackupSourceSnapshot
 from common.extension_spi import get_authz_provider
 
 
-def filter_knowledge_sources(request, queryset, *, action):
+def filter_knowledge_sources(request, queryset, *, action, context=None):
     """Authorize artifact lineage before count/page, including private Chats."""
     from django.db.models import Exists, F, OuterRef, Q, Subquery
     from apps.iam.query_authorization import request_authorization
@@ -19,7 +19,7 @@ def filter_knowledge_sources(request, queryset, *, action):
         getattr(request, "hfl_support_readonly", False) and request.method in ("GET", "HEAD", "OPTIONS")
     ):
         return queryset
-    context = request_authorization(request, fresh=request.method not in ("GET", "HEAD", "OPTIONS"))
+    context = context or request_authorization(request, fresh=request.method not in ("GET", "HEAD", "OPTIONS"))
     if context is None or not context.valid:
         return queryset.none()
     read = request.method in ("GET", "HEAD", "OPTIONS")
@@ -151,3 +151,19 @@ def assert_insight_access(
             raise PermissionDenied(
                 "The selected data or Gateway is outside your authorized resource range."
             )
+
+
+def user_knowledge_sources(queryset, *, organization, user, action="insights.chats.view"):
+    """Apply the same personal/lineage rules outside an HTTP view."""
+    from types import SimpleNamespace
+
+    provider = get_authz_provider()
+    if provider is None:
+        return queryset.filter(organization=organization)
+    factory = getattr(provider, "authorization_context", None)
+    if not callable(factory) or user is None:
+        return queryset.none()
+    return filter_knowledge_sources(
+        SimpleNamespace(user=user, method="GET"), queryset, action=action,
+        context=factory(user, organization.key),
+    )

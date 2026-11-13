@@ -19,7 +19,9 @@ from apps.iam.services.member_management import (
     assert_eligible_member_account,
     assert_membership_management,
 )
-from apps.iam.services.membership_service import create_org_membership
+from apps.iam.services.membership_service import (
+    authoritative_resource_scope, create_org_membership,
+)
 
 
 def lock_identity_provisioning() -> None:
@@ -45,6 +47,7 @@ def onboard_member(
     user_id: int | None,
     role: str,
     is_active: bool = True,
+    resource_scope: str | None = None,
 ) -> OnboardingResult:
     """Only brand-new ordinary accounts receive one-time credentials."""
     from apps.iam.permissions_org import get_membership
@@ -119,6 +122,7 @@ def onboard_member(
         user=account,
         role=role,
         is_active=is_active,
+        resource_scope=resource_scope,
     )
     # No password, request body or credential material is ever passed to audit.
     audit_services.write_audit_log_from_request(
@@ -133,6 +137,7 @@ def onboard_member(
             "after": {
                 "user_id": account.pk,
                 "role": role,
+                "resource_scope": authoritative_resource_scope(membership),
                 "is_active": membership.is_active,
             },
         },

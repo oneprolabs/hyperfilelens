@@ -53,6 +53,10 @@ def _channel_for_delivery(channel: NotificationChannel) -> NotificationChannel:
 def attempt_delivery(*, delivery: NotificationDelivery) -> DeliveryAttemptResult:
     channel = delivery.channel
     try:
+        from apps.alert.services.internal.delivery_access import can_deliver_notification
+
+        if not can_deliver_notification(delivery):
+            raise ChannelError("Alert delivery is no longer authorized.")
         adapter = _adapter_for(channel.channel_type)
         adapter.send(channel=_channel_for_delivery(channel), delivery=delivery)
         delivery.status = NotificationDelivery.Status.SENT

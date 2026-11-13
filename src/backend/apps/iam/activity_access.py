@@ -43,11 +43,7 @@ def filter_activity_queryset(request, queryset, *, actor_field=None, action=None
         return queryset.none()
     if provider.has_org_action(
         request.user, org_key, action
-    ) and provider.has_org_action(
-        request.user,
-        org_key,
-        "configuration.resources.access_all",
-    ):
+    ) and provider.resource_scope_for_role(request.user, org_key) == "organization":
         return queryset
     fields = ["pk", "resource_type", "resource_id"]
     if actor_field:
@@ -61,6 +57,8 @@ def filter_activity_queryset(request, queryset, *, actor_field=None, action=None
     for row in rows:
         if (
             actor_field and row[actor_field] == request.user.id
+            and row["resource_type"] == "user"
+            and str(row["resource_id"]) == str(request.user.pk)
             and provider.has_org_action(request.user, org_key, action)
         ):
             own_records.add(row["pk"])
@@ -100,10 +98,6 @@ def _filter_activity_sql(request, queryset, context, actor_field, action):
         return queryset.none()
     queryset = fence(queryset)
     queryset = queryset.filter(organization_id=context.org.pk)
-    if context.has_org_action(action) and context.has_org_action(
-        "configuration.resources.access_all",
-    ):
-        return queryset
     numeric = Q(resource_id__regex=r"^[0-9]{1,18}$") | (
         Q(resource_id__regex=r"^[0-9]{19}$") & Q(resource_id__lte="9223372036854775807")
     )
@@ -111,11 +105,16 @@ def _filter_activity_sql(request, queryset, context, actor_field, action):
         When(numeric, then=Cast(F("resource_id"), BigIntegerField())),
         default=Value(None), output_field=BigIntegerField(),
     ))
+    task_condition = _task_activity_condition(context, action)
+    if context.has_org_action(action) and context.has_organization_resource_scope():
+        # Organization scope does not include someone else's personal Chat
+        # restore tasks, including errors copied into their activity records.
+        return queryset.filter(~Q(resource_type="task") | task_condition)
     condition = Q(pk__in=[])
     if actor_field and context.has_org_action(action):
-        condition |= Q(**{actor_field: request.user.pk})
+        condition |= Q(**{actor_field: request.user.pk}, resource_type="user", resource_id=str(request.user.pk))
     kinds = ("node", "repository", "source_resource", "backup_config", "restore_plan",
-             "backup_policy", "file_filter_rule", "alert_policy", "notification_channel")
+             "backup_policy", "file_filter_rule", "alert_policy", "notification_channel", "source_tag")
     for kind in kinds:
         names = [kind, *(alias for alias, actual in ALIASES.items() if actual == kind)]
         model = context.resource_model(kind)
@@ -128,4 +127,30 @@ def _filter_activity_sql(request, queryset, context, actor_field, action):
         else:
             allowed = allowed.filter(pk=OuterRef("_hfl_record_ref"))
         condition |= Q(resource_type__in=names) & Q(Exists(allowed))
-    return queryset.filter(condition)
+    deleted_scope = getattr(get_authz_provider(), "filter_deleted_alert_records", None)
+    if callable(deleted_scope):
+        deleted = deleted_scope(queryset, context, action=action)
+        condition |= Q(pk__in=deleted.order_by().values("pk"))
+    return queryset.filter(condition | task_condition)
+
+
+def _task_activity_condition(context, action):
+    """Authorize raw Task-derived content, including organization-wide reads."""
+    from django.db.models import CharField, Exists, OuterRef, Q
+    from django.db.models.functions import Cast
+
+    from apps.iam.resource_access import _filter_task_sql
+    from apps.iam.task_projection import filter_task_detail_queryset
+    from apps.task.models import Task
+
+    # Activity contains raw messages/metadata, not the safe task status
+    # projection. Exclude unsafe rows before search, statistics and pagination.
+    tasks = filter_task_detail_queryset(
+        _filter_task_sql(Task.objects.all(), context, action=action),
+        context, action=action,
+    ).annotate(
+        _hfl_task_uuid=Cast("task_uuid", CharField()),
+    )
+    return Q(resource_type="task") & Q(Exists(tasks.filter(
+        Q(pk=OuterRef("_hfl_record_ref")) | Q(_hfl_task_uuid=OuterRef("resource_id")),
+    )))

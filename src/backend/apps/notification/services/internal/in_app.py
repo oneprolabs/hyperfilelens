@@ -33,6 +33,21 @@ def publish_to_org_members(
             user__is_active=True,
         ).values_list("user_id", flat=True)
     )
+    from common.extension_spi import get_authz_provider
+    if get_authz_provider() is not None and source_type in ("alert", "node"):
+        from types import SimpleNamespace
+        from apps.iam.models import Organization
+        from django.contrib.auth import get_user_model
+        from apps.iam.notification_inbox_access import notification_source_ids
+        org = Organization.objects.filter(pk=organization_id, is_active=True).first()
+        if org is None:
+            return 0
+        allowed = []
+        for user in get_user_model().objects.filter(pk__in=user_ids).iterator(chunk_size=500):
+            request = SimpleNamespace(user=user, headers={"X-Org-Key": org.key}, query_params={}, method="GET", path="")
+            if notification_source_ids(request, source_type).filter(_inbox_ref=str(source_id)).exists():
+                allowed.append(user.pk)
+        user_ids = allowed
     if not user_ids:
         return 0
 

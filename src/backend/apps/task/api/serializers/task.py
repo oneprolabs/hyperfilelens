@@ -131,7 +131,33 @@ class TaskSerializer(serializers.ModelSerializer):
         return task_error_contract(obj, obj.resources.all())
 
     def to_representation(self, instance):
-        return sanitize_task_detail(super().to_representation(instance))
+        data = sanitize_task_detail(super().to_representation(instance))
+        request = self.context.get("request")
+        if request is None:
+            return data
+        from apps.iam.task_projection import task_detail_projection, _reference
+        if "task_projection" not in self.context:
+            records = self.parent.instance if isinstance(self.parent, serializers.ListSerializer) else [instance]
+            self.context["task_projection"] = task_detail_projection(request, records)
+        projection = self.context["task_projection"]
+        if projection is None or projection[instance.pk]["details"]:
+            return data
+        visible = projection[instance.pk]["refs"]
+        data["resources"] = [TaskResourceSerializer(row).data for row in instance.resources.all() if _reference(row) in visible]
+        data["primary_resource"] = next((TaskResourceSerializer(row).data for row in instance.resources.all()
+                                         if row.is_primary and _reference(row) in visible), None)
+        for field in ("request_payload", "result_payload", "error_details", "transfer_progress",
+                      "repository_owner", "repository_target", "repository_cleanup", "repository_cancellation"):
+            data[field] = None
+        for field in ("steps", "recent_events", "dependencies", "execution_history"):
+            data[field] = []
+        data["error_message"] = ""
+        data["display_name"] = instance.task_type
+        data["current_step"] = ""
+        data["replaces_task_uuid"] = None
+        data["replacement_task_uuid"] = None
+        data["execution_history_next_cursor"] = None
+        return data
 
     resources = TaskResourceSerializer(many=True, read_only=True)
     steps = TaskStepSerializer(many=True, read_only=True)
@@ -145,7 +171,37 @@ class TaskSerializer(serializers.ModelSerializer):
     repository_cancellation = serializers.SerializerMethodField()
     replaces_task_uuid = serializers.SerializerMethodField()
     replacement_task_uuid = serializers.SerializerMethodField()
-    dependencies = TaskDependencySerializer(many=True, read_only=True)
+    dependencies = serializers.SerializerMethodField()
+
+    def get_dependencies(self, obj):
+        request = self.context.get("request")
+        if request is None:
+            return TaskDependencySerializer(obj.dependencies.all(), many=True).data
+        from apps.iam.task_dependencies import task_dependency_projection
+
+        if "task_dependency_projection" not in self.context:
+            records = (
+                self.parent.instance
+                if isinstance(self.parent, serializers.ListSerializer) else [obj]
+            )
+            self.context["task_dependency_projection"] = task_dependency_projection(
+                request, records,
+            )
+        projection = self.context["task_dependency_projection"]
+        if projection is None:
+            return TaskDependencySerializer(obj.dependencies.all(), many=True).data
+        results = []
+        for row, redact in projection.get(obj.pk, []):
+            data = dict(TaskDependencySerializer(row).data)
+            if redact:
+                data.update(
+                    blocking_task_uuid=None, blocking_task_status=None,
+                    reference_id="", reference_task_type="",
+                    detail="Waiting for a prerequisite operation to finish.",
+                )
+            results.append(data)
+        return results
+
     actions = serializers.SerializerMethodField()
 
     class Meta:

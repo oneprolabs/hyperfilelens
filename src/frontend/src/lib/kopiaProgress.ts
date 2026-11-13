@@ -116,7 +116,7 @@ export type TaskRuntimePayload = {
   finished_at?: string | null
   progress?: number
   transfer_progress?: TransferProgress | null
-  kopia_progress?: KopiaProgressPayload
+  kopia_progress?: KopiaProgressPayload | null
 }
 
 export type KopiaProgressPayload = {

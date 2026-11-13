@@ -6,8 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.permissions_org import IsOrgReader
-from apps.iam.resource_access import filter_queryset_by_resource_field
-from common.extension_spi import get_authz_provider
+from apps.iam.notification_access import filter_notification_logs
 
 from apps.notification.api.pagination import NotificationPagination
 from apps.notification.api.views._org import require_org
@@ -56,39 +55,20 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(sent_at__gte=start)
         if end:
             qs = qs.filter(sent_at__lte=end)
-        provider = get_authz_provider()
-        if (
-            provider is not None
-            and provider.has_org_action(
-                self.request.user,
-                org.key,
-                "configuration.resources.access_all",
-            )
-            and provider.has_org_action(
-                self.request.user, org.key, "operations.notification_records.view"
-            )
-        ):
-            return qs
-        return filter_queryset_by_resource_field(
-            self.request,
-            qs,
-            "notification_channel",
-            "channel_id",
-            action="operations.notification_records.view",
-        )
+        return filter_notification_logs(self.request, qs)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
         logs = list(page if page is not None else queryset)
-        data = notification_log_details(logs)
+        data = notification_log_details(logs, request=request)
         if page is not None:
             return self.get_paginated_response(data)
         return Response(data)
 
     def retrieve(self, request, *args, **kwargs):
         log = self.get_object()
-        return Response(notification_log_details([log])[0])
+        return Response(notification_log_details([log], request=request)[0])
 
     @action(detail=False, methods=["get"])
     def stats(self, request):
@@ -109,6 +89,6 @@ class NotificationLogViewSet(viewsets.ReadOnlyModelViewSet):
                 "channels": NotificationChannel.objects.filter(
                     id__in=channel_ids
                 ).count(),
-                "recent_failed": notification_log_details(list(recent_failed)),
+                "recent_failed": notification_log_details(list(recent_failed), request=request),
             }
         )

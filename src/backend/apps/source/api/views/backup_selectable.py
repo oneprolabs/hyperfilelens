@@ -240,6 +240,7 @@ def _filter_selectable_results(request, results: list[dict], *, configuration_sc
     assignments = SourceTagAssignment.objects.filter(
         organization_id=require_org(request).id,
         tag__organization_id=require_org(request).id,
+        tag_id__in=filter_resource_queryset(request, SourceTag.objects.all(), "source_tag", action="resource.view").values("pk"),
     ).filter(
         Q(source_kind="agent", ref_id__in=kinds["agent"])
         | Q(source_kind="nas", ref_id__in=kinds["nas"])
@@ -389,7 +390,8 @@ class BackupSelectableListView(ScopedSelectableView):
                 from rest_framework.exceptions import PermissionDenied
 
                 raise PermissionDenied("Source viewing permission is required for tag filters.")
-        if tag_ids and SourceTag.objects.filter(organization_id=org.id, id__in=tag_ids).count() != len(tag_ids):
+        visible_tags = filter_resource_queryset(request, SourceTag.objects.filter(organization=org), "source_tag", action="resource.view")
+        if tag_ids and visible_tags.filter(id__in=tag_ids).count() != len(tag_ids):
             raise ValidationError({"tag_ids": "Unknown tag."})
         visible_tag_sources = None
         if (tag_ids or untagged) and context is None:
@@ -513,6 +515,7 @@ class BackupSelectableListView(ScopedSelectableView):
             tag_ids=tag_ids,
             untagged=untagged,
             allowed_source_ids=visible_tag_sources,
+            visible_tag_ids=visible_tags.values("pk"),
             expand=expand,
             config_scope=config_scope,
         )

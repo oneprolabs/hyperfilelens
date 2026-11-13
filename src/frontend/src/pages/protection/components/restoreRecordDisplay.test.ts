@@ -39,6 +39,25 @@ function record(overrides: Partial<RestoreRecord> = {}): RestoreRecord {
 }
 
 describe('restore record display', () => {
+  it('keeps redacted restore status usable without raw paths or payloads', () => {
+    const redacted = record({
+      source_ref_id: null, target_ref_id: null, source_snapshot_id: null,
+      source_snapshot_uid: '', target_path: '', request_payload: null, expanded_payload: null,
+      items: [{
+        ...item, repository_id: null, result_payload: null,
+        source_path: '', selected_paths: [], target_path: '', status: 'failed',
+        error_code: '', error_message: '',
+      }],
+    })
+    const t = (key: string) => key
+    expect(restoreRecordTargetDisplayPath(redacted)).toBe('—')
+    expect(restoreRecordPathMappings(redacted)[0].sourcePath).toBe('—')
+    expect(restoreRecordItemDetail(t, redacted.items[0])).toBeNull()
+    expect(restoreRecordRuntimeMetricParts(t, {
+      progress: 25, transfer_progress: null, kopia_progress: null,
+    })).toEqual([])
+  })
+
   it.each(['pending', 'success', 'failed', 'cancelled', 'timeout', ''])(
     'shows a status tag instead of progress for %s',
     (status) => {

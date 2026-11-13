@@ -26,6 +26,8 @@ def _choices(choice_cls):
 
 
 class MetadataView(APIView):
+    governance_read_action = "operations.alert_rules.view"
+
     """Static alert catalogs are available to any authenticated user.
 
     Admin Console operators often have no organization membership, so org-reader
@@ -48,7 +50,7 @@ class MetadataView(APIView):
                 return Response({"detail": "Forbidden."}, status=403)
             org = require_org(request)
             resource_type = request.query_params.get("resource_type")
-            return Response(organization_resource_options(org, resource_type))
+            return Response(organization_resource_options(org, resource_type, request=request))
         if kind == "task-types":
             return Response(TASK_TYPES)
         if kind == "event-types":
@@ -75,9 +77,10 @@ class MetadataView(APIView):
 
 
 class MetadataResourcesView(APIView):
+    governance_read_action = "operations.alert_rules.view"
     permission_classes = [IsAuthenticated, IsOrgReader]
 
     def get(self, request):
         org = require_org(request)
         resource_type = request.query_params.get("resource_type")
-        return Response(organization_resource_options(org, resource_type))
+        return Response(organization_resource_options(org, resource_type, request=request))

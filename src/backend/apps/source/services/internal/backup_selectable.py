@@ -1410,6 +1410,7 @@ def _pipeline_queryset(
     tag_id: int | None = None,
     tag_ids: list[int] | None = None,
     untagged: bool = False,
+    visible_tag_ids=None,
     allowed_source_ids: dict[str, list[int]] | None = None,
     config_scope: QuerySet | None = None,
 ) -> QuerySet[SourceBackupPipelineEntry]:
@@ -1426,6 +1427,8 @@ def _pipeline_queryset(
             source_kind=OuterRef("source_kind"),
             ref_id=OuterRef("ref_id"),
         )
+        if visible_tag_ids is not None:
+            assignment_query = assignment_query.filter(tag_id__in=visible_tag_ids)
         matching_selected_tag = Exists(
             assignment_query.filter(tag_id__in=effective_tag_ids)
         ) if effective_tag_ids else None
@@ -1722,6 +1725,7 @@ def _list_legacy_backup_selectable_sources(
                 _source_key(kind, ref_id)
                 for kind, ref_id in SourceTagAssignment.objects.filter(
                     organization_id=organization_id,
+                    **({"tag_id__in": filters["visible_tag_ids"]} if filters.get("visible_tag_ids") is not None else {}),
                 ).values_list("source_kind", "ref_id")
             }
             untagged_sources = {
@@ -1833,6 +1837,7 @@ def list_backup_selectable_sources(
     tag_id: int | None = None,
     tag_ids: list[int] | None = None,
     untagged: bool = False,
+    visible_tag_ids=None,
     allowed_source_ids: dict[str, list[int]] | None = None,
     expand: str | None = None,
     config_scope: QuerySet | None = None,
@@ -1862,6 +1867,7 @@ def list_backup_selectable_sources(
         "tag_id": tag_id,
         "tag_ids": tag_ids,
         "untagged": untagged,
+        "visible_tag_ids": visible_tag_ids,
         "allowed_source_ids": allowed_source_ids,
         "config_scope": config_scope,
     }

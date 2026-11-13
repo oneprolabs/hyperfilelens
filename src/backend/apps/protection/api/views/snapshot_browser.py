@@ -69,36 +69,45 @@ def _cursor_query(value: str | None) -> str:
 
 
 def _assert_directory_access(request, directory_id: int, *, action: str) -> None:
+    org = require_org(request)
     directory = (
-        BackupSourceSnapshotDirectory.objects.filter(pk=directory_id)
-        .values("organization_id", "source_snapshot_id")
+        BackupSourceSnapshotDirectory.objects.filter(
+            pk=directory_id, organization_id=org.id,
+        )
+        .values("source_snapshot_id", "backup_config_id")
         .first()
     )
     if directory is None:
         raise NotFound("snapshot directory not found")
-    snapshot = BackupSourceSnapshot.objects.filter(
+    backup_config_id = BackupSourceSnapshot.objects.filter(
         pk=directory["source_snapshot_id"],
-        organization_id=directory["organization_id"],
-    ).values("backup_config_id")
-    backup_config_id = snapshot.values_list("backup_config_id", flat=True).first()
-    if backup_config_id:
-        assert_resource_access(
-            request, "backup_config", backup_config_id, action=action
-        )
+        organization_id=org.id,
+        backup_config_id=directory["backup_config_id"],
+        backup_config_id__gt=0,
+    ).values_list("backup_config_id", flat=True).first()
+    # Missing/inconsistent lineage is not an authorization bypass. Do not
+    # dispatch browse/download work until the actual configuration is known.
+    if backup_config_id is None:
+        raise NotFound("snapshot directory not found")
+    assert_resource_access(
+        request, "backup_config", backup_config_id, action=action
+    )
 
 
 def _assert_snapshot_access(request, snapshot_id: int, *, action: str) -> None:
+    org = require_org(request)
     backup_config_id = (
         BackupSourceSnapshot.objects.filter(
-            pk=snapshot_id,
+            pk=snapshot_id, organization_id=org.id, backup_config_id__gt=0,
         )
         .values_list("backup_config_id", flat=True)
         .first()
     )
-    if backup_config_id:
-        assert_resource_access(
-            request, "backup_config", backup_config_id, action=action
-        )
+    if backup_config_id is None:
+        raise NotFound("snapshot not found")
+    assert_resource_access(
+        request, "backup_config", backup_config_id, action=action
+    )
 
 
 def _assert_artifact_access(request, artifact_id: int) -> None:

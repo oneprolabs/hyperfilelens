@@ -57,7 +57,7 @@ class CanManageMembershipOperation(permissions.BasePermission):
         else:
             fields = request.data if isinstance(request.data, dict) else {}
             required = set()
-            if "role" in fields:
+            if "role" in fields or "resource_scope" in fields:
                 required.add("configuration.members.assign_role")
             if "is_active" in fields:
                 required.add("configuration.members.manage")
@@ -272,6 +272,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
         result = onboard_member(
             request, email=data.get("email"), user_id=data.get("user"),
             role=role, is_active=data["is_active"],
+            resource_scope=data.get("resource_scope"),
         )
         payload = dict(MembershipSerializer(
             result.membership, context=self.get_serializer_context(),
@@ -292,7 +293,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
         from django.shortcuts import get_object_or_404
         from apps.audit.services.interface import write_audit_log_from_request
         from apps.iam.services.member_management import assert_membership_management
-        from apps.iam.services.membership_service import authoritative_role
+        from apps.iam.services.membership_service import (
+            authoritative_resource_scope, authoritative_role,
+        )
 
         with transaction.atomic():
             Organization.objects.select_for_update(no_key=True).get(
@@ -305,12 +308,12 @@ class MembershipViewSet(viewsets.ModelViewSet):
                 pk=serializer.instance.pk,
             )
             fields = serializer.validated_data
-            if "role" in fields:
+            if "role" in fields or "resource_scope" in fields:
                 assert_membership_management(
                     self.request,
                     operation="can_edit_role",
                     target=target,
-                    role=fields["role"],
+                    role=fields.get("role", authoritative_role(target)),
                 )
             if "is_active" in fields:
                 # Idempotent status writes still require authority over this target.
@@ -325,12 +328,16 @@ class MembershipViewSet(viewsets.ModelViewSet):
                     assert_membership_management(
                         self.request, operation="can_activate", target=target
                     )
-            before = {"role": authoritative_role(target), "is_active": target.is_active}
+            before = {
+                "role": authoritative_role(target), "is_active": target.is_active,
+                "resource_scope": authoritative_resource_scope(target),
+            }
             serializer.instance = target
             updated = serializer.save()
             after = {
                 "role": authoritative_role(updated),
                 "is_active": updated.is_active,
+                "resource_scope": authoritative_resource_scope(updated),
             }
             if before != after:
                 write_audit_log_from_request(
@@ -378,7 +385,9 @@ class MembershipViewSet(viewsets.ModelViewSet):
             user_id = instance.user_id
             organization_id = instance.organization_id
             from apps.audit.services.interface import write_audit_log_from_request
-            from apps.iam.services.membership_service import authoritative_role
+            from apps.iam.services.membership_service import (
+                authoritative_resource_scope, authoritative_role,
+            )
 
             write_audit_log_from_request(
                 self.request,
@@ -391,6 +400,7 @@ class MembershipViewSet(viewsets.ModelViewSet):
                     "removed_user_id": user_id,
                     "before": {
                         "role": authoritative_role(instance),
+                        "resource_scope": authoritative_resource_scope(instance),
                         "is_active": instance.is_active,
                     },
                     "after": None,

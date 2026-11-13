@@ -39,3 +39,7 @@ Before you disable or remove someone, make sure another owner can take over thei
 - New members are enabled and have the right role.
 - After a transfer or departure, disable or remove them promptly and check ownership on [Resources](/docs/governance/resources).
 - If member count counts against organization usage, confirm the limit on [Usage and quotas](/docs/governance/usage).
+
+## Business resource scope
+
+When adding a member or editing access, configure the organization Role and its business resource scope together. Choose owned resources for default member isolation, or all organization resources for organization-wide resource operations. The Role must still grant each operation. Group grants apply independently; changing only the Role preserves the existing scope.

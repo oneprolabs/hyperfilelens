@@ -1,7 +1,6 @@
 """Organization-owned labels for backup-selectable sources."""
 
 from django.db import models
-from django.db.models.functions import Lower
 
 
 class SourceTag(models.Model):
@@ -15,9 +14,8 @@ class SourceTag(models.Model):
 
     class Meta:
         db_table = "source_tag"
-        constraints = [
-            models.UniqueConstraint(Lower("name"), "organization", name="uniq_source_tag_org_name")
-        ]
+        # Names are owner-local in Enterprise. The API serializes validation
+        # with ownership transfers using the organization's governance lock.
 
 
 class SourceTagAssignment(models.Model):

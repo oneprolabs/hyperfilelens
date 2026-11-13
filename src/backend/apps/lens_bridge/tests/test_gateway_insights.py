@@ -44,7 +44,7 @@ class GatewayInsightDirectoryTests(SimpleTestCase):
         mock_serialize.return_value = {"name": "owned"}
 
         link.gateway_id = 11
-        with patch("apps.lens_bridge.services.gateway_insights.gateway_ownership.organization_gateway_links") as links, patch("apps.lens_bridge.services.gateway_insights._filter_user_gateways") as filtered:
+        with patch("apps.lens_bridge.services.gateway_insights._knowledge_source_counts", return_value={}), patch("apps.lens_bridge.services.gateway_insights.gateway_ownership.organization_gateway_links") as links, patch("apps.lens_bridge.services.gateway_insights._filter_user_gateways") as filtered:
             filtered.return_value.values_list.return_value = [11]
             rows = gateway_insights.list_organization_gateway_insight_rows(
                 organization=organization, user=user,

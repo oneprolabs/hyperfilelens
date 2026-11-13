@@ -210,7 +210,8 @@ class SourceTagsTests(TestCase):
         for restricted in (False, True):
             with self.subTest(restricted=restricted):
                 provider = SimpleNamespace(visible_resource_refs=True) if restricted else None
-                with patch("apps.source.api.views.source_tag.get_authz_provider", return_value=provider), patch(
+                authority = SimpleNamespace(has_org_action=lambda action: True, has_action=lambda kind, action: True, visible_refs_by_action=lambda refs, actions: {action: set(refs) for action in actions})
+                with patch("apps.source.api.views.source_tag.request_authorization", return_value=authority), patch("apps.source.api.views.source_tag.get_authz_provider", return_value=provider), patch(
                     "apps.source.api.views.source_tag.visible_resource_refs",
                     side_effect=lambda request, refs: set(refs),
                 ):

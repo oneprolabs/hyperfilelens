@@ -128,7 +128,7 @@ export type RestoreRecordItem = {
   id: number
   source_snapshot_directory_id: number
   backup_config_dir_id: number
-  repository_id: number
+  repository_id: number | null
   kopia_snapshot_id: string
   source_path: string
   selected_paths: string[]
@@ -136,7 +136,7 @@ export type RestoreRecordItem = {
   target_display_path?: string
   conflict_mode: RestoreConflictMode
   status: string
-  result_payload?: Record<string, unknown>
+  result_payload?: Record<string, unknown> | null
   error_code?: string
   error_message?: string
   created_at: string
@@ -158,18 +158,18 @@ export type RestoreRecord = {
   task_id: number
   task_uuid: string
   source_type: RestoreEndpointType
-  source_ref_id: number
+  source_ref_id: number | null
   backup_config_id: number | null
-  source_snapshot_id: number
+  source_snapshot_id: number | null
   source_snapshot_uid: string
   target_type: RestoreEndpointType
-  target_ref_id: number
+  target_ref_id: number | null
   target_path: string
   target_display_path?: string
   scope: RestoreScope
   conflict_mode: RestoreConflictMode
-  request_payload?: Record<string, unknown>
-  expanded_payload?: Record<string, unknown>
+  request_payload?: Record<string, unknown> | null
+  expanded_payload?: Record<string, unknown> | null
   created_at: string
   updated_at: string
   restored_item_count?: number

@@ -11,7 +11,6 @@ from rest_framework.response import Response
 from apps.iam.org_context import require_org
 from apps.iam.resource_access import (
     assert_resource_access,
-    filter_queryset_by_resource_field,
 )
 from apps.iam.permissions_org import IsOrgOperator, IsOrgReader, IsOrgAuthorizedMember
 from common.extension_spi import get_authz_provider
@@ -29,7 +28,6 @@ from apps.restore.api.serializers import (
 from apps.restore.models import RestoreRecord
 from apps.restore.selectors.interface import (
     filter_restore_records,
-    get_restore_record,
     restore_records_queryset,
 )
 from apps.restore.services import interface as restore_services
@@ -85,6 +83,7 @@ def _record_result(record: RestoreRecord) -> dict:
 
 
 class RestoreRecordViewSet(viewsets.ModelViewSet):
+    governance_read_action = "protection.restore_plans.view"
     serializer_class = RestoreRecordSerializer
     permission_classes = [IsAuthenticated, IsOrgOperator]
     pagination_class = RestorePagination
@@ -123,41 +122,20 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
             ),
             created_to=_datetime_query_param(params.get("created_to"), "created_to"),
         )
-        return filter_queryset_by_resource_field(
-            self.request,
-            queryset,
-            "backup_config",
-            "backup_config_id",
+        from apps.iam.query_authorization import request_authorization
+        from apps.iam.restore_access import filter_restore_record_scope
+
+        authority = request_authorization(self.request)
+        if authority is None or getattr(self.request, "hfl_support_readonly", False):
+            return queryset
+        return filter_restore_record_scope(
+            queryset, authority, action="protection.restore_plans.view",
         )
 
     def get_object(self):
-        org = require_org(self.request)
-        record = get_restore_record(
-            organization_id=org.id,
-            record_id=int(self.kwargs["pk"]),
-        )
+        record = self.get_queryset().filter(pk=self.kwargs["pk"]).first()
         if record is None:
             raise NotFound("restore record not found")
-        if record.backup_config_id:
-            assert_resource_access(
-                self.request,
-                "backup_config",
-                record.backup_config_id,
-                action=(
-                    "resources.manage"
-                    if self.request.method not in SAFE_METHODS
-                    else "resources.view"
-                ),
-            )
-        else:
-            assert_resource_access(
-                self.request,
-                "node" if record.source_type == "agent" else "source_resource",
-                record.source_ref_id,
-                action="protection.manage"
-                if self.request.method not in SAFE_METHODS
-                else "resources.view",
-            )
         return record
 
     @staticmethod
@@ -298,8 +276,17 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         record = self.get_object()
         task = Task.objects.filter(
             organization_id=record.organization_id,
-            task_uuid=record.task_uuid,
+            pk=record.task_id, task_uuid=record.task_uuid,
         ).first()
+        from apps.iam.restore_access import restore_record_detail_projection
+
+        allowed = restore_record_detail_projection(request, [record])
+        if allowed is not None and record.pk not in allowed:
+            return Response({
+                "progress": float(task.progress or 0) if task is not None else 0.0,
+                "transfer_progress": None,
+                "kopia_progress": None,
+            })
         if task is not None and task.status in {
             Task.Status.PENDING,
             Task.Status.RUNNING,

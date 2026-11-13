@@ -49,9 +49,17 @@ class NodeTaskViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         ]
 
     def get_org_scoped_queryset(self):
+        queryset = self.queryset.filter(organization=self.org)
+        from common.extension_spi import get_authz_provider
+        if get_authz_provider() is not None:
+            # The tenant console dispatches only upgrade commands here.
+            # Backup/Chat commands carry other users' execution payloads even
+            # when the requesting member owns the executor Node. Their public
+            # history is exposed through the governed business Task APIs.
+            queryset = queryset.filter(kind__in=("agent.upgrade", "upgrade.agent"))
         return filter_queryset_by_resource_field(
             self.request,
-            self.queryset.filter(organization=self.org).order_by("-created_at", "-id"),
+            queryset.order_by("-created_at", "-id"),
             "node",
             "node_id",
             action="operations.tasks.view",

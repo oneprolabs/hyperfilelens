@@ -58,6 +58,7 @@ def _filter_user_gateways(queryset, *, organization, user):
     ids = list(queryset.values_list("gateway_id", flat=True))
     allowed = provider.visible_resource_refs(
         user, organization.key, [("node", pk) for pk in ids],
+        action="insights.private_data_gateways.view",
     )
     return queryset.filter(gateway_id__in=[pk for kind, pk in allowed if kind == "node"])
 
@@ -178,7 +179,8 @@ def _serialize_row(
         )
         gateway_link_id = None
 
-    tasks = sl_node.get("tasks") or []
+    # These are advertised analysis capabilities, not running user jobs.
+    tasks = provisioning._extract_sl_lensnode_snapshot(sl_node)["sl_tasks"]
     return {
         **node_payload,
         "name": (
@@ -220,7 +222,7 @@ def _serialize_row(
         "sl_agent_version": str(sl_node.get("agent_version") or ""),
         "sl_last_heartbeat_at": sl_node.get("last_heartbeat_at"),
         "sl_registered_at": sl_node.get("registered_at"),
-        "sl_tasks": tasks if isinstance(tasks, list) else [],
+        "sl_tasks": tasks,
     }
 
 
@@ -247,14 +249,16 @@ def _cached_lensnode_row(link: LensGatewayLink) -> dict[str, Any]:
     }
 
 
-def _knowledge_source_counts(gateway_ids: list[int]) -> dict[int, int]:
+def _knowledge_source_counts(gateway_ids: list[int], *, organization=None, user=None) -> dict[int, int]:
     if not gateway_ids:
         return {}
+    queryset = LensKnowledgeSource.objects.filter(gateway_id__in=gateway_ids)
+    if organization is not None:
+        from apps.lens_bridge.services.insight_access import user_knowledge_sources
+        queryset = user_knowledge_sources(queryset, organization=organization, user=user)
     return {
         int(row["gateway_id"]): int(row["count"])
-        for row in LensKnowledgeSource.objects.filter(
-            gateway_id__in=gateway_ids,
-        )
+        for row in queryset
         .values("gateway_id")
         .annotate(count=Count("id"))
     }
@@ -264,9 +268,10 @@ def _serialize_organization_links(
     links: list[LensGatewayLink],
     *,
     user=None,
+    tenant_organization=None,
 ) -> list[dict[str, Any]]:
     release_targets: dict[tuple[str, str, str, str], str] = {}
-    counts = _knowledge_source_counts([link.gateway_id for link in links])
+    counts = _knowledge_source_counts([link.gateway_id for link in links], organization=tenant_organization, user=user)
     return [
         _serialize_row(
             position=index,
@@ -337,7 +342,7 @@ def list_organization_gateway_directory_page(
         "count": count,
         "page": page,
         "page_size": page_size,
-        "results": _serialize_organization_links(links, user=user),
+        "results": _serialize_organization_links(links, user=user, tenant_organization=organization),
     }
 
 
@@ -643,6 +648,7 @@ def list_organization_gateway_insight_rows(
     links = {key: link for key, link in links.items() if link.gateway_id in visible_ids}
     if not links:
         return []
+    counts = _knowledge_source_counts([link.gateway_id for link in links.values()], organization=organization, user=user)
     release_targets: dict[tuple[str, str, str, str], str] = {}
     return [
         _serialize_row(
@@ -651,6 +657,7 @@ def list_organization_gateway_insight_rows(
             link=links.get(str(sl_node["uuid"])),
             user=user,
             release_targets=release_targets,
+            knowledge_source_count=counts.get(links[str(sl_node["uuid"])].gateway_id, 0),
         )
         for index, sl_node in enumerate(_lensnode_rows())
         if str(sl_node["uuid"]) in links

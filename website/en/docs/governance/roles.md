@@ -20,10 +20,10 @@ Enterprise organizations include these defaults:
 
 | Role | Typical use |
 | --- | --- |
-| **Administrator** | Manage members, Protection, Insights, and operations across the organization, with access to all organization resources |
-| **Manager** | Manage organization governance; business resource access follows ownership and group grants |
-| **Operator** | Run Protection, use Insights, and view operations on owned resources and resources granted through groups |
-| **Auditor** | Read governance, Protection, and operations information for owned or group-authorized resources without changing configuration |
+| **Administrator** | Manage members, Protection, Insights, and operations across the organization, with business resource scope configured separately at assignment |
+| **Manager** | Manage organization governance; business resource access follows assignment scope and group grants |
+| **Operator** | Run Protection, use Insights, and view operations within the organization-assignment scope and group grants |
+| **Auditor** | Read governance, Protection, and operations information within assigned resource scopes without changing configuration |
 
 In [Members](/docs/governance/members), assign the default role that fits the person’s job. You do not need to design a permission set from scratch to get started.
 
@@ -57,3 +57,9 @@ Separately created custom roles and member assignments are not changed. However,
 - The default roles are present, or you have restored them.
 - Member roles match their jobs; use [Groups](/docs/governance/groups) when people should only see some resources.
 - Menus and pages follow each user’s effective permissions. If access is denied, check the member’s role and group membership first, then ask an organization administrator to adjust them.
+
+## Roles and business resource scopes
+
+Roles define operations, not an all-resources scope switch. In Members, assign an organization Role and choose **Owned Resources** or **All Organization Resources** for that assignment. New members default to owned resources. Group assignments always apply only to that Group’s resources.
+
+This scope limits business-resource operations from that assignment. It does not restrict organization-management permissions, including ownership transfers, or expand another Group’s grants. Restoring default Roles does not reset existing assignment scopes.

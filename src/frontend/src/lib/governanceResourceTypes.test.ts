@@ -6,7 +6,7 @@ describe('governance resource type labels', () => {
   const types = [
     'Source Host', 'Source NAS', 'Proxy Host', 'Object Storage', 'Target NAS',
     'Local Disk', 'Private Data Gateway', 'Backup Configuration', 'Restore Plan',
-    'Backup Policy', 'File Filter', 'Alert Rule', 'Notification Channel',
+    'Backup Policy', 'File Filter', 'Tag', 'Alert Rule', 'Notification Channel',
   ]
 
   it.each(types)('uses a singular English label for %s', (type) => {
