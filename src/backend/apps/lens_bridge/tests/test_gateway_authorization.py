@@ -128,6 +128,7 @@ class PrivateGatewayApiAuthorizationTests(TestCase):
             gateway_id=self.gateway.id,
             path="",
             expected_scope=LensGatewayLink.GatewayScope.ORGANIZATION,
+            requesting_user=self.other_admin,
         )
 
     @mock.patch(
