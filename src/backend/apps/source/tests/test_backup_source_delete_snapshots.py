@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from importlib import import_module
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
@@ -17,6 +17,7 @@ from apps.audit.services.interface import write_audit_log as persist_audit_log
 from apps.iam.models import Membership, Organization
 from apps.node import agent_paths
 from apps.node.models import Node, NodeTask
+from apps.node.services.internal import redis_store
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -66,6 +67,18 @@ def custom_mount(leaf: str) -> str:
 
 class BackupSourceDeleteSnapshotTaskTests(TestCase):
     def setUp(self):
+        uninstall_redis = Mock()
+        uninstall_redis.get.return_value = redis_store._encode_agent_loc(
+            ws_instance_id="api", session_id="snapshot-delete-test-session",
+        )
+        uninstall_redis.exists.return_value = True
+        route_patch = patch(
+            "apps.node.services.internal.uninstall_readiness.redis_store",
+            wraps=redis_store,
+        )
+        helpers = route_patch.start()
+        helpers.get_redis.return_value = uninstall_redis
+        self.addCleanup(route_patch.stop)
         self.client = APIClient()
         user_model = get_user_model()
         self.user = user_model.objects.create_user(
@@ -183,6 +196,11 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE,
             availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory_session_id": "snapshot-delete-test-session",
+                "inventory_capabilities_session_id": "snapshot-delete-test-session",
+                "inventory": {"capabilities": ["detached_uninstall_v2"]},
+            },
         )
         parent = _create_source_unregister_task(
             org=self.org,
@@ -762,6 +780,11 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             name="agent-delete-snap",
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+            metadata={
+                "inventory_session_id": "snapshot-delete-test-session",
+                "inventory_capabilities_session_id": "snapshot-delete-test-session",
+                "inventory": {"capabilities": ["detached_uninstall_v2"]},
+            },
         )
         self.config.source_type = "agent"
         self.config.source_ref_id = agent.id

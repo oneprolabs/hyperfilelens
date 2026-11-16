@@ -36,6 +36,11 @@ from apps.node.services.internal.agent_upgrade import (
 from apps.node.services.capabilities import INSIGHT_SAFE_RESTORE_CAPABILITY
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.node_registry import agent_ws_routable
+from apps.node.services.internal.uninstall_readiness import (
+    REQUIRED_UNINSTALL_CAPABILITY,
+    require_uninstall_capability,
+    uninstall_readiness_error,
+)
 from apps.node.services.internal.node_workload import (
     assert_node_available_for_lifecycle,
     assert_node_available_for_removal,
@@ -50,7 +55,6 @@ logger = logging.getLogger(__name__)
 
 LIFECYCLE_KIND_UPGRADE = "upgrade"
 LIFECYCLE_KIND_REMOVE = "remove"
-REQUIRED_UNINSTALL_CAPABILITY = "detached_uninstall_v2"
 _LIFECYCLE_TASK_KINDS = {
     LIFECYCLE_KIND_UPGRADE: "agent.upgrade",
     LIFECYCLE_KIND_REMOVE: "agent.uninstall",
@@ -262,10 +266,6 @@ def _node_capabilities(node: Node) -> set[str]:
     if not isinstance(raw, (list, tuple, set)):
         return set()
     return {str(item).strip() for item in raw if str(item).strip()}
-
-
-def _supports_reliable_uninstall(node: Node) -> bool:
-    return REQUIRED_UNINSTALL_CAPABILITY in _node_capabilities(node)
 
 
 def _force_purge_without_remote_uninstall(
@@ -1892,28 +1892,12 @@ def _start_node_remove_locked(
                 ],
             )
 
-    if not _supports_reliable_uninstall(node):
-        detail = (
-            f"Agent does not report required capability "
-            f'"{REQUIRED_UNINSTALL_CAPABILITY}". Upgrade the Agent before Strict Cleanup.'
-        )
-        if not force:
-            raise NodeLifecycleError(detail, code="agent_upgrade_required")
-        return _force_purge_without_remote_uninstall(
-            org=org,
-            node=node,
-            user=user,
-            reason_code="agent_upgrade_required",
-            reason_detail=f"{detail} Remote uninstall was not attempted.",
-            defer_control_plane_purge=triggered_by_task_id is not None,
-        )
-
-    if not agent_ws_routable(agent_id=node.id):
-        if not force:
-            raise NodeLifecycleError(
-                "Node is offline. Strict Cleanup requires the Agent to be reachable.",
-                code="node_offline",
-            )
+    if not force:
+        require_uninstall_capability(node)
+        capability_error = None
+    else:
+        capability_error = uninstall_readiness_error(node)
+    if capability_error is not None and capability_error.code == "node_offline":
         result = _force_purge_without_remote_uninstall(
             org=org,
             node=node,
@@ -1934,6 +1918,16 @@ def _start_node_remove_locked(
             }
         )
         return result
+
+    if capability_error is not None:
+        return _force_purge_without_remote_uninstall(
+            org=org,
+            node=node,
+            user=user,
+            reason_code=capability_error.code,
+            reason_detail=f"{capability_error} Remote uninstall was not attempted.",
+            defer_control_plane_purge=triggered_by_task_id is not None,
+        )
 
     uninstall_payload: dict[str, Any] = {
         "keep_data": bool(keep_data),
@@ -2062,16 +2056,23 @@ def preview_batch_operations(
             continue
 
         if kind == LIFECYCLE_KIND_REMOVE:
+            capability_error = uninstall_readiness_error(node)
+            unsupported = (
+                capability_error is not None
+                and capability_error.code == "agent_upgrade_required"
+            )
             item.update(
                 {
                     "agent_version": _node_installed_version(node),
                     "required_capabilities": [REQUIRED_UNINSTALL_CAPABILITY],
                     "missing_capabilities": (
                         []
-                        if _supports_reliable_uninstall(node)
+                        if not unsupported
                         else [REQUIRED_UNINSTALL_CAPABILITY]
                     ),
-                    "upgrade_required": not _supports_reliable_uninstall(node),
+                    "upgrade_required": unsupported,
+                    "capabilities_ready": capability_error is None or unsupported,
+                    "capability_error": capability_error.code if capability_error else "",
                 }
             )
             if node.role == NodeRole.PROXY:

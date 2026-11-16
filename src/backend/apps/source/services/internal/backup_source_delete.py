@@ -996,6 +996,7 @@ def _assert_strict_delete_blockers(
     ctx: SourceDeleteContext,
     force: bool,
     allow_terminal_agent_uninstall: bool = False,
+    allow_pending_agent_uninstall: bool = False,
 ) -> None:
     if force:
         return
@@ -1017,6 +1018,23 @@ def _assert_strict_delete_blockers(
                     source_name=ctx.display_name,
                 )
             )
+        elif not allow_pending_agent_uninstall:
+            from apps.node.exceptions import NodeLifecycleError
+            from apps.node.services.internal.uninstall_readiness import (
+                require_uninstall_capability,
+            )
+
+            try:
+                require_uninstall_capability(ctx.agent_node)
+            except NodeLifecycleError as exc:
+                reasons.append(
+                    DeleteReason(
+                        code="agent_offline" if exc.code == "node_offline" else exc.code,
+                        detail=str(exc),
+                        source_id=ctx.selectable_id,
+                        source_name=ctx.display_name,
+                    )
+                )
     if ctx.nas_resource is not None:
         proxy = ctx.nas_resource.bound_node
         if proxy is None or proxy.availability != Node.Availability.ONLINE:
@@ -1438,10 +1456,12 @@ def _prepare_delete_batch(
             )
         else:
             owns_terminal_agent_uninstall = False
+            owns_lifecycle = False
         _assert_strict_delete_blockers(
             ctx=ctx,
             force=force,
             allow_terminal_agent_uninstall=owns_terminal_agent_uninstall,
+            allow_pending_agent_uninstall=owns_lifecycle,
         )
         prepared.append((ctx, {}, []))
     return prepared

@@ -1,7 +1,7 @@
 """Source resource API tests."""
 
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
 from datetime import timedelta
 
@@ -14,6 +14,7 @@ from rest_framework.test import APIClient
 from apps.iam.models import Membership, Organization
 from apps.node import agent_paths
 from apps.node.models import Node, NodeTask
+from apps.node.services.internal import redis_store
 from apps.protection.models import (
     BackupConfig,
     BackupConfigDirectory,
@@ -2983,6 +2984,30 @@ class BackupSourceBulkDeleteTests(TestCase):
     def _headers(self):
         return {"HTTP_X_ORG_KEY": self.org.key}
 
+    def _make_agent_uninstall_ready(self):
+        self.agent.availability = Node.Availability.ONLINE
+        self.agent.last_seen_at = timezone.now()
+        self.agent.metadata = {
+            "inventory_session_id": "bulk-delete-test-session",
+            "inventory_capabilities_session_id": "bulk-delete-test-session",
+            "inventory": {"capabilities": ["detached_uninstall_v2"]},
+        }
+        self.agent.save(
+            update_fields=["availability", "last_seen_at", "metadata", "updated_at"]
+        )
+        client = Mock()
+        client.get.return_value = redis_store._encode_agent_loc(
+            ws_instance_id="api", session_id="bulk-delete-test-session",
+        )
+        client.exists.return_value = True
+        route_patch = patch(
+            "apps.node.services.internal.uninstall_readiness.redis_store",
+            wraps=redis_store,
+        )
+        helpers = route_patch.start()
+        helpers.get_redis.return_value = client
+        self.addCleanup(route_patch.stop)
+
     def test_delete_preflight_flags_offline_agent(self):
         agent_key = f"agent:{self.agent.id}"
         response = self.client.post(
@@ -3333,12 +3358,7 @@ class BackupSourceBulkDeleteTests(TestCase):
 
     @override_settings(SOURCE_UNREGISTER_EAGER=False)
     def test_completed_idempotent_replay_returns_terminal_result(self):
-        self.agent.availability = Node.Availability.ONLINE
-        self.agent.last_seen_at = timezone.now()
-        self.agent.metadata = {"capabilities": ["detached_uninstall_v2"]}
-        self.agent.save(
-            update_fields=["availability", "last_seen_at", "metadata", "updated_at"]
-        )
+        self._make_agent_uninstall_ready()
         agent_key = f"agent:{self.agent.id}"
         payload = {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"}
         headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "completed-replay"}
@@ -3375,12 +3395,7 @@ class BackupSourceBulkDeleteTests(TestCase):
 
     @override_settings(SOURCE_UNREGISTER_EAGER=False)
     def test_partial_cleanup_result_survives_idempotent_replay(self):
-        self.agent.availability = Node.Availability.ONLINE
-        self.agent.last_seen_at = timezone.now()
-        self.agent.metadata = {"capabilities": ["detached_uninstall_v2"]}
-        self.agent.save(
-            update_fields=["availability", "last_seen_at", "metadata", "updated_at"]
-        )
+        self._make_agent_uninstall_ready()
         agent_key = f"agent:{self.agent.id}"
         payload = {"ids": [agent_key], "force": False, "confirmation": "DEREGISTER"}
         headers = {**self._headers(), "HTTP_IDEMPOTENCY_KEY": "partial-replay"}

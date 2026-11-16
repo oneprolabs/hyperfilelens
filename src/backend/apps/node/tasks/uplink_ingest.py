@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 
 from celery import shared_task
 
@@ -21,6 +22,62 @@ from apps.node.ws.uplink_queue import (
 from common.observability.celery_context import logged_celery_task
 
 logger = logging.getLogger(__name__)
+
+_ON_DEMAND_WAKEUP_KEY = "node:uplink:on-demand-wakeup"
+_ON_DEMAND_WAKEUP_SECONDS = 5
+
+
+def request_uplink_ingest() -> bool:
+    """Bound exceptional lifecycle wake-ups; normal heartbeats do not call this.
+
+    This is a short cooldown, not an execution lock. The existing consumer's
+    lease still serializes processing. Entries remain in the Stream if
+    publication fails, the disposable wake-up expires, or a Worker exits.
+    """
+    client = redis_store.get_redis()
+    if client is None:
+        return False
+    token = uuid.uuid4().hex
+    try:
+        claimed = client.eval(
+            """
+local ttl = redis.call('pttl', KEYS[1])
+if ttl == -1 or ttl > tonumber(ARGV[2]) * 1000 then
+  redis.call('del', KEYS[1])
+end
+return redis.call('set', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2])
+""",
+            1,
+            _ON_DEMAND_WAKEUP_KEY,
+            token,
+            _ON_DEMAND_WAKEUP_SECONDS,
+        )
+        if not claimed:
+            return False
+        ingest_node_uplink_streams.apply_async(
+            expires=min(node_conf.UPLINK_INGEST_EXPIRE_SECONDS, _ON_DEMAND_WAKEUP_SECONDS),
+            retry=False,
+        )
+        return True
+    except Exception:
+        # Never replace a capability diagnostic with a broker/Redis exception.
+        # Only release our own claim: a delayed failure may have a successor.
+        try:
+            client.eval(
+                """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+end
+return 0
+""",
+                1,
+                _ON_DEMAND_WAKEUP_KEY,
+                token,
+            )
+        except Exception:
+            pass  # The short cooldown expires without touching Stream entries.
+        logger.warning("on-demand Agent uplink wake-up failed", exc_info=True)
+        return False
 
 
 @shared_task(
