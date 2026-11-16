@@ -48,6 +48,12 @@ class UnregisterCapabilityReadinessTests(TestCase):
         helpers = route_patch.start()
         helpers.get_redis.return_value = client
         self.addCleanup(route_patch.stop)
+        status_patch = patch(
+            "apps.source.services.internal.backup_source_delete.agent_connection_status",
+            return_value=Node.Availability.ONLINE,
+        )
+        status_patch.start()
+        self.addCleanup(status_patch.stop)
         wake_patch = patch("apps.node.tasks.uplink_ingest.request_uplink_ingest")
         self.wake = wake_patch.start()
         self.addCleanup(wake_patch.stop)
