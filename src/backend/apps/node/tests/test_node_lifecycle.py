@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from apps.iam.models import Organization
 from apps.node import conf as node_conf
@@ -33,6 +34,7 @@ from apps.node.services.internal.node_lifecycle import (
     start_node_upgrade,
 )
 from apps.node.services.internal.task import _capture_upgrade_session_baseline
+from apps.node.services.internal import redis_store
 from apps.node.services.internal.task import (
     _RouteState,
     complete_task,
@@ -58,8 +60,24 @@ class NodeLifecycleTests(TestCase):
             role=NodeRole.AGENT,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
             version="1.0.0",
-            metadata={"capabilities": ["detached_uninstall_v2"]},
+            metadata={
+                "inventory_session_id": "remove-test-session",
+                "inventory_capabilities_session_id": "remove-test-session",
+                "inventory": {"capabilities": ["detached_uninstall_v2"]},
+            },
         )
+        self.uninstall_redis = Mock()
+        self.uninstall_redis.get.return_value = redis_store._encode_agent_loc(
+            ws_instance_id="api", session_id="remove-test-session",
+        )
+        self.uninstall_redis.exists.return_value = True
+        route_patch = patch(
+            "apps.node.services.internal.uninstall_readiness.redis_store",
+            wraps=redis_store,
+        )
+        route_helpers = route_patch.start()
+        route_helpers.get_redis.return_value = self.uninstall_redis
+        self.addCleanup(route_patch.stop)
 
     def _create_active_source_unregister(self) -> Task:
         task = Task.objects.create(
@@ -204,7 +222,7 @@ class NodeLifecycleTests(TestCase):
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     def test_strict_remove_requires_reliable_uninstall_capability(self, _routable):
-        self.node.metadata = {"capabilities": ["repository_cleanup_v1"]}
+        self.node.metadata["inventory"]["capabilities"] = ["repository_cleanup_v1"]
         self.node.save(update_fields=["metadata", "updated_at"])
 
         with self.assertRaises(NodeLifecycleError) as raised:
@@ -213,9 +231,88 @@ class NodeLifecycleTests(TestCase):
         self.assertEqual(raised.exception.code, "agent_upgrade_required")
         self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
 
+    @patch("apps.node.tasks.uplink_ingest.request_uplink_ingest")
+    def test_unready_remove_requests_sync_without_dispatch(self, wake):
+        self.node.metadata["inventory_capabilities_session_id"] = "old"
+        self.node.save(update_fields=["metadata"])
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_remove(org=self.org, node=self.node, user=self.user)
+        self.assertEqual(raised.exception.code, "agent_capabilities_not_ready")
+        wake.assert_called_once_with()
+        self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.is_deleted)
+
+    def test_force_unready_remove_records_residue_without_remote_dispatch(self):
+        self.node.metadata["inventory_capabilities_session_id"] = "old"
+        self.node.save(update_fields=["metadata"])
+        result = start_node_remove(
+            org=self.org, node=self.node, user=self.user, force=True,
+        )
+        self.assertEqual(
+            result["cleanup_failures"][0]["code"], "agent_capabilities_not_ready",
+        )
+        self.assertFalse(result["cleanup_complete"])
+        self.assertFalse(NodeTask.objects.filter(node=self.node).exists())
+        self.node.refresh_from_db()
+        self.assertTrue(self.node.is_deleted)
+
+    @patch("apps.node.tasks.uplink_ingest.request_uplink_ingest")
+    @patch("apps.node.services.internal.node_lifecycle.run_agent_task_async")
+    def test_redis_failure_blocks_strict_but_allows_force_with_residue(self, dispatch, wake):
+        self.uninstall_redis.get.side_effect = RedisConnectionError("Redis unavailable")
+        with self.assertRaises(NodeLifecycleError) as raised:
+            start_node_remove(org=self.org, node=self.node, user=self.user)
+        self.assertEqual(raised.exception.code, "agent_capabilities_unavailable")
+        self.node.refresh_from_db()
+        self.assertFalse(self.node.is_deleted)
+
+        result = start_node_remove(
+            org=self.org, node=self.node, user=self.user, force=True,
+        )
+        self.assertEqual(
+            result["cleanup_failures"][0]["code"], "agent_capabilities_unavailable",
+        )
+        self.assertFalse(result["cleanup_complete"])
+        self.assertIn("agent_installation", result["retained_resources"])
+        self.node.refresh_from_db()
+        self.assertTrue(self.node.is_deleted)
+        dispatch.assert_not_called()
+        wake.assert_not_called()
+
+    @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
+    @patch("apps.node.tasks.uplink_ingest.request_uplink_ingest")
+    def test_remove_preview_distinguishes_unready_from_unsupported(self, wake, _routable):
+        for capabilities, snapshot_session, ready, upgrade in (
+            (["detached_uninstall_v2"], "remove-test-session", True, False),
+            ([], "remove-test-session", True, True),
+            ([], "old-session", False, False),
+        ):
+            with self.subTest(capabilities=capabilities, session=snapshot_session):
+                self.node.metadata["inventory"]["capabilities"] = capabilities
+                self.node.metadata["inventory_capabilities_session_id"] = snapshot_session
+                self.node.save(update_fields=["metadata"])
+                preview = preview_batch_operations(
+                    org=self.org, node_ids=[self.node.id], kind="remove",
+                )
+                item = preview["eligible"][0]
+                self.assertEqual(item["capabilities_ready"], ready)
+                self.assertEqual(item["upgrade_required"], upgrade)
+                self.assertEqual(
+                    item["missing_capabilities"],
+                    ["detached_uninstall_v2"] if upgrade else [],
+                )
+                self.assertEqual(
+                    item["capability_error"],
+                    "agent_upgrade_required" if upgrade else (
+                        "" if ready else "agent_capabilities_not_ready"
+                    ),
+                )
+        wake.assert_not_called()
+
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=True)
     def test_force_remove_old_agent_purges_control_plane_and_records_residue(self, _routable):
-        self.node.metadata = {"capabilities": []}
+        self.node.metadata["inventory"]["capabilities"] = []
         self.node.save(update_fields=["metadata", "updated_at"])
 
         result = start_node_remove(
@@ -233,6 +330,7 @@ class NodeLifecycleTests(TestCase):
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_offline_strict_remove_is_blocked_before_task_creation(self, _routable):
+        self.uninstall_redis.get.return_value = None
         with self.assertRaises(NodeLifecycleError) as raised:
             start_node_remove(org=self.org, node=self.node, user=self.user)
 
@@ -243,6 +341,7 @@ class NodeLifecycleTests(TestCase):
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_offline_force_remove_purges_with_residue_summary(self, _routable):
+        self.uninstall_redis.get.return_value = None
         result = start_node_remove(
             org=self.org,
             node=self.node,
@@ -261,6 +360,7 @@ class NodeLifecycleTests(TestCase):
         self,
         _routable,
     ):
+        self.uninstall_redis.get.return_value = None
         result = start_node_remove(
             org=self.org,
             node=self.node,
@@ -277,6 +377,7 @@ class NodeLifecycleTests(TestCase):
 
     @patch("apps.node.services.internal.node_lifecycle.agent_ws_routable", return_value=False)
     def test_offline_force_gateway_records_agent_and_sidecar_residue(self, _routable):
+        self.uninstall_redis.get.return_value = None
         self.node.role = NodeRole.GATEWAY
         self.node.save(update_fields=["role", "updated_at"])
 

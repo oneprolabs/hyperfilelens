@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -11,6 +11,7 @@ from django.utils import timezone
 from apps.iam.models import Organization
 from apps.node.models import Node, NodeTask
 from apps.node.models.base import NodeRole
+from apps.node.services.internal import redis_store
 from apps.node.services.internal.agent_uninstall import remove_agent_node
 from apps.source.constants import ResourceType
 from apps.source.models import SourceResource
@@ -30,8 +31,22 @@ class AgentUninstallTests(TestCase):
             name="agent-uninstall",
             role=NodeRole.AGENT,
             status=Node.Status.ACTIVE, availability=Node.Availability.OFFLINE,
-            metadata={"capabilities": ["detached_uninstall_v2"]},
+            metadata={
+                "inventory_session_id": "agent-uninstall-test-session",
+                "inventory_capabilities_session_id": "agent-uninstall-test-session",
+                "inventory": {"capabilities": ["detached_uninstall_v2"]},
+            },
         )
+        self.uninstall_redis = Mock()
+        self.uninstall_redis.get.return_value = None
+        self.uninstall_redis.exists.return_value = True
+        route_patch = patch(
+            "apps.node.services.internal.uninstall_readiness.redis_store",
+            wraps=redis_store,
+        )
+        helpers = route_patch.start()
+        helpers.get_redis.return_value = self.uninstall_redis
+        self.addCleanup(route_patch.stop)
         self.resource = SourceResource.objects.create(
             organization=self.org,
             name="host-1",
@@ -81,6 +96,11 @@ class AgentUninstallTests(TestCase):
         _routable,
         mock_dispatch,
     ):
+        self.node.availability = Node.Availability.ONLINE
+        self.node.save(update_fields=["availability"])
+        self.uninstall_redis.get.return_value = redis_store._encode_agent_loc(
+            ws_instance_id="api", session_id="agent-uninstall-test-session",
+        )
         task = NodeTask.objects.create(
             organization=self.org,
             node=self.node,

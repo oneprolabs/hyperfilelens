@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node, NodeTask
+from apps.node.services.internal import redis_store
 from apps.node.services.internal.node_lifecycle import NodeLifecycleError
 from apps.protection.models import (
     BackupConfig,
@@ -46,11 +47,28 @@ class DirectNasCleanupUnregisterTests(TestCase):
             name="direct-nas-agent",
             role=Node.Role.AGENT,
             status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
-            metadata={"inventory": {"capabilities": [
-                "repository_cleanup_v1",
-                "repository_cleanup_ownership_v1",
-            ]}},
+            metadata={
+                "inventory_session_id": "unregister-test-session",
+                "inventory_capabilities_session_id": "unregister-test-session",
+                "inventory": {"capabilities": [
+                    "repository_cleanup_v1",
+                    "repository_cleanup_ownership_v1",
+                    "detached_uninstall_v2",
+                ]},
+            },
         )
+        self.uninstall_redis = mock.Mock()
+        self.uninstall_redis.get.return_value = redis_store._encode_agent_loc(
+            ws_instance_id="api", session_id="unregister-test-session",
+        )
+        self.uninstall_redis.exists.return_value = True
+        route_patch = mock.patch(
+            "apps.node.services.internal.uninstall_readiness.redis_store",
+            wraps=redis_store,
+        )
+        helpers = route_patch.start()
+        helpers.get_redis.return_value = self.uninstall_redis
+        self.addCleanup(route_patch.stop)
         self.repository = Repository.objects.create(
             organization_id=self.org.id,
             name="direct-nas",
@@ -1260,10 +1278,6 @@ class DirectNasCleanupUnregisterTests(TestCase):
         side_effect=RuntimeError("worker exited before parent finalization"),
     )
     @mock.patch(
-        "apps.node.services.internal.node_lifecycle.agent_ws_routable",
-        return_value=False,
-    )
-    @mock.patch(
         "apps.source.services.internal.backup_source_delete.agent_connection_status",
         return_value="online",
     )
@@ -1275,19 +1289,9 @@ class DirectNasCleanupUnregisterTests(TestCase):
         self,
         _execute_cleanup,
         _agent_status,
-        _agent_routable,
         _complete_parent,
     ):
-        self.agent.metadata = {
-            "inventory": {
-                "capabilities": [
-                    "repository_cleanup_v1",
-                    "repository_cleanup_ownership_v1",
-                    "detached_uninstall_v2",
-                ]
-            }
-        }
-        self.agent.save(update_fields=["metadata", "updated_at"])
+        self.uninstall_redis.get.return_value = None
 
         with self.assertRaises(RuntimeError):
             delete_backup_sources(
@@ -1346,6 +1350,10 @@ class DirectNasCleanupUnregisterTests(TestCase):
         )
         unregister_task = Task.objects.get(pk=first["task_id"])
 
+        # An already-dispatched uninstall must not need fresh capability
+        # evidence when its parent is redelivered.
+        self.agent.metadata = {}
+        self.agent.save(update_fields=["metadata"])
         redelivered = run_source_unregister_task(
             organization_id=self.org.id,
             task_uuid=str(unregister_task.task_uuid),
