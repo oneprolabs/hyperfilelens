@@ -51,6 +51,7 @@ vi.mock('../governance/resolveRoutes', () => ({
 }))
 
 import { clearAuth, getEffectiveOrgKey, setStoredOrgKey, setupAuthGuard } from './useAuth'
+import { freezeOrganizationContext, releaseOrganizationContext } from '../lib/organizationStorage'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -114,6 +115,66 @@ describe('login route authentication guard', () => {
     }, { path: '/' }, next)
     expect(next).toHaveBeenCalledWith('/')
     expect(getEffectiveOrgKey()).toBe('actual-org')
+  })
+
+  it('applies the target on the new document through the backend-verified org query', async () => {
+    setStoredOrgKey('original-org')
+    mocks.fetchDeployProfile.mockResolvedValue(tenantProfile)
+    const requestedOrganizations: string[] = []
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => {
+      requestedOrganizations.push(getEffectiveOrgKey())
+      return Promise.resolve(jsonResponse({
+        user: {
+          id: 8, email: 'member@test.local',
+          access_profile: {
+            org_key: 'target-org', role: 'reader', permissions: [],
+            visible_features: ['dashboard'], available_platforms: [], landing_path: '/',
+          },
+        },
+      }))
+    }))
+    const next = vi.fn()
+    await mocks.guard?.({
+      path: '/', query: { org: 'target-org' }, meta: {},
+    }, { path: '/' }, next)
+    expect(next).toHaveBeenCalledExactlyOnceWith()
+    expect(requestedOrganizations).toEqual(['target-org'])
+    expect(sessionStorage.getItem('hfl_org_key')).toBe('target-org')
+    expect(getEffectiveOrgKey()).toBe('target-org')
+    localStorage.setItem('hfl_org_key', 'another-tab')
+    expect(getEffectiveOrgKey()).toBe('target-org')
+  })
+
+  it('keeps tab context writable when shared storage writes fail', () => {
+    const setItem = Storage.prototype.setItem
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (this === localStorage) throw new Error('Shared storage denied')
+      setItem.call(this, key, value)
+    })
+    try {
+      setStoredOrgKey('tab-only-org')
+      expect(sessionStorage.getItem('hfl_org_key')).toBe('tab-only-org')
+      expect(getEffectiveOrgKey()).toBe('tab-only-org')
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('does not let cached document callbacks overwrite or clear the later tab context', () => {
+    setStoredOrgKey('cached-org')
+    freezeOrganizationContext()
+    try {
+      sessionStorage.setItem('hfl_org_key', 'later-org')
+      localStorage.setItem('hfl_org_key', 'later-org')
+      // Delayed session checks may still finish while a restored document reloads.
+      setStoredOrgKey('cached-org')
+      clearAuth()
+      expect(getEffectiveOrgKey()).toBe('cached-org')
+      expect(sessionStorage.getItem('hfl_org_key')).toBe('later-org')
+      expect(localStorage.getItem('hfl_org_key')).toBe('later-org')
+    } finally {
+      releaseOrganizationContext()
+    }
   })
 
   it('clears both the tab context and stored default on logout', () => {
@@ -307,6 +368,8 @@ describe('login route authentication guard', () => {
       next,
     )
 
-    expect(next).toHaveBeenCalledWith('/node')
+    // Enterprise route guards use the explicit permission catalog; the
+    // community fallback keeps the legacy module landing behavior.
+    expect(next).toHaveBeenCalledWith(__HFL_EXTENSIONS_FRONTEND__ ? '/' : '/node')
   })
 })

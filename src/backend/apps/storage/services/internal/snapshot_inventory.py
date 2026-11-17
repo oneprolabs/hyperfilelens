@@ -56,8 +56,13 @@ def parse_snapshot_inventory(raw):
 
 def controller_snapshot_inventory(repository):
     from apps.storage.services.internal.repository_ownership import verify_s3_repository_ownership
+    from apps.storage.services.internal.repository_provider import managed_repository_provider
 
-    verify_s3_repository_ownership(repository, adopt_legacy=False)
+    provider = managed_repository_provider(repository)
+    if provider is not None:
+        provider.verify_orphan_ownership(repository)
+    else:
+        verify_s3_repository_ownership(repository, adopt_legacy=False)
     config_file = kopia_cli.usage_config_file(repository)
     kopia_cli.ensure_usage_connection(repository, config_file=config_file)
     result = kopia_cli._run_repository_command(

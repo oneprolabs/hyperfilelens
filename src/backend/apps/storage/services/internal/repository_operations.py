@@ -241,6 +241,7 @@ def create_repository_operation_task(
     trigger_type: str = Task.TriggerType.SYSTEM,
     due_at: datetime | None = None,
     replaces_task: Task | None = None,
+    requested_by_id: int | None = None,
 ) -> RepositoryTask | None:
     if operation_type not in {value for value, _ in RepositoryTask.OperationType.choices}:
         raise ValidationError({"operation_type": "Unsupported repository operation."})
@@ -332,6 +333,7 @@ def create_repository_operation_task(
         owner_node_id=target.owner_node_id,
         owner_identity=target.owner_identity,
         due_at=due_at,
+        requested_by_id=requested_by_id,
     )
     target.active_task = task
     target.save(update_fields=["active_task", "updated_at"])

@@ -62,6 +62,8 @@ src/backend/staticfiles/
 # Generated deployment identity shared by API/worker containers. Each
 # installation must keep its own value out of source control.
 src/backend/media/.hfl_deployment_host_id
+# Snapshot download artifacts are runtime output, not source or fixtures.
+src/backend/media/snapshot-downloads/
 
 # --- Other ---
 *.mo

@@ -240,6 +240,7 @@ export type StorageRepositoryBindingPreflight = {
 }
 
 export type StorageRepositoryListParams = {
+  origin?: 'direct'
   repo_type?: StorageRepositoryType
   status?: StorageRepositoryStatus
   health?: StorageRepositoryHealth

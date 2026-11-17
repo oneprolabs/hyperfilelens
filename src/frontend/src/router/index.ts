@@ -215,6 +215,10 @@ export const router = createRouter({
           redirect: '/account/profile',
           children: [
             { path: 'profile', component: AccountProfilePage },
+            ...(__HFL_EXTENSIONS_FRONTEND__ ? [{
+              path: 'usage',
+              component: lazyRoute(() => import('../pages/account/AccountUsage.vue')),
+            }] : []),
             { path: 'notifications', component: NotificationsPage },
           ],
         },

@@ -207,6 +207,13 @@
   --hfl-message-box-accent-soft: var(--color-warning-light);
 }
 
+.el-message-box.hfl-message-box--organization-switch .el-message-box__message,
+.el-message-box.hfl-message-box--organization-switch .el-message-box__message p {
+  text-align: left;
+  letter-spacing: normal;
+  word-spacing: normal;
+}
+
 /* Match the Deregister Backup Source dialog shell for detailed SMB guidance. */
 .el-message-box.smb-utf8-preflight-dialog {
   --el-messagebox-width: min(760px, calc(100vw - 32px));

@@ -23,6 +23,11 @@ SENSITIVE_FIELDS = {
     "authorization",
     "credential",
     "smtp_password",
+    "access_key_id",
+    "secret_access_key",
+    "session_token",
+    "securitytoken",
+    "issuer_ciphertext",
 }
 
 

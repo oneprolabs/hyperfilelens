@@ -582,6 +582,15 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
             search=self.request.query_params.get("search") or None,
             search_field=self.request.query_params.get("search_field") or None,
         )
+        if self.action == "list":
+            origin = self.request.query_params.get("origin", "")
+            if origin not in ("", "direct"):
+                raise ValidationError({"origin": "Unsupported repository origin."})
+            if origin == "direct":
+                from common.extension_spi import get_repository_provider
+                provider = get_repository_provider()
+                if provider is not None:
+                    queryset = provider.exclude_managed(queryset)
         associated_sources = (
             _associated_sources_queryset(
                 self.request,
@@ -828,6 +837,7 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
             operation = create_repository_operation_task(
                 target_id=target.id, operation_type=RepositoryTask.OperationType.SNAPSHOT_RECONCILE,
                 trigger_type=Task.TriggerType.MANUAL,
+                requested_by_id=request.user.pk,
             )
             if operation:
                 from apps.storage.tasks import execute_repository_operation

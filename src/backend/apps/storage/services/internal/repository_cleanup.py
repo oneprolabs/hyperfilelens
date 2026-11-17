@@ -29,6 +29,7 @@ from apps.storage.repositories.models import (
     RepositoryTask,
     RepositoryUsageShard,
 )
+from apps.storage.services.internal.repository_errors import RepositoryCleanupAuthorizationLost
 from apps.storage.services.internal.repository_access import repository_payload_for_node
 from apps.storage.services.internal.proxy_fs_repository import (
     proxy_fs_uses_managed_subdir,
@@ -1115,7 +1116,7 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                     }
                 physical_cleanup_complete = bool(result.get("cleanup_complete", True))
         except Exception as exc:
-            if not repository_task.force or (
+            if isinstance(exc, RepositoryCleanupAuthorizationLost) or not repository_task.force or (
                 repository_delete
                 and isinstance(exc, RepositoryAgentOperationStateUnknown)
                 and not _has_completed_cleanup_command(repository_task)
@@ -1306,6 +1307,15 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             ),
         }
     except Exception as exc:
+        if isinstance(exc, RepositoryCleanupAuthorizationLost):
+            current = RepositoryTask.objects.select_related("task", "execution_target").get(pk=repository_task.id)
+            if (
+                current.task.status not in ACTIVE_TASK_STATUSES
+                or current.execution_target is None
+                or current.execution_target.active_task_id != current.task_id
+                or current.execution_token != getattr(exc, "execution_token", current.execution_token)
+            ):
+                return {"status": current.task.status, "repository_task_id": current.id, "stale_executor": True}
         message = _cleanup_exception_message(exc)
         safe_message = str(
             scrub_secrets(
@@ -2194,6 +2204,13 @@ def _execute_s3_repository_cleanup_locked(
 ) -> dict[str, Any] | RepositoryAgentOperationResult:
     """Advance S3 cleanup while holding the cross-Controller execution fence."""
     repository = repository_task.repository
+    from .repository_provider import managed_repository_provider
+    provider = managed_repository_provider(repository)
+    if provider is not None:
+        result = provider.cleanup(repository_task)
+        if not result.get("waiting"):
+            _remove_controller_repository_state(repository.id)
+        return result
     task = repository_task.task
     # Resolve one durable child snapshot before reading ownership state. The
     # Agent may legitimately delete the marker while its task is still

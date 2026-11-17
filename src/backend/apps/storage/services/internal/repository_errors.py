@@ -16,6 +16,10 @@ class RepositoryAlreadyExistsError(RuntimeError):
     """Raised when strict repository initialization finds an existing repository."""
 
 
+class RepositoryCleanupAuthorizationLost(RuntimeError):
+    """A cleanup executor lost authorization; Force must not bypass its fence."""
+
+
 class RepositoryHealthTransportUnconfirmed(RuntimeError):
     """Raised when an Agent probe has no authoritative repository outcome."""
 

@@ -1,5 +1,5 @@
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.contrib.auth.models import User
 from django.core.management import call_command, CommandError
@@ -11,6 +11,13 @@ from apps.iam.profile_models import Profile
 
 
 class SeedInitialDataCommandTests(TestCase):
+    def expected_installation_organizations(self):
+        from common.extension_spi import get_authz_provider
+
+        return 2 if callable(getattr(
+            get_authz_provider(), "initialize_installation_organizations", None,
+        )) else 1
+
     def test_renamed_installation_identity_is_reused_without_resetting_profile(self):
         call_command("seed_initial_data", stdout=StringIO())
         user = User.objects.get(email="admin@hyperfilelens.com")
@@ -50,8 +57,10 @@ class SeedInitialDataCommandTests(TestCase):
         Membership.objects.create(user=tenant, organization=org, role="owner")
         call_command("seed_initial_data", stdout=StringIO())
         root = User.objects.get(username="admin@hyperfilelens.com")
-        self.assertFalse(Membership.objects.filter(user=root).exists())
-        self.assertEqual(Membership.objects.count(), 1)
+        self.assertFalse(Membership.objects.filter(user=root, organization=org).exists())
+        self.assertEqual(
+            Membership.objects.count(), self.expected_installation_organizations(),
+        )
         with self.assertRaises(CommandError):
             call_command("seed_initial_data", adopt_existing_user_id=tenant.pk, stdout=StringIO())
 
@@ -91,11 +100,18 @@ class SeedInitialDataCommandTests(TestCase):
             org_name="Quota Bootstrap",
         )
 
-        org = Membership.objects.select_related("organization").get().organization
-        organization_check.assert_called_once_with(additional=1)
-        user_check.assert_called_once_with(org, "max_users", additional=1)
+        organizations = [
+            row.organization for row in Membership.objects.select_related("organization")
+        ]
+        count = self.expected_installation_organizations()
+        self.assertEqual(organization_check.call_count, count)
+        organization_check.assert_has_calls([call(additional=1)] * count)
+        self.assertEqual(user_check.call_count, count)
+        user_check.assert_has_calls([
+            call(org, "max_users", additional=1) for org in organizations
+        ], any_order=True)
 
-    def test_fresh_install_creates_single_org_and_membership(self):
+    def test_fresh_install_creates_edition_specific_orgs_and_memberships(self):
         out = StringIO()
         call_command(
             "seed_initial_data",
@@ -106,8 +122,9 @@ class SeedInitialDataCommandTests(TestCase):
         )
 
         self.assertEqual(User.objects.count(), 1)
-        self.assertEqual(Organization.objects.count(), 1)
-        self.assertEqual(Membership.objects.count(), 1)
+        count = self.expected_installation_organizations()
+        self.assertEqual(Organization.objects.count(), count)
+        self.assertEqual(Membership.objects.count(), count)
 
         user = User.objects.get(email="admin@hyperfilelens.com")
         self.assertTrue(user.is_active)
@@ -115,7 +132,7 @@ class SeedInitialDataCommandTests(TestCase):
         self.assertTrue(user.is_superuser)
         self.assertTrue(user.check_password("Admin@123"))
 
-        membership = Membership.objects.get(user=user)
+        membership = Membership.objects.get(user=user, organization__name="HyperFileLens")
         from apps.iam.services.membership_service import authoritative_role
         self.assertEqual(authoritative_role(membership), Membership.Role.OWNER)
         self.assertTrue(membership.is_active)
@@ -172,8 +189,9 @@ class SeedInitialDataCommandTests(TestCase):
             admin_password="Admin@123",
         )
 
-        self.assertEqual(Organization.objects.count(), 1)
-        self.assertEqual(Membership.objects.count(), 1)
+        count = self.expected_installation_organizations()
+        self.assertEqual(Organization.objects.count(), count)
+        self.assertEqual(Membership.objects.count(), count)
 
         from apps.alert.models import AlertPolicy
         from common.resource_scope import ResourceScope

@@ -107,7 +107,15 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		}
 		defer release()
 	}
-	if spec, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr == nil && ok {
+	if spec, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
+		return Result{Status: "failed", Error: parseErr.Error()}
+	} else if ok {
+		leaseCtx, releaseCredentials, leaseErr := e.startRepositoryCredentialLease(ctx, spec.CredentialLease)
+		if leaseErr != nil {
+			return Result{Status: "failed", Error: leaseErr.Error()}
+		}
+		ctx = leaseCtx
+		defer releaseCredentials()
 		releaseClientState := e.acquireEphemeralKopiaServerClientState(ctx, spec)
 		defer releaseClientState()
 	}

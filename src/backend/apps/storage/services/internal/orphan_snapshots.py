@@ -1,6 +1,6 @@
 """Durable, fail-closed discovery and delayed cleanup of unmanaged snapshots."""
 
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from datetime import timedelta
 import logging
 import os
@@ -30,6 +30,7 @@ from apps.storage.services.internal.repository_operations import (
     finalize_repository_operation, repository_execution_target_has_owned_location,
     set_task_step,
 )
+from apps.storage.services.internal.repository_provider import MANAGED_CREDENTIAL_MODE, managed_repository_provider
 from apps.storage.services.internal.snapshot_inventory import (
     controller_snapshot_inventory, parse_snapshot_inventory,
 )
@@ -262,7 +263,12 @@ def run_orphan_reconciliation(repository_task_id):
     scanned = None
     stage = "prepare_repository_operation"
     controller = rt.owner_type == "controller"
+    execution_scope = ExitStack()
     try:
+        if controller:
+            provider = managed_repository_provider(rt.repository)
+            if provider is not None and not execution_scope.enter_context(provider.orphan_reconciliation_execution(rt)):
+                return {"status": "already_advancing"}
         _step(rt, stage, TaskStep.Status.SUCCESS, 10)
         stage = "verify_repository_owner"
         _step(rt, stage, TaskStep.Status.RUNNING, 15)
@@ -448,6 +454,8 @@ def run_orphan_reconciliation(repository_task_id):
             error_code=diagnostic["error_code"],
             diagnostic=diagnostic,
         )
+    finally:
+        execution_scope.close()
 
 
 @transaction.atomic
@@ -455,7 +463,12 @@ def _wait(rt, reason="Waiting for confirmed Agent result."):
     if rt.owner_type == "controller":
         # Keep recovery automatic, bounded by the independent executor. A
         # missing/expired cache lock never proves that execution has stopped.
-        RepositoryTask.objects.select_for_update().get(pk=rt.pk)
+        operation = RepositoryTask.objects.select_for_update().get(pk=rt.pk)
+        if (
+            (rt.repository.config or {}).get("credential_mode") == MANAGED_CREDENTIAL_MODE
+            and operation.execution_token != rt.execution_token
+        ):
+            return {"status": "already_advancing"}
         rt.task = Task.objects.select_for_update().get(pk=rt.task_id)
         if rt.task.status in {
             Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT,
@@ -513,7 +526,12 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
     # Match admission's Repository-before-Target lock order. The failed attempt
     # and its replacement hand the gate over without exposing an unlocked gap.
     Repository.objects.select_for_update().get(pk=rt.repository_id)
-    RepositoryTask.objects.select_for_update().get(pk=rt.pk)
+    operation = RepositoryTask.objects.select_for_update().get(pk=rt.pk)
+    if (
+        (rt.repository.config or {}).get("credential_mode") == MANAGED_CREDENTIAL_MODE
+        and operation.execution_token != rt.execution_token
+    ):
+        return {"status": "already_advancing"}
     rt.task = Task.objects.select_for_update().get(pk=rt.task_id)
     if rt.task.status in {
         Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT,
@@ -564,12 +582,17 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
     )
     # Retry failed inventory checks only. Never redispatch uncertain remote work
     # or repeat deletion after a missing/ambiguous completion.
+    managed_cancelled = (
+        (rt.repository.config or {}).get("credential_mode") == MANAGED_CREDENTIAL_MODE
+        and operation.cancel_requested_at is not None
+    )
     retry_scan = (
         not succeeded and rt.task.retry_count < 1
         and rt.task.recovery_attempt == 0 and rt.task.replaces_task_id is None
         and target.active_task_id == rt.task_id
         and not counts.get("failed") and not counts.get("deleted")
         and error_code != "ORPHAN_DELETE_RECOVERED"
+        and not managed_cancelled
     )
     if retry_scan:
         for child in rt.task.node_tasks.filter(correlation_type="repository_orphan"):
@@ -582,6 +605,7 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
         repository_task_id=rt.id, succeeded=succeeded, error_message=reason,
         error_code=error_code, result_payload=result,
         advance_reconcile_schedule=not retry_scan,
+        cancelled=managed_cancelled,
     )
     if retry_scan and completed.status == Task.Status.FAILED:
         # Reuse the established replacement-task contract; never reset the
@@ -614,6 +638,9 @@ def _finish(rt, succeeded, reason="", scanned=None, *, error_code="", diagnostic
         target.save(update_fields=["active_task", "updated_at"])
         transaction.on_commit(lambda: _enqueue_retry(retry.id))
         return {"status": "retry_scheduled"}
+    # Preserve the repository-operation worker's historical result contract:
+    # the durable Task/replacement carries retry state; callers receive the
+    # outcome of this advance rather than a second status vocabulary.
     return {"status": "success" if succeeded else "failed"}
 
 

@@ -118,6 +118,7 @@ class BackupTaskStartView(APIView):
         try:
             result = start_backup_tasks(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 sources=serializer.validated_data.get("sources"),
                 source_ids=serializer.validated_data.get("source_ids"),
                 backup_config_ids=serializer.validated_data.get("backup_config_ids"),

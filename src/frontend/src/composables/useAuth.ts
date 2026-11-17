@@ -19,7 +19,7 @@ import {
 import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
 import { operationsSiteRedirect } from '../lib/siteNavigation'
-import { readStoredOrganizationKey } from '../lib/organizationStorage'
+import { isOrganizationContextFrozen, readStoredOrganizationKey } from '../lib/organizationStorage'
 import { insightPermissionHints, insightRouteRedirect } from '../lib/insightAccess'
 import { protectionRouteRedirect } from '../lib/protectionAccess'
 import { operationsRouteRedirect } from '../lib/operationsAccess'
@@ -39,6 +39,8 @@ export interface User {
   requires_password_change?: boolean
   access_profile?: {
     org_key: string
+    org_name?: string
+    organization_mode?: 'personal' | 'team' | ''
     role: string
     authority_source?: 'installation_admin' | 'owner' | 'role' | 'support_readonly' | ''
     is_organization_member?: boolean
@@ -70,16 +72,21 @@ export function getStoredOrgKey(): string {
 }
 
 export function setStoredOrgKey(orgKey: string): void {
+  if (isOrganizationContextFrozen()) return
+  try {
+    if (orgKey) sessionStorage.setItem(ORG_KEY_STORAGE, orgKey)
+    else sessionStorage.removeItem(ORG_KEY_STORAGE)
+  } catch {
+    // A blocked tab store must not prevent updating the shared login default.
+  }
   try {
     if (orgKey) {
       localStorage.setItem(ORG_KEY_STORAGE, orgKey)
-      sessionStorage.setItem(ORG_KEY_STORAGE, orgKey)
     } else {
       localStorage.removeItem(ORG_KEY_STORAGE)
-      sessionStorage.removeItem(ORG_KEY_STORAGE)
     }
   } catch {
-    // ignore
+    // Tab context remains usable when shared storage is unavailable.
   }
 }
 
@@ -280,6 +287,7 @@ function hasCompleteAccessProfile(user: User | null): boolean {
 
 // Module-level clearAuth for use by setupAuthGuard
 export function clearAuth() {
+  if (isOrganizationContextFrozen()) return
   clearLogoutBrowserStorage()
   currentUser.value = null
   isLoggedIn.value = false

@@ -75,6 +75,9 @@ type repositorySpec struct {
 	Prefix          string
 	AccessKeyID     string
 	SecretAccessKey string
+	SessionToken    string
+	CredentialLease *repositoryCredentialLease
+	CredentialsFile string
 	S3URLStyle      string
 	S3URLStyleFlag  bool
 	S3Platform      string
@@ -122,6 +125,7 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 		Prefix:          strings.TrimSpace(stringValue(data["prefix"])),
 		AccessKeyID:     strings.TrimSpace(stringValue(data["access_key_id"])),
 		SecretAccessKey: strings.TrimSpace(stringValue(data["secret_access_key"])),
+		SessionToken:    strings.TrimSpace(stringValue(data["session_token"])),
 		S3URLStyle:      strings.ToLower(strings.TrimSpace(stringValue(data["s3_url_style"]))),
 		S3Platform:      strings.ToLower(strings.TrimSpace(stringValue(data["platform"]))),
 		KopiaPassword:   strings.TrimSpace(stringValue(data["kopia_password"])),
@@ -163,6 +167,18 @@ func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
 	}
 	if spec.Type == "" {
 		return repositorySpec{}, false, fmt.Errorf("repository.type is required")
+	}
+	if leaseRaw, present := data["credential_lease"]; present {
+		lease, err := parseRepositoryCredentialLease(leaseRaw)
+		if err != nil || lease == nil || spec.Type != "s3" {
+			return repositorySpec{}, false, fmt.Errorf("invalid S3 credential lease")
+		}
+		spec.CredentialLease = lease
+	}
+	if mode := stringValue(data["credential_mode"]); mode != "" {
+		if mode != "repository_temporary_identity_v1" || spec.CredentialLease == nil {
+			return repositorySpec{}, false, fmt.Errorf("managed S3 repository requires an execution credential lease")
+		}
 	}
 	switch spec.Type {
 	case "s3":
@@ -257,6 +273,7 @@ func s3ConnectionFingerprint(spec repositorySpec) (string, error) {
 		Prefix          string `json:"prefix"`
 		AccessKeyID     string `json:"access_key_id"`
 		SecretAccessKey string `json:"secret_access_key"`
+		SessionToken    string `json:"session_token"`
 		KopiaPassword   string `json:"kopia_password"`
 		UseTLS          bool   `json:"use_tls"`
 		S3URLStyle      string `json:"s3_url_style"`
@@ -267,6 +284,7 @@ func s3ConnectionFingerprint(spec repositorySpec) (string, error) {
 		Prefix:          spec.Prefix,
 		AccessKeyID:     spec.AccessKeyID,
 		SecretAccessKey: spec.SecretAccessKey,
+		SessionToken:    spec.SessionToken,
 		KopiaPassword:   spec.KopiaPassword,
 		UseTLS:          spec.UseTLS,
 		S3URLStyle:      spec.S3URLStyle,
@@ -505,6 +523,16 @@ func (e *Engine) prepareManagedRepository(
 	if err := resolveKopiaS3URLStyleCapability(ctx, bin, &spec); err != nil {
 		return "", nil, nil, repositorySpec{}, err.Error()
 	}
+	spec.CredentialsFile = repositoryCredentialFile(ctx)
+	if spec.CredentialLease != nil {
+		if spec.CredentialsFile == "" {
+			return "", nil, nil, repositorySpec{}, "temporary repository credential lease is not active"
+		}
+		res, err := runProcessWithTimeout(ctx, 10*time.Second, bin, []string{"repository", "create", "s3", "--help"}, nil, "")
+		if err != nil || !strings.Contains(res.Stdout+"\n"+res.Stderr, "--credentials-file") {
+			return "", nil, nil, repositorySpec{}, "Kopia does not support refreshable S3 credentials; update the Kopia artifact"
+		}
+	}
 
 	configFile := e.repositoryConfigPath(spec)
 	if mkErr := kopialayout.PrepareConfigDir(agentDataDir(e.current()), configFile); mkErr != nil {
@@ -580,6 +608,16 @@ func (e *Engine) prepareManagedRepositoryLocked(
 	if spec.Type == "s3" {
 		env["AWS_ACCESS_KEY_ID"] = spec.AccessKeyID
 		env["AWS_SECRET_ACCESS_KEY"] = spec.SecretAccessKey
+		// Explicitly clear an inherited identity for legacy long-term credentials.
+		env["AWS_SESSION_TOKEN"] = spec.SessionToken
+		env["KOPIA_S3_CREDENTIALS_FILE"] = spec.CredentialsFile
+		if spec.CredentialLease != nil {
+			// CLI required-flag placeholders only. The file provider has no
+			// environment/IAM fallback, and never persists real identities.
+			env["AWS_ACCESS_KEY_ID"] = "managed-identity"
+			env["AWS_SECRET_ACCESS_KEY"] = "managed-identity"
+			env["AWS_SESSION_TOKEN"] = ""
+		}
 		if err := invalidateChangedS3Connection(configFile, env["KOPIA_CACHE_DIRECTORY"], spec); err != nil {
 			return "", nil, nil, repositorySpec{}, err.Error()
 		}
@@ -4082,8 +4120,12 @@ func redactManagedRestoreSecrets(
 	secretSet := make(map[string]struct{})
 	secretsToRedact := []string{
 		spec.SecretAccessKey,
+		spec.SessionToken,
 		spec.KopiaPassword,
 		spec.ServerPassword,
+	}
+	if spec.CredentialLease != nil {
+		secretsToRedact = append(secretsToRedact, spec.CredentialLease.Token)
 	}
 	if spec.TargetNAS != nil {
 		secretsToRedact = append(secretsToRedact, spec.TargetNAS.Password)

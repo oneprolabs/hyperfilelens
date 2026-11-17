@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Route, CalendarDays, HardDrive, Cloud, Filter, Tags } from 'lucide-vue-next'
+import { Route, CalendarDays, HardDrive, Cloud, CloudCog, Filter, Tags } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 import { sourceAgentSidebarIcon, targetNasSidebarIcon } from '../lib/resourceIcons'
 import { useTenantPermissions } from './useTenantPermissions'
@@ -9,7 +9,7 @@ import { protectionPages } from '../lib/protectionAccess'
 
 export function useProtectionSideNav() {
   const { t } = useI18n()
-  const { has } = useTenantPermissions()
+  const { has, profile } = useTenantPermissions()
   return computed<MenuItem[]>(() => ([
     {
       label: t('protection.side.groupDataSecurity'),
@@ -49,6 +49,7 @@ export function useProtectionSideNav() {
       label: t('protection.side.groupDrTargets'),
       children: [
         { label: t('protection.side.objectStorage'), to: '/node/repositories?tab=s3', icon: Cloud, pageTitle: t('protection.side.objectStorage') },
+        { label: t('managedStorage.title'), to: '/node/managed-storage', icon: CloudCog, pageTitle: t('managedStorage.title') },
         { label: t('repositoriesPage.tabNas'), to: '/node/repositories?tab=nas', icon: targetNasSidebarIcon, pageTitle: t('repositoriesPage.tabNas') },
         { label: t('protection.side.standaloneDisks'), to: '/node/repositories?tab=proxy_fs', icon: HardDrive, pageTitle: t('protection.side.standaloneDisks') },
       ],
@@ -72,6 +73,10 @@ export function useProtectionSideNav() {
     },
   ] as MenuItem[]).map((section) => ({
     ...section, children: section.children?.filter((item) => {
+      if (item.to === '/node/managed-storage') {
+        return __HFL_EXTENSIONS_FRONTEND__ && profile?.value?.organization_mode === 'personal'
+          && (has('protection.object_storage_repositories.view') || has('configuration.managed_storage.view', true))
+      }
       const page = protectionPages.find(page => page.to === item.to)
       return page && has(page.permission)
     }),

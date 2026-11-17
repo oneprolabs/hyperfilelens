@@ -132,6 +132,7 @@ class SnapshotDirectoryBrowseView(APIView):
         try:
             data = browse_snapshot_directory(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 directory_id=int(directory_id),
                 path=request.query_params.get("path") or "",
                 limit=_int_query(
@@ -163,6 +164,7 @@ class SnapshotDirectoryDownloadView(APIView):
         try:
             download = download_snapshot_file(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 directory_id=int(directory_id),
                 path=request.query_params.get("path") or "",
             )
@@ -192,6 +194,7 @@ class SnapshotDirectoryDownloadTaskView(APIView):
         try:
             task = create_snapshot_download_task(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 directory_id=int(directory_id),
                 path=str(request.data.get("path") or ""),
             )
@@ -221,6 +224,7 @@ class SnapshotDirectoryBatchDownloadTaskView(APIView):
         try:
             task = create_snapshot_batch_download_task(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 directory_id=int(directory_id),
                 paths=[str(item or "") for item in paths],
             )
@@ -250,6 +254,7 @@ class SnapshotGroupDownloadTaskView(APIView):
         try:
             task = create_snapshot_group_download_task(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 snapshot_id=int(snapshot_id),
                 groups=groups,
             )

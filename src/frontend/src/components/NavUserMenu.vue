@@ -265,9 +265,11 @@ async function confirmLogout() {
   flex: 0 1 auto;
   align-items: center;
   box-sizing: border-box;
-  gap: 6px;
+  gap: 4px;
+  height: 32px;
   min-height: 32px;
-  padding: 0 10px 0 6px;
+  padding: 0 8px 0 4px;
+  line-height: 1.5;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -278,18 +280,25 @@ async function confirmLogout() {
     color 0.15s ease;
 }
 
-.nav-user-trigger:hover {
+.nav-user-trigger:hover,
+.nav-user-trigger:focus-visible {
   background: var(--nav-user-trigger-hover-bg, rgba(255, 255, 255, 0.08));
   color: var(--nav-user-trigger-hover-color, #fff);
 }
 
+.nav-user-trigger:focus-visible {
+  outline: 2px solid var(--color-primary, #6D5EF6);
+  outline-offset: 2px;
+}
+
 .nav-user-trigger__label {
   min-width: 0;
-  max-width: 140px;
+  max-width: 210px;
   flex: 1 1 auto;
   overflow: hidden;
   font-size: 14px;
   font-weight: 500;
+  line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -324,17 +333,24 @@ async function confirmLogout() {
 @media (max-width: 1023.98px) {
   .nav-user-trigger {
     min-height: 44px;
+    height: 44px;
   }
 }
 
-@media (min-width: 1024px) and (max-width: 1151.98px) {
+@media (min-width: 1024px) and (max-width: 1279.98px) {
   .nav-user-trigger {
     padding-right: 8px;
     padding-left: 6px;
   }
 
   .nav-user-trigger__label {
-    max-width: 72px;
+    max-width: 160px;
+  }
+}
+
+@media (min-width: 1280px) and (max-width: 1439.98px) {
+  .nav-user-trigger__label {
+    max-width: 190px;
   }
 }
 

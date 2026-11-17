@@ -124,6 +124,10 @@ describe('Standalone backup data browser', () => {
     expect(browserPage).toContain('path: path || undefined')
   })
 
+  it('keeps Managed Storage mounted while its list tab query changes', () => {
+    expect(appShell).toContain("matchedRoute.path === '/node/managed-storage'")
+  })
+
   it('shows a loading indicator for Creating and Running snapshot states', () => {
     expect(enProtectionPages.backupsPage.snapshotStatusCreating).toBe('Creating')
     expect(enProtectionPages.backupsPage.snapshotStatusRunning).toBe('Running')

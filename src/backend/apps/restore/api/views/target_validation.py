@@ -43,5 +43,6 @@ class RestoreTargetValidationView(APIView):
             validate_restore_targets(
                 organization_id=org.id,
                 targets=serializer.validated_data["targets"],
+                requested_by_id=request.user.pk,
             )
         )

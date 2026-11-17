@@ -2567,6 +2567,7 @@ async function load() {
     await ensureSourceNodes(signal)
     if (signal.aborted) return
     const list = await listStorageRepositories({
+      origin: 'direct',
       repo_type: repoType,
       page: currentPage.value,
       page_size: pageSize.value,

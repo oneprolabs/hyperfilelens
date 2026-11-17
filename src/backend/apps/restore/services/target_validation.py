@@ -31,6 +31,7 @@ def validate_restore_targets(
     *,
     organization_id: int,
     targets: list[dict[str, Any]],
+    requested_by_id: int | None = None,
 ) -> dict[str, Any]:
     route_assignments = []
     route_keys_by_target: dict[str, list[str]] = {}
@@ -88,6 +89,7 @@ def validate_restore_targets(
                             source_type=str(item["target_type"]),
                             source_ref_id=int(item["target_ref_id"]),
                             repository_id=repository.id,
+                            authorization_config_id=snapshot.backup_config_id,
                         ),
                         execution_target,
                         repository,
@@ -103,6 +105,7 @@ def validate_restore_targets(
         validate_restore_repository_assignments(
             organization_id=organization_id,
             assignments=route_assignments,
+            requested_by_id=requested_by_id,
         )
         if route_assignments
         else {}

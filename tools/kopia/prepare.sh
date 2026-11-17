@@ -478,6 +478,7 @@ payload = {
         "hfl_creation_session_data_v1": os.environ["MODE"] == "build",
         "hfl_shared_backup_quota_v1": os.environ["MODE"] == "build",
         "hfl_managed_log_policy_v1": os.environ["MODE"] == "build",
+        "hfl_s3_credential_file_v1": os.environ["MODE"] == "build",
     },
     "files": files,
     "built_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

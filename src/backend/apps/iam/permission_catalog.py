@@ -57,6 +57,7 @@ _RESOURCES = (
         ("view", "change_owner"),
     ),
     ("configuration", "subscriptions", "Subscription", ("view", "manage")),
+    ("configuration", "managed_storage", "Managed Storage Connections", ("view", "manage", "delete")),
     (
         "protection",
         "source_hosts",
@@ -171,6 +172,8 @@ SENSITIVE_ACTIONS = frozenset(
         "configuration.groups.manage_members",
         "configuration.groups.manage_resources",
         "configuration.resources.change_owner",
+        "configuration.managed_storage.manage",
+        "configuration.managed_storage.delete",
         "protection.restore_plans.run",
         "protection.backup_data.download",
         "protection.backup_data.delete",

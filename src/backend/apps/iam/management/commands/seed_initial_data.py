@@ -1,6 +1,7 @@
 """Seed default organization, admin user, and global configuration templates."""
 
 import os
+from typing import Any
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
@@ -15,8 +16,21 @@ from common.platform_authz import ensure_platform_role
 from common.platform_staff import apply_platform_staff
 
 
+def initialize_extension_organizations(
+    user: Any, default_organization: Organization | None = None,
+) -> None:
+    """Let Enterprise provision its installation-owned organization explicitly."""
+    from common.extension_spi import get_authz_provider
+
+    initialize = getattr(
+        get_authz_provider(), "initialize_installation_organizations", None,
+    )
+    if callable(initialize):
+        initialize(user=user, default_organization=default_organization)
+
+
 class Command(BaseCommand):
-    help = "Seed initial tenant/admin/templates (one org + one admin membership on fresh install)"
+    help = "Seed installation admin, default tenant and extension-owned organizations"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -101,6 +115,7 @@ class Command(BaseCommand):
 
             ensure_default_platform_alert_rules()
             seed_global_config()
+            initialize_extension_organizations(user)
             org = (
                 Membership.objects.filter(user=user, is_active=True)
                 .select_related("organization")
@@ -150,6 +165,7 @@ class Command(BaseCommand):
         ensure_default_organization_alert_rules(org)
         ensure_default_platform_alert_rules()
         seed_global_config()
+        initialize_extension_organizations(user, org)
 
         self.stdout.write(
             self.style.SUCCESS(

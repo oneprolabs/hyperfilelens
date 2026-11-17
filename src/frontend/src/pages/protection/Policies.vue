@@ -1219,46 +1219,48 @@ function onMoreDisable() {
             </template>
           </ElDropdown>
 
-          <div class="hfl-list-toolbar__right hfl-list-toolbar__right--mobile-split">
-            <ElInput
-              v-model="searchQuery"
-              clearable
-              size="small"
-              class="hfl-list-search hfl-list-search-group"
-              :placeholder="listSearchPlaceholder"
-              @keyup.enter="runFilterSearch"
-              @clear="clearSearch"
-            >
-              <template #prepend>
-                <ElSelect v-model="searchField">
-                  <ElOption
-                    value="name"
-                    :label="t('protection.listSearchFields.name')"
-                  />
-                </ElSelect>
-              </template>
-              <template #prefix>
-                <Search
-                  :size="16"
-                  class="hfl-list-search__icon"
+        </template>
+
+        <template #toolbar-actions>
+          <ElInput
+            v-model="searchQuery"
+            clearable
+            size="small"
+            class="hfl-list-search hfl-list-search-group"
+            :placeholder="listSearchPlaceholder"
+            @keyup.enter="runFilterSearch"
+            @clear="clearSearch"
+          >
+            <template #prepend>
+              <ElSelect v-model="searchField">
+                <ElOption
+                  value="name"
+                  :label="t('protection.listSearchFields.name')"
                 />
-              </template>
-            </ElInput>
-            <div class="hfl-list-toolbar__utility">
-              <ElButton
-                class="hfl-refresh-button"
-                :title="t('protection.policiesPage.btnRefresh')"
-                :aria-label="t('protection.policiesPage.btnRefresh')"
-                :disabled="listLoading"
-                @click="refreshPoliciesList"
-              >
-                <RefreshCw
-                  :size="16"
-                  :class="{ 'is-spinning': listLoading }"
-                />
-              </ElButton>
-            </div>
-          </div>
+              </ElSelect>
+            </template>
+            <template #prefix>
+              <Search
+                :size="16"
+                class="hfl-list-search__icon"
+              />
+            </template>
+          </ElInput>
+        </template>
+
+        <template #toolbar-utility>
+          <ElButton
+            class="hfl-refresh-button"
+            :title="t('protection.policiesPage.btnRefresh')"
+            :aria-label="t('protection.policiesPage.btnRefresh')"
+            :disabled="listLoading"
+            @click="refreshPoliciesList"
+          >
+            <RefreshCw
+              :size="16"
+              :class="{ 'is-spinning': listLoading }"
+            />
+          </ElButton>
         </template>
 
         <ElAlert

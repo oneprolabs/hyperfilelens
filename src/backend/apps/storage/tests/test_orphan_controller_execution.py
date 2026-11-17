@@ -885,7 +885,7 @@ class SupervisorTests(SimpleTestCase):
         from apps.storage.services.internal.snapshot_inventory import controller_snapshot_inventory
 
         run.return_value = subprocess.CompletedProcess([], 0, "[]", "")
-        repository = SimpleNamespace(id=10)
+        repository = SimpleNamespace(id=10, config={})
         self.assertEqual(controller_snapshot_inventory(repository), [])
         readonly_connect.assert_called_once_with(repository, config_file=config.return_value)
         writable_connect.assert_not_called()

@@ -432,6 +432,9 @@ def _reject_foreign_descendant_markers(
 
 
 def _s3_args(repository: Repository) -> dict[str, object]:
+    from .repository_provider import managed_repository_provider
+    if managed_repository_provider(repository) is not None:
+        raise RepositoryOwnershipError("This operation requires the Managed Storage execution adapter.")
     config = repository.config if isinstance(repository.config, dict) else {}
     secrets_payload = resolve_repository_secrets(repository)
     return {

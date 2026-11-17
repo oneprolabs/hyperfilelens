@@ -8,6 +8,113 @@
   background: #fff !important;
 }
 
+/* Organization and language pickers use the same compact menu surface.
+   The account menu keeps its richer header/body layout below. */
+.nav-dropdown-popover.org-switcher-popover.el-popper,
+.hfl-language-switcher-popper.el-popper {
+  padding: 6px !important;
+  border: 1px solid var(--color-border-light, #e4e7ed) !important;
+  border-radius: 10px !important;
+  background: var(--el-bg-color-overlay, #fff) !important;
+  box-shadow:
+    0 12px 32px rgba(15, 23, 42, 0.16),
+    0 2px 8px rgba(15, 23, 42, 0.08) !important;
+}
+
+.nav-dropdown-popover.org-switcher-popover.el-popper {
+  min-width: 180px;
+}
+
+.hfl-language-switcher-popper.el-popper {
+  width: 110px !important;
+  min-width: 110px !important;
+  max-width: calc(100vw - 24px);
+}
+
+.nav-dropdown-popover.org-switcher-popover .el-dropdown-menu,
+.hfl-language-switcher-popper .el-dropdown-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item,
+.hfl-language-switcher-popper .el-dropdown-menu__item {
+  min-height: 36px;
+  padding: 8px 10px !important;
+  color: var(--el-text-color-regular, #303133) !important;
+  font-size: 13px;
+  line-height: 20px;
+  border-radius: 7px;
+}
+
+.nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item:hover,
+.nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item:focus,
+.nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item.is-selected,
+.hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):hover,
+.hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):focus {
+  color: var(--color-primary-hover, #4e3fd4) !important;
+  background: var(--color-primary-light, #f0edff) !important;
+}
+
+.nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item.is-selected,
+.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected,
+.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:hover,
+.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:focus {
+  color: var(--color-primary-hover, #4e3fd4) !important;
+  font-weight: 600;
+  background: var(--color-primary-light, #f0edff) !important;
+}
+
+.nav-dropdown-popover.org-switcher-popover.el-popper .el-popper__arrow::before,
+.hfl-language-switcher-popper.el-popper .el-popper__arrow::before {
+  background: var(--el-bg-color-overlay, #fff) !important;
+  border-color: var(--color-border-light, #e4e7ed) !important;
+}
+
+.nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item:focus-visible,
+.hfl-language-switcher-popper .el-dropdown-menu__item:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary, #6d5ef6) 60%, transparent);
+  outline-offset: -2px;
+}
+
+:root[data-theme="dark"] .nav-dropdown-popover.org-switcher-popover.el-popper,
+:root[data-theme="dark"] .hfl-language-switcher-popper.el-popper {
+  border-color: var(--color-border, #3a3b46) !important;
+  background: var(--color-grey-1, #1f2028) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34) !important;
+}
+
+:root[data-theme="dark"] .nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item,
+:root[data-theme="dark"] .hfl-language-switcher-popper .el-dropdown-menu__item {
+  color: var(--color-text-primary, #e5e7eb) !important;
+}
+
+:root[data-theme="dark"] .nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item:hover,
+:root[data-theme="dark"] .nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item:focus,
+:root[data-theme="dark"] .nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item.is-selected,
+:root[data-theme="dark"] .hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):hover,
+:root[data-theme="dark"] .hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):focus,
+:root[data-theme="dark"] .hfl-language-switcher-popper .el-dropdown-menu__item.is-selected,
+:root[data-theme="dark"] .hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:hover,
+:root[data-theme="dark"] .hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:focus {
+  color: var(--color-brand-violet-soft, #c8c0ff) !important;
+  background: var(--color-primary-light, rgba(109, 94, 246, 0.16)) !important;
+}
+
+:root[data-theme="dark"] .nav-dropdown-popover.org-switcher-popover .el-dropdown-menu__item.is-selected,
+:root[data-theme="dark"] .hfl-language-switcher-popper .el-dropdown-menu__item.is-selected {
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .nav-dropdown-popover.org-switcher-popover.el-popper .el-popper__arrow::before,
+:root[data-theme="dark"] .hfl-language-switcher-popper.el-popper .el-popper__arrow::before {
+  background: var(--color-grey-1, #1f2028) !important;
+  border-color: var(--color-border, #3a3b46) !important;
+}
+
 .nav-dropdown-panel {
   border-radius: inherit;
   overflow: hidden;

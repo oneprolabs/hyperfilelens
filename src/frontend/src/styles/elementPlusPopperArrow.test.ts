@@ -42,8 +42,8 @@ describe('Element Plus popper arrows', () => {
     expect(sharedStyles).toMatch(
       /\[data-popper-placement\^='top'\][\s\S]*?clip-path:\s*inset\(5px 0 -3px 0\)/,
     )
-    expect(languageSwitcher).toMatch(
-      /\.hfl-language-switcher-popper\.el-popper \.el-popper__arrow::before\s*{[^}]*background:\s*#272633\s*!important;/s,
+    expect(navigationStyles).toMatch(
+      /\.hfl-language-switcher-popper\.el-popper \.el-popper__arrow::before\s*{[^}]*background:\s*var\(--el-bg-color-overlay, #fff\)\s*!important;/s,
     )
   })
 })

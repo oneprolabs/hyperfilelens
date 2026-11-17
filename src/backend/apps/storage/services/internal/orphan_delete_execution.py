@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import timedelta
 import fcntl
 import json
@@ -116,10 +116,12 @@ class ControllerDelete:
         self.outcome = ""
 
     def run(self, command: list[str], env: dict[str, str],
-            timeout: float) -> subprocess.CompletedProcess[str]:
+            timeout: float, *,
+            renew_identity: Callable[[], None] | None = None) -> subprocess.CompletedProcess[str]:
         """Persist intent before spawning; never let a Worker own CLI lifetime."""
         from apps.storage.services.internal.orphan_snapshot_fence import backup_blocker
         from apps.storage.services.internal.orphan_snapshots import managed_ids, pending_operation
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
 
         if connection.in_atomic_block:
             raise OrphanReconciliationError(
@@ -134,9 +136,15 @@ class ControllerDelete:
                 "ORPHAN_AGENT_IDENTITY_MISMATCH",
                 "The deletion command does not match its snapshot intent.",
             )
+        provider = managed_repository_provider(self.rt.repository)
+        if provider is not None:
+            provider.verify_orphan_ownership(self.rt.repository)
+        if renew_identity is not None:
+            renew_identity()
         attempt_id = uuid4()
         root = _root()
         fd = _open_lease(root / f"{attempt_id}.lease", create=True)
+        process = None
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             os.write(fd, str(attempt_id).encode())
@@ -176,6 +184,7 @@ class ControllerDelete:
                         and candidate.delete_not_before > now
                     )
                     or repository_delete_revision(repository) != self.revision
+                    or provider is not None and rt.execution_token != self.rt.execution_token
                     or backup_blocker(repository)
                     or candidate.snapshot_id in managed_ids(repository)
                     or pending_operation(repository, candidate.operation_id)
@@ -194,6 +203,11 @@ class ControllerDelete:
                 rt.execution_token = attempt_id
                 rt.execution_heartbeat_at = timezone.now()
                 rt.save(update_fields=["execution_token", "execution_heartbeat_at"])
+            if provider is not None:
+                # Only the committed host intent may rotate the extension's
+                # execution token. No Agent/request payload can provide this.
+                self.rt.execution_token = attempt_id
+                provider.bind_orphan_delete_attempt(self.rt, self.attempt)
             runner = Path(__file__).with_name("orphan_delete_runner.py")
             process = subprocess.Popen(
                 [sys.executable, str(runner), "--lease-fd", str(fd),
@@ -208,6 +222,8 @@ class ControllerDelete:
             deadline = time.monotonic() + timeout + 20
             heartbeat_at = time.monotonic()
             while True:
+                if renew_identity is not None:
+                    renew_identity()
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(process.args, timeout + 20)
@@ -239,8 +255,22 @@ class ControllerDelete:
                     pk=attempt_id, state="prepared"
                 ).update(state="finished", exit_code=code, finished_at=timezone.now())
             return subprocess.CompletedProcess(command, code, "", "")
-        except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
-            if self.attempt is not None:
+        except BaseException as exc:
+            if process is not None and process.poll() is None:
+                # The independent supervisor must stop/reap its CLI before
+                # the private renewable credential file is removed. Its
+                # durable journal/lease still governs business recovery.
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.communicate(timeout=15)
+                except subprocess.TimeoutExpired:
+                    raise _error("Deletion execution termination requires confirmation.") from exc
+            if self.attempt is not None and isinstance(
+                exc, (OSError, ValueError, KeyError, subprocess.TimeoutExpired),
+            ):
                 raise _error("Automatically confirming Controller deletion execution.") from exc
             raise
         finally:
