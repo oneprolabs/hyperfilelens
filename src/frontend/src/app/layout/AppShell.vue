@@ -27,6 +27,7 @@ const installationContext = computed(() => {
 })
 const adminConsoleUrl = ref('')
 const adminConsoleLandingPath = ref('')
+const showOrganizationSwitcher = ref(false)
 // Bump this whenever theme changes so child components re-evaluate CSS var refs
 const themeVersion = ref(0)
 const fallbackSidebarCollapsed = ref(localStorage.getItem('sidebar-collapsed') === 'true')
@@ -48,8 +49,6 @@ const timezoneOffsetDisplay = computed(() => {
   const minutes = String(absOffset % 60).padStart(2, '0')
   return `GMT${sign}${hours}:${minutes}`
 })
-const timezoneDisplay = computed(() => `${t('nav.timezone')}${timezoneOffsetDisplay.value}`)
-
 function pathMatchesPrefix(path: string, prefix: string) {
   return path === prefix || path.startsWith(`${prefix}/`)
 }
@@ -96,6 +95,7 @@ function toggleFallbackSidebar() {
 async function refreshHeaderProfile() {
   const profile = await fetchDeployProfile(true)
   supportOrgKey.value = profile?.support_org_key ?? null
+  showOrganizationSwitcher.value = profile?.edition === 'enterprise' && profile.site_role === 'tenant'
   adminConsoleUrl.value = profile?.admin_console_entry_visible
     ? profile.admin_console_url
     : ''
@@ -469,8 +469,8 @@ function applyThemeVars(t: string) {
     <TopNav
       :mobile-menu-open="mobileNavigationOpen"
       :admin-console-href="adminConsoleHref"
-      :timezone-display="timezoneDisplay"
       :timezone-offset-display="timezoneOffsetDisplay"
+      :show-organization-switcher="showOrganizationSwitcher"
       @toggle-mobile-menu="mobileNavigationOpen = !mobileNavigationOpen"
     />
     <MobileNavigationDrawer
@@ -480,6 +480,7 @@ function applyThemeVars(t: string) {
       :module-items="fallbackMenuItems"
       :admin-console-href="adminConsoleHref"
       :timezone-offset-display="timezoneOffsetDisplay"
+      :show-organization-switcher="showOrganizationSwitcher"
     />
     <div
       v-if="supportOrgKey && supportOrgKey === currentUser?.access_profile?.org_key"
@@ -501,6 +502,7 @@ function applyThemeVars(t: string) {
             matchedRoute.path === '/protection/backups'
               || matchedRoute.path === '/protection/backup-sources'
               || matchedRoute.path === '/node/repositories'
+              || matchedRoute.path === '/node/managed-storage'
               || matchedRoute.path === '/ops/tasks'
               || matchedRoute.name === 'protection-backup-data-browser'
               ? matchedRoute.path

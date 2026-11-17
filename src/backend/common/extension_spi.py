@@ -12,6 +12,20 @@ from typing import Any, Protocol, Sequence
 class AuthzProvider(Protocol):
     """Org + platform authorization (typically one commercial plugin)."""
 
+    def initialize_installation_organizations(
+        self, *, user: Any, default_organization: Any | None = None,
+    ) -> None:
+        """Optional explicit bootstrap hook; never called by registration."""
+        ...
+
+    def preferred_installation_organization(self, user: Any) -> str | None:
+        """Optional default for the installation identity, not a membership grant."""
+        ...
+
+    def organization_mode(self, *, organization_id: int) -> str:
+        """Optional display capability based on a stable organization reference."""
+        ...
+
     def is_org_member(self, user: Any, org_key: str) -> bool: ...
 
     def get_org_role(self, user: Any, org_key: str) -> str | None:
@@ -204,8 +218,54 @@ class QuotaProvider(Protocol):
         ...
 
 
+class RepositoryProvider(Protocol):
+    """Optional credential/lifecycle adapter; never changes ordinary repositories."""
+
+    def manages(self, repository: Any) -> bool: ...
+
+    def initialize(self, repository: Any, *, recovery: bool) -> None: ...
+
+    def check(self, repository: Any) -> None: ...
+
+    def exclude_managed(self, queryset: Any) -> Any: ...
+
+    def runtime_payload(self, repository: Any, payload: dict) -> dict: ...
+
+    def delivery_payload(self, task: Any, payload: dict) -> dict: ...
+
+    def bind_task_authority(self, task: Any, authority: Any) -> None: ...
+
+    def cleanup(self, repository_task: Any) -> dict: ...
+
+    def maintenance_execution(self, repository_task: Any, execution_token: Any) -> Any: ...
+
+    def verify_maintenance_ownership(self, repository: Any) -> None: ...
+
+    def orphan_reconciliation_execution(self, repository_task: Any) -> Any: ...
+
+    def verify_orphan_ownership(self, repository: Any) -> None: ...
+
+    def bind_orphan_delete_attempt(self, repository_task: Any, attempt: Any) -> None: ...
+
+    def command_environment(self, repository: Any, *, args: Any = None) -> Any:
+        """Context manager yielding a private, renewable Kopia credential file."""
+        ...
+
+
 _authz_provider: AuthzProvider | None = None
 _quota_provider: QuotaProvider | None = None
+_repository_provider: RepositoryProvider | None = None
+
+
+def register_repository_provider(provider: RepositoryProvider | None) -> None:
+    global _repository_provider
+    if provider is not None and _repository_provider is not None:
+        raise RuntimeError("RepositoryProvider already registered (singleton slot)")
+    _repository_provider = provider
+
+
+def get_repository_provider() -> RepositoryProvider | None:
+    return _repository_provider
 
 
 def register_authz_provider(provider: AuthzProvider | None) -> None:
@@ -230,18 +290,19 @@ def get_quota_provider() -> QuotaProvider | None:
     return _quota_provider
 
 
-def clear_providers_for_tests() -> tuple[AuthzProvider | None, QuotaProvider | None]:
+def clear_providers_for_tests() -> tuple[AuthzProvider | None, QuotaProvider | None, RepositoryProvider | None]:
     """Test helper: clear singleton slots; return previous providers for restore."""
-    global _authz_provider, _quota_provider
-    previous = (_authz_provider, _quota_provider)
+    global _authz_provider, _quota_provider, _repository_provider
+    previous = (_authz_provider, _quota_provider, _repository_provider)
     _authz_provider = None
     _quota_provider = None
+    _repository_provider = None
     return previous
 
 
 def restore_providers_for_tests(
-    previous: tuple[AuthzProvider | None, QuotaProvider | None],
+    previous: tuple[AuthzProvider | None, QuotaProvider | None, RepositoryProvider | None],
 ) -> None:
     """Test helper: restore providers saved by ``clear_providers_for_tests``."""
-    global _authz_provider, _quota_provider
-    _authz_provider, _quota_provider = previous
+    global _authz_provider, _quota_provider, _repository_provider
+    _authz_provider, _quota_provider, _repository_provider = previous

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, Globe } from 'lucide-vue-next'
+import { ChevronDown, Globe } from 'lucide-vue-next'
 import { useLocaleSwitch } from '../composables/useLocaleSwitch'
 
 const props = withDefaults(
@@ -56,7 +56,6 @@ function handleVisibleChange(visible: boolean) {
     <button
       type="button"
       class="language-switcher__trigger"
-      :title="ariaLabel"
       :aria-label="ariaLabel"
       aria-haspopup="menu"
       :aria-expanded="dropdownOpen"
@@ -98,12 +97,6 @@ function handleVisibleChange(visible: boolean) {
         >
           <span class="language-switcher__option">
             <span class="language-switcher__option-label">{{ option.label }}</span>
-            <Check
-              v-if="option.code === String(locale)"
-              class="language-switcher__check"
-              :size="16"
-              aria-hidden="true"
-            />
           </span>
         </ElDropdownItem>
       </ElDropdownMenu>
@@ -207,16 +200,30 @@ function handleVisibleChange(visible: boolean) {
 
 .language-switcher--navigation .language-switcher__trigger,
 .language-switcher--navigation.language-switcher--static {
+  box-sizing: border-box;
+  height: 32px;
   min-height: 32px;
-  padding: 5px 9px;
-  background: var(--tz-bg, rgba(255, 255, 255, 0.045));
-  border-color: var(--tz-border, rgba(255, 255, 255, 0.1));
+  padding: 0 9px;
+  line-height: 1.5;
+  background: var(--nav-utility-bg, rgba(255, 255, 255, 0.025));
+  border-color: var(--nav-utility-border, rgba(148, 163, 184, 0.28));
+  border-radius: 6px;
+}
+
+.language-switcher--navigation .language-switcher__current {
+  line-height: 1.5;
 }
 
 .language-switcher--navigation .language-switcher__trigger:hover,
 .language-switcher--navigation .language-switcher__trigger:focus-visible {
-  background: var(--icon-btn-hover-bg, rgba(255, 255, 255, 0.08));
-  border-color: rgba(255, 255, 255, 0.18);
+  background: var(--nav-utility-hover-bg, rgba(109, 94, 246, 0.1));
+  border-color: var(--nav-utility-border-hover, rgba(109, 94, 246, 0.52));
+  color: var(--icon-btn-hover-color, #fff);
+}
+
+.language-switcher--navigation .language-switcher__trigger:focus-visible {
+  outline: 2px solid var(--color-primary, #6D5EF6);
+  outline-offset: 2px;
 }
 
 .language-switcher--mobile {
@@ -302,57 +309,6 @@ function handleVisibleChange(visible: boolean) {
 </style>
 
 <style>
-.hfl-language-switcher-popper.el-popper {
-  min-width: 180px;
-  padding: 6px !important;
-  background: #272633 !important;
-  border: 1px solid rgba(255, 255, 255, 0.14) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34) !important;
-}
-
-.hfl-language-switcher-popper .el-dropdown-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 0 !important;
-  background: transparent !important;
-}
-
-.hfl-language-switcher-popper.el-popper .el-popper__arrow::before {
-  background: #272633 !important;
-  border-color: rgba(255, 255, 255, 0.14) !important;
-}
-
-.hfl-language-switcher-popper .el-dropdown-menu__item {
-  min-height: 36px;
-  padding: 8px 10px !important;
-  color: rgba(255, 255, 255, 0.82) !important;
-  border-radius: 7px;
-}
-
-.hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):hover,
-.hfl-language-switcher-popper .el-dropdown-menu__item:not(.is-selected):focus {
-  color: #fff !important;
-  background: rgba(255, 255, 255, 0.08) !important;
-}
-
-.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected {
-  color: #fff !important;
-  background: rgba(109, 94, 246, 0.22) !important;
-}
-
-.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:hover,
-.hfl-language-switcher-popper .el-dropdown-menu__item.is-selected:focus {
-  color: #fff !important;
-  background: rgba(109, 94, 246, 0.3) !important;
-}
-
-.hfl-language-switcher-popper .el-dropdown-menu__item:focus-visible {
-  outline: 2px solid rgba(174, 164, 255, 0.9);
-  outline-offset: -2px;
-}
-
 .language-switcher__option {
   display: flex;
   align-items: center;
@@ -364,11 +320,6 @@ function handleVisibleChange(visible: boolean) {
 .language-switcher__option-label {
   font-size: 13px;
   line-height: 1.35;
-}
-
-.language-switcher__check {
-  flex: 0 0 auto;
-  color: #b9b0ff;
 }
 
 </style>

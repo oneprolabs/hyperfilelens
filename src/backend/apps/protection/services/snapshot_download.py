@@ -398,6 +398,7 @@ def create_snapshot_download_task(
     directory_id: int,
     path: str,
     trigger_type: str = Task.TriggerType.MANUAL,
+    requested_by_id: int | None = None,
     package_as_snapshot_archive: bool = False,
 ) -> Task:
     clean_path = _clean_relative_path(path)
@@ -418,6 +419,7 @@ def create_snapshot_download_task(
         display_name=f"Download snapshot path {display_path}",
         trigger_type=trigger_type,
         request_payload={
+            **({"execution_actor_id": requested_by_id} if requested_by_id is not None else {}),
             "source_snapshot_directory_id": directory.id,
             "source_snapshot_id": directory.source_snapshot_id,
             "source_snapshot_uid": source_snapshot.snapshot_uid,
@@ -495,6 +497,7 @@ def create_snapshot_batch_download_task(
     directory_id: int,
     paths: list[str],
     trigger_type: str = Task.TriggerType.MANUAL,
+    requested_by_id: int | None = None,
     package_as_snapshot_archive: bool = False,
 ) -> Task:
     if not paths:
@@ -520,6 +523,7 @@ def create_snapshot_batch_download_task(
         display_name=f"Download {len(clean_paths)} snapshot paths",
         trigger_type=trigger_type,
         request_payload={
+            **({"execution_actor_id": requested_by_id} if requested_by_id is not None else {}),
             "source_snapshot_directory_id": directory.id,
             "source_snapshot_id": directory.source_snapshot_id,
             "source_snapshot_uid": source_snapshot.snapshot_uid,
@@ -670,6 +674,7 @@ def create_snapshot_group_download_task(
     snapshot_id: int,
     groups: list[dict[str, Any]],
     trigger_type: str = Task.TriggerType.MANUAL,
+    requested_by_id: int | None = None,
 ) -> Task:
     directories, normalized_groups, selected_count = (
         _normalize_snapshot_download_groups(
@@ -693,6 +698,7 @@ def create_snapshot_group_download_task(
             directory_id=first_directory.id,
             path="",
             trigger_type=trigger_type,
+            requested_by_id=requested_by_id,
             package_as_snapshot_archive=True,
         )
     try:
@@ -700,6 +706,7 @@ def create_snapshot_group_download_task(
             organization_id=organization_id,
             directory_id=first_directory.id,
             groups=normalized_groups,
+            requested_by_id=requested_by_id,
         )
     except SnapshotMultiDownloadUnsupported:
         if len(normalized_groups) != 1:
@@ -711,6 +718,7 @@ def create_snapshot_group_download_task(
                 directory_id=first_directory.id,
                 path=legacy_paths[0],
                 trigger_type=trigger_type,
+                requested_by_id=requested_by_id,
                 package_as_snapshot_archive=True,
             )
         return create_snapshot_batch_download_task(
@@ -718,6 +726,7 @@ def create_snapshot_group_download_task(
             directory_id=first_directory.id,
             paths=legacy_paths,
             trigger_type=trigger_type,
+            requested_by_id=requested_by_id,
             package_as_snapshot_archive=True,
         )
     if int(plan["selected_count"]) != selected_count:
@@ -737,6 +746,7 @@ def create_snapshot_group_download_task(
         display_name=f"Download {selected_count} snapshot items",
         trigger_type=trigger_type,
         request_payload={
+            **({"execution_actor_id": requested_by_id} if requested_by_id is not None else {}),
             "source_snapshot_directory_id": first_directory.id,
             "source_snapshot_id": source_snapshot.id,
             "source_snapshot_uid": source_snapshot.snapshot_uid,
@@ -853,6 +863,7 @@ def _run_snapshot_download_in_thread(*, task_id: int) -> None:
 def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
     payload = task.request_payload if isinstance(task.request_payload, dict) else {}
     directory_id = int(payload.get("source_snapshot_directory_id") or 0)
+    requested_by_id = payload.get("execution_actor_id")
     path = str(payload.get("path") or "")
     paths = payload.get("paths")
     groups = payload.get("groups")
@@ -918,6 +929,7 @@ def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
                 groups=groups,
                 upload_artifact=artifact,
                 wait_timeout_seconds=_download_timeout_seconds(),
+                requested_by_id=requested_by_id,
             )
         elif isinstance(paths, list) and paths:
             try:
@@ -928,6 +940,7 @@ def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
                     paths=[str(item or "") for item in paths],
                     upload_artifact=artifact,
                     wait_timeout_seconds=_download_timeout_seconds(),
+                    requested_by_id=requested_by_id,
                 )
             except SnapshotArtifactUploadUnsupported:
                 download = _download_batch_as_zip(
@@ -935,6 +948,7 @@ def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
                     directory_id=directory_id,
                     paths=[str(item or "") for item in paths],
                     task_id=task.id,
+                    requested_by_id=requested_by_id,
                 )
         else:
             download = download_snapshot_file(
@@ -944,6 +958,7 @@ def run_snapshot_download_task(*, task: Task) -> dict[str, Any]:
                 upload_artifact=artifact,
                 allow_directory_root=package_as_snapshot_archive and not path,
                 wait_timeout_seconds=_download_timeout_seconds(),
+                requested_by_id=requested_by_id,
             )
         _set_download_step_status(
             task=task,
@@ -1069,13 +1084,15 @@ def _complete_failed_snapshot_download(
 
 
 def _download_batch_as_zip(
-    *, organization_id: int, directory_id: int, paths: list[str], task_id: int
+    *, organization_id: int, directory_id: int, paths: list[str], task_id: int,
+    requested_by_id: int | None = None,
 ) -> SnapshotFileDownload:
     clean_paths = _dedupe_clean_paths(paths)
     if _has_path_conflict(clean_paths):
         raise ValidationError(
             {"paths": "Parent and child paths cannot be downloaded together."}
         )
+    parent = Task.objects.get(pk=task_id, organization_id=organization_id)
     buffer = BytesIO()
     used_names: set[str] = set()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -1085,6 +1102,8 @@ def _download_batch_as_zip(
                 directory_id=directory_id,
                 path=clean_path,
                 wait_timeout_seconds=_download_timeout_seconds(),
+                requested_by_id=requested_by_id,
+                parent_task=parent,
             )
             if download.content_type == "application/zip":
                 _append_nested_zip(

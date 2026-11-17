@@ -1,6 +1,7 @@
 [
   "account.emptyValue",
   "account.roleAuditor",
+  "accountUsage.general",
   "addNasRepo.accessPathDirect",
   "addNasRepo.accessPathWithProxy",
   "addNasRepo.phMountOptionsSmb",
@@ -59,6 +60,7 @@
   "insight.mcpServers.fieldEndpointPhUrl",
   "insight.usage.chat",
   "login.eulaSuffix",
+  "managedStorage.general",
   "nav.insight",
   "nodeLifecycle.consoleBash",
   "nodeLifecycle.consolePowerShell",

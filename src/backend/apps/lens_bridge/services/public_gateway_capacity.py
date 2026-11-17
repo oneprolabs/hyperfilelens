@@ -118,8 +118,14 @@ def _metered_managed_restore_bindings(
     *,
     gateway_link_ids: list[int],
     organization_id: int | None = None,
+    include_reservation_backed: bool = False,
 ):
-    """Return workspaces not currently represented by a Chat reservation."""
+    """Return live managed workspaces with their reservation de-duplication flag.
+
+    Organization/instance meters exclude reservation-backed workspaces by
+    default. User attribution also needs those rows to detect mixed ownership
+    before de-duplication; opting in must not change those existing meters.
+    """
 
     from django.db.models import Exists, OuterRef
 
@@ -143,13 +149,15 @@ def _metered_managed_restore_bindings(
     }
     if organization_id is not None:
         filters["organization_id"] = int(organization_id)
-    return (
+    bindings = (
         LensWorkspaceBinding.objects.filter(**filters)
         .exclude(state=LensWorkspaceBinding.State.DELETED)
         .annotate(has_chat_reservation=Exists(active_reservation))
-        .filter(has_chat_reservation=False)
         .select_related("knowledge_source")
     )
+    if not include_reservation_backed:
+        bindings = bindings.filter(has_chat_reservation=False)
+    return bindings
 
 
 def _occupancy_from_scope_dicts(

@@ -25,6 +25,7 @@ import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import EmailCodeLoginForm from '../../components/auth/EmailCodeLoginForm.vue'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import type { EmailCodeLoginData } from '../../lib/emailCodeLoginApi'
+import { chooseLoginOrganization, readStoredOrganizationKey } from '../../lib/organizationStorage'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
@@ -59,6 +60,9 @@ const {
 } = useTurnstileConfig('login')
 
 const { setUser } = useAuth()
+// Capture before authentication clears stale request context. The server's
+// available_orgs remains authoritative; a removed choice falls back normally.
+const rememberedOrganization = readStoredOrganizationKey()
 setAuthenticatedLocaleApplicationSuppressed(true)
 const { syncAuthenticatedLocale } = useLocaleSwitch()
 const explicitlySelectedLocale = ref<string | null>(null)
@@ -565,10 +569,10 @@ async function handleSubmit() {
       return
     }
 
-    // Auto-login with the first available organization
+    // Prefer the last available organization without adding a login picker.
     const orgs = res.data.available_orgs || []
     if (orgs.length > 0) {
-      await completeLoginWithOrg(orgs[0].org_key)
+      await completeLoginWithOrg(chooseLoginOrganization(orgs, rememberedOrganization))
       return
     }
 
@@ -685,7 +689,7 @@ async function handleEmailCodeVerified(data: EmailCodeLoginData) {
     return
   }
   try {
-    await completeLoginWithOrg(orgs[0].org_key)
+    await completeLoginWithOrg(chooseLoginOrganization(orgs, rememberedOrganization))
   } finally {
     if (loginState.value === 'submitting' && !navigationFinished.value) {
       loginState.value = 'idle'

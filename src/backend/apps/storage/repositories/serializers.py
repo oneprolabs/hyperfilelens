@@ -531,6 +531,14 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         instance = self.instance
         incoming_config = dict(attrs.get("config") or {})
+        if "credential_mode" in incoming_config:
+            raise serializers.ValidationError({"config": "Credential mode cannot be supplied by this API."})
+        if instance is not None:
+            from apps.storage.services.internal.repository_provider import managed_repository_provider
+            if managed_repository_provider(instance) is not None and (
+                incoming_config or attrs.get("credential_payload") is not None
+            ):
+                raise serializers.ValidationError({"config": "Managed Repository storage and credentials cannot be edited here."})
         inline_secrets = {
             key: incoming_config.pop(key)
             for key in SECRET_CONFIG_FIELDS

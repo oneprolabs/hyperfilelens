@@ -15,11 +15,14 @@ from apps.storage.services.internal.s3_url_style import normalize_s3_url_style
 
 
 SECRET_CONFIG_FIELDS = frozenset(
-    {"secret_access_key", "smb_password", "kopia_password"}
+    {"secret_access_key", "session_token", "smb_password", "kopia_password"}
 )
 SECRET_VALUE_KEYS = frozenset(
     {
         "secret_access_key",
+        "session_token",
+        "securitytoken",
+        "token",
         "smb_password",
         "kopia_password",
         "password",
@@ -28,7 +31,7 @@ SECRET_VALUE_KEYS = frozenset(
     }
 )
 _SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)(secret_access_key|smb_password|kopia_password|password|secret)(\s*[:=]\s*)([^,\s}\]]+)"
+    r"(?i)(secret_access_key|session_token|securitytoken|token|smb_password|kopia_password|password|secret)(\s*[:=]\s*)([^,\s}\]]+)"
 )
 
 
@@ -195,7 +198,7 @@ def build_repository_runtime_payload(
             raise ValidationError(
                 {"repository_id": "S3 repository has not been initialized."}
             )
-        return {
+        payload = {
             "id": repository.id,
             "type": Repository.Type.S3,
             "platform": str(repository.s3_platform or "").strip(),
@@ -218,6 +221,11 @@ def build_repository_runtime_payload(
             ),
             "ownership": ownership_payload_for_node(repository),
         }
+        from .repository_provider import managed_repository_provider
+        provider = managed_repository_provider(repository)
+        if provider is not None:
+            return provider.runtime_payload(repository, payload)
+        return payload
     if repository.repo_type == Repository.Type.PROXY_FS:
         if execution_target is None:
             raise ValidationError(

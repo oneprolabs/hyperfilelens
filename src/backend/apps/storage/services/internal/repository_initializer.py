@@ -121,6 +121,18 @@ def initialize_s3_repository(
     recovery: bool = False,
 ) -> None:
     """Initialize or recover an S3-backed Kopia repository."""
+    from .repository_provider import managed_repository_provider
+    provider = managed_repository_provider(repository)
+    if provider is not None:
+        try:
+            provider.initialize(repository, recovery=recovery)
+        except RepositoryAlreadyExistsError:
+            raise
+        except Exception:
+            # Cloud errors may contain signing context. This boundary must not
+            # write them to durable RepositoryTask events.
+            raise RepositoryInitializationError("Managed Repository initialization failed.") from None
+        return
     config = dict(repository.config or {})
     secrets_payload = resolve_repository_secrets(repository)
     try:
@@ -304,6 +316,14 @@ def check_s3_repository(
     refresh_namespace: bool = False,
     adopt_legacy_ownership: bool = True,
 ) -> None:
+    from .repository_provider import managed_repository_provider
+    provider = managed_repository_provider(repository)
+    if provider is not None:
+        try:
+            provider.check(repository)
+        except Exception:
+            raise RepositoryInitializationError("Managed Repository access or ownership could not be verified.") from None
+        return
     config = repository.config or {}
     secrets_payload = resolve_repository_secrets(repository)
     try:

@@ -3,7 +3,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useRoute, RouterView } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, LoaderCircle, Menu } from 'lucide-vue-next'
+import { ArrowLeft, Clock3, LoaderCircle, Menu } from 'lucide-vue-next'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import Sidebar from '../../components/Sidebar.vue'
@@ -36,8 +36,6 @@ const timezoneOffsetDisplay = computed(() => {
   const minutes = String(absOffset % 60).padStart(2, '0')
   return `GMT${sign}${hours}:${minutes}`
 })
-const timezoneDisplay = computed(() => `${t('nav.timezone')}${timezoneOffsetDisplay.value}`)
-
 const routeSkeletonShowsCards = computed(
   () => route.path.startsWith('/platform-ops/monitoring')
     || route.path.startsWith('/platform-ops/alert-center')
@@ -146,9 +144,13 @@ watch(
         </button>
         <span
           class="platform-ops-timezone platform-ops-header__desktop-utility"
-          :title="timezoneDisplay"
+          :aria-label="`${t('nav.timezone')} ${timezoneOffsetDisplay}`"
         >
-          <span class="platform-ops-timezone__label">{{ t('nav.timezone') }}</span>
+          <Clock3
+            :size="15"
+            stroke-width="1.75"
+            aria-hidden="true"
+          />
           <span>{{ timezoneOffsetDisplay }}</span>
         </span>
         <span class="platform-ops-header__desktop-utility">
@@ -317,18 +319,19 @@ watch(
 .platform-ops-header__actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
 .platform-ops-timezone {
   display: flex;
   height: 32px;
+  box-sizing: border-box;
   align-items: center;
   gap: 4px;
-  padding: 0 10px;
-  border: 1px solid var(--tz-border, rgba(255, 255, 255, 0.12));
-  border-radius: 10px;
-  background: var(--tz-bg, rgba(255, 255, 255, 0.06));
+  padding: 0 9px;
+  border: 1px solid var(--nav-utility-border, rgba(148, 163, 184, 0.28));
+  border-radius: 6px;
+  background: var(--nav-utility-bg, rgba(255, 255, 255, 0.025));
   color: var(--tz-color, #c9cdd4);
   font-size: 13px;
   font-weight: 500;
@@ -336,14 +339,21 @@ watch(
   white-space: nowrap;
 }
 
+.platform-ops-timezone svg {
+  flex: 0 0 auto;
+  opacity: 0.9;
+}
+
 .platform-ops-return {
   display: inline-flex;
   align-items: center;
+  box-sizing: border-box;
   gap: 6px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: transparent;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--nav-utility-border, rgba(148, 163, 184, 0.28));
+  border-radius: 6px;
+  background: var(--nav-utility-bg, rgba(255, 255, 255, 0.025));
   color: var(--nav-item-color, #bec2d4);
   cursor: pointer;
   font-size: 13px;
@@ -353,8 +363,14 @@ watch(
 }
 
 .platform-ops-return:not(:disabled):hover {
-  border-color: var(--color-primary, #6d5ef6);
+  border-color: var(--nav-utility-border-hover, rgba(109, 94, 246, 0.52));
+  background: var(--nav-utility-hover-bg, rgba(109, 94, 246, 0.1));
   color: var(--nav-item-hover-color, #fff);
+}
+
+.platform-ops-return:focus-visible {
+  outline: 2px solid var(--color-primary, #6d5ef6);
+  outline-offset: 2px;
 }
 
 .platform-ops-return:disabled {
@@ -638,10 +654,6 @@ watch(
   .platform-ops-timezone {
     padding-right: 8px;
     padding-left: 8px;
-  }
-
-  .platform-ops-timezone__label {
-    display: none;
   }
 }
 

@@ -5,6 +5,7 @@ import { ChevronDown, Clock3, ExternalLink, Shield, X } from 'lucide-vue-next'
 import type { AppPrimaryNavItem } from '../composables/useAppPrimaryNav'
 import type { MenuItem } from './ModulePage.vue'
 import LanguageSwitcher from './LanguageSwitcher.vue'
+import OrgSwitcher from './OrgSwitcher.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -14,12 +15,14 @@ const props = withDefaults(
     moduleItems?: MenuItem[]
     adminConsoleHref?: string
     timezoneOffsetDisplay?: string
+    showOrganizationSwitcher?: boolean
   }>(),
   {
     primaryItems: () => [],
     moduleItems: () => [],
     adminConsoleHref: '',
     timezoneOffsetDisplay: '',
+    showOrganizationSwitcher: false,
   },
 )
 
@@ -225,6 +228,10 @@ function moduleItemActive(to?: string) {
         </section>
 
         <section class="mobile-navigation__section mobile-navigation__section--utility">
+          <OrgSwitcher
+            v-if="showOrganizationSwitcher"
+            variant="mobile"
+          />
           <LanguageSwitcher
             variant="mobile"
             @change="close"

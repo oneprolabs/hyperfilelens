@@ -13,6 +13,7 @@ function mountMenus() {
     locale: 'en',
     messages: {
       en: {
+        accountUsage: { title: 'Resource Usage' },
         account: {
           groupAccountCenter: 'Account',
           sidebarProfile: 'Personal Settings',
@@ -52,6 +53,11 @@ describe('useAccountCenterMenus', () => {
         pageTitle: 'Personal Settings',
         to: '/account/profile',
       },
+      ...(__HFL_EXTENSIONS_FRONTEND__ ? [{
+        label: 'Resource Usage',
+        pageTitle: 'Resource Usage',
+        to: '/account/usage',
+      }] : []),
       {
         label: 'Notifications',
         pageTitle: 'Notifications',

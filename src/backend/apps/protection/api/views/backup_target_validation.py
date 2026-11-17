@@ -32,5 +32,6 @@ class BackupTargetValidationView(APIView):
             validate_backup_targets(
                 organization_id=org.id,
                 sources=serializer.validated_data["sources"],
+                requested_by_id=request.user.pk,
             )
         )

@@ -15,8 +15,8 @@ const mobileNavSource = readFileSync(
 describe('primary navigation icons', () => {
   it('defines one shared Lucide icon for every primary destination', () => {
     expect(primaryNavSource).toContain("{ to: '/', label: t('nav.overview'), icon: LayoutDashboard }")
-    expect(primaryNavSource).toContain(
-      "{ to: '/protection', label: t('nav.protection'), icon: ShieldCheck }",
+    expect(primaryNavSource).toMatch(
+      /\{\s*to:\s*managedStorageEntry\(\)\s*&&\s*resolveProtectionEntry\(has\)\s*===\s*'\/'\s*\?\s*'\/node\/managed-storage'\s*:\s*'\/protection',\s*label:\s*t\('nav\.protection'\),\s*icon:\s*ShieldCheck\s*\}/,
     )
     expect(primaryNavSource).toContain(
       "{ to: '/insight', label: t('nav.insight'), icon: Sparkles }",
@@ -42,9 +42,9 @@ describe('primary navigation icons', () => {
       /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.nav-item__icon\s*{[\s\S]*?display:\s*none/,
     )
     expect(topNavSource).toMatch(
-      /@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)[\s\S]*?\.timezone-display__label\s*{[\s\S]*?display:\s*none/,
+      /\.timezone-display\s*{[\s\S]*?white-space:\s*nowrap[\s\S]*?border-radius:\s*6px/,
     )
-    expect(topNavSource).toContain('class="timezone-display__label"')
+    expect(topNavSource).toContain('class="timezone-display__value"')
     expect(topNavSource).toMatch(
       /@media \(max-width: 1023\.98px\)[\s\S]*?\.nav-menu,[\s\S]*?display:\s*none/,
     )

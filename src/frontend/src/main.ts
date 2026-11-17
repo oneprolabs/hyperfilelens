@@ -24,8 +24,10 @@ import { setLocale } from './lib/api'
 import { setupAuthGuard, setupSessionWatchdog } from './composables/useAuth'
 import { initSentry } from './lib/sentry'
 import { activateAppAnalytics, initAppAnalytics } from './lib/analytics'
+import { installOrganizationHistoryGuard } from './lib/organizationHistory'
 
 async function bootstrap() {
+  installOrganizationHistoryGuard()
   const app = createApp(App)
   await initSentry(app, router)
   initAppAnalytics(router)

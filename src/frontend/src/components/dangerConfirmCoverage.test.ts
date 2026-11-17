@@ -20,6 +20,7 @@ describe('danger confirmation coverage', () => {
       .sort()
 
     expect(actual).toEqual([
+      'components/OrgSwitcher.vue',
       'lib/logout.ts',
       'pages/node/RepairNasRepository.vue',
       'pages/ops/AlertIncidents.vue',

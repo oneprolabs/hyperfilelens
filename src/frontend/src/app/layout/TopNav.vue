@@ -1,25 +1,26 @@
 <script setup lang="ts">
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Menu, Shield } from 'lucide-vue-next'
+import { Clock3, Menu, Shield } from 'lucide-vue-next'
 import NavNotificationPopover from '../../components/NavNotificationPopover.vue'
 import NavUserMenu from '../../components/NavUserMenu.vue'
 import { beginRouteRequestScope } from '../../lib/routeRequestAbort'
 import { beginRouteTransition } from '../../lib/routeTransition'
 import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
+import OrgSwitcher from '../../components/OrgSwitcher.vue'
 
 withDefaults(
   defineProps<{
     mobileMenuOpen?: boolean
     adminConsoleHref?: string
-    timezoneDisplay?: string
     timezoneOffsetDisplay?: string
+    showOrganizationSwitcher?: boolean
   }>(),
   {
     adminConsoleHref: '',
-    timezoneDisplay: '',
     timezoneOffsetDisplay: '',
+    showOrganizationSwitcher: false,
   },
 )
 
@@ -101,11 +102,14 @@ function handleNavClick(event: MouseEvent, to: string) {
     </nav>
 
     <div class="right-menu">
+      <OrgSwitcher
+        v-if="showOrganizationSwitcher"
+        class="desktop-navigation-control"
+      />
       <a
         v-if="adminConsoleHref"
         class="platform-ops-entry desktop-navigation-control"
         :href="adminConsoleHref"
-        :title="t('nav.platformOps')"
         :aria-label="t('nav.platformOps')"
         target="_blank"
         rel="noopener noreferrer"
@@ -119,10 +123,14 @@ function handleNavClick(event: MouseEvent, to: string) {
 
       <span
         class="timezone-display desktop-navigation-control"
-        :title="timezoneDisplay"
+        :aria-label="`${t('nav.timezone')} ${timezoneOffsetDisplay}`"
       >
-        <span class="timezone-display__label">{{ t('nav.timezone') }}</span>
-        <span>{{ timezoneOffsetDisplay }}</span>
+        <Clock3
+          :size="15"
+          stroke-width="1.75"
+          aria-hidden="true"
+        />
+        <span class="timezone-display__value">{{ timezoneOffsetDisplay }}</span>
       </span>
 
       <span class="desktop-navigation-control">
@@ -144,6 +152,12 @@ function handleNavClick(event: MouseEvent, to: string) {
   --brand-color: var(--color-primary, #6D5EF6);
   --brand-glow: rgba(109, 94, 246, 0.5);
   --nav-item-active-color: var(--color-primary, #6D5EF6);
+  --nav-utility-bg: rgba(255, 255, 255, 0.025);
+  --nav-utility-border: rgba(148, 163, 184, 0.28);
+  --nav-utility-border-hover: rgba(109, 94, 246, 0.52);
+  --nav-utility-hover-bg: rgba(109, 94, 246, 0.1);
+  --icon-btn-hover-bg: var(--nav-utility-hover-bg);
+  --nav-user-trigger-hover-bg: var(--nav-utility-hover-bg);
 
   height: var(--topnav-height);
   background:
@@ -282,18 +296,30 @@ function handleNavClick(event: MouseEvent, to: string) {
 
 .timezone-display {
   height: 32px;
-  padding: 0 10px;
+  box-sizing: border-box;
+  padding: 0 4px;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
   white-space: nowrap;
-  color: var(--tz-color, #c9cdd4);
+  color: var(--tz-color, #aeb2c5);
   display: flex;
   align-items: center;
   gap: 4px;
-  border-radius: 10px;
-  background: var(--tz-bg, rgba(255, 255, 255, 0.06));
-  border: 1px solid var(--tz-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  background: var(--nav-utility-bg);
+  border: 1px solid var(--nav-utility-border);
+}
+
+.timezone-display svg {
+  flex: 0 0 auto;
+  opacity: 0.9;
+}
+
+.timezone-display__value {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.5;
 }
 
 .alerts-btn {
@@ -374,10 +400,6 @@ function handleNavClick(event: MouseEvent, to: string) {
   .top-nav .platform-ops-entry:focus-visible {
     outline: 2px solid var(--color-primary, #6D5EF6);
     outline-offset: 2px;
-  }
-
-  .timezone-display__label {
-    display: none;
   }
 }
 
@@ -556,21 +578,32 @@ function handleNavClick(event: MouseEvent, to: string) {
 .platform-ops-entry {
   display: inline-flex;
   align-items: center;
+  box-sizing: border-box;
+  height: 32px;
   gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  border-radius: 8px;
+  padding: 0 9px;
+  border: 1px solid var(--nav-utility-border);
+  border-radius: 6px;
+  background: var(--nav-utility-bg);
   color: var(--nav-item-color, #bec2d4);
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
   text-decoration: none;
   white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.platform-ops-entry:hover {
-  border-color: var(--color-primary, #6D5EF6);
-  color: var(--nav-item-hover-color, #fff);
+.platform-ops-entry:hover,
+.platform-ops-entry:focus-visible {
+  background: var(--nav-utility-hover-bg);
+  border-color: var(--nav-utility-border-hover);
+  color: var(--icon-btn-hover-color, #fff);
+}
+
+.platform-ops-entry:focus-visible {
+  outline: 2px solid var(--color-primary, #6D5EF6);
+  outline-offset: 2px;
 }
 
 </style>

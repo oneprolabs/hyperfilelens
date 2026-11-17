@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest'
-import { readStoredOrganizationKey } from './organizationStorage'
+import { chooseLoginOrganization, readStoredOrganizationKey } from './organizationStorage'
 import { asyncNoticeScope } from './asyncNoticeLedger'
 import {
   markWizardPendingBySourceIds, readWizardPendingSourceOps,
@@ -26,4 +26,12 @@ describe('tab organization isolation', () => {
     localStorage.setItem('hfl_org_key', 'default-org')
     expect(readStoredOrganizationKey()).toBe('default-org')
   })
+})
+
+it('prefers a remembered organization only within the server-provided choices', () => {
+  const choices = [{ org_key: 'default' }, { org_key: 'personal' }]
+  expect(chooseLoginOrganization(choices, 'personal')).toBe('personal')
+  expect(chooseLoginOrganization(choices, 'removed')).toBe('default')
+  expect(chooseLoginOrganization(choices, '')).toBe('default')
+  expect(chooseLoginOrganization([], 'personal')).toBe('')
 })

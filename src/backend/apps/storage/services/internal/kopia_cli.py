@@ -296,11 +296,13 @@ def run_maintenance(
     control: KopiaControlCallback | None = None,
 ) -> KopiaResult:
     if repository.repo_type == Repository.Type.S3:
-        from apps.storage.services.internal.repository_ownership import (
-            verify_s3_repository_ownership,
-        )
-
-        verify_s3_repository_ownership(repository, adopt_legacy=False)
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
+        provider = managed_repository_provider(repository)
+        if provider is not None:
+            provider.verify_maintenance_ownership(repository)
+        else:
+            from apps.storage.services.internal.repository_ownership import verify_s3_repository_ownership
+            verify_s3_repository_ownership(repository, adopt_legacy=False)
     config_file = _maintenance_config_file(repository)
     _connect_maintenance_repository(
         repository,
@@ -390,7 +392,12 @@ def delete_s3_snapshots(
         verify_s3_repository_ownership,
     )
 
-    verify_s3_repository_ownership(repository, adopt_legacy=False)
+    from .repository_provider import managed_repository_provider
+    provider = managed_repository_provider(repository)
+    if provider is not None:
+        provider.verify_orphan_ownership(repository)
+    else:
+        verify_s3_repository_ownership(repository, adopt_legacy=False)
     config_file = _snapshot_delete_config_file(repository)
     secrets_payload = resolve_repository_secrets(repository)
     secret_values = secret_values_for_scrub(
@@ -527,10 +534,38 @@ def _run_repository_command_unlocked(
     config_file: Path | None = None,
     control: KopiaControlCallback | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    from .repository_provider import managed_repository_provider
+
+    provider = managed_repository_provider(repository)
+    if provider is not None:
+        with provider.command_environment(repository, args=args) as (environment, renew):
+            return _run_repository_process(
+                repository, args, timeout_seconds=timeout_seconds,
+                config_file=config_file, control=control,
+                identity_environment=environment, renew_identity=renew,
+            )
+    return _run_repository_process(
+        repository, args, timeout_seconds=timeout_seconds,
+        config_file=config_file, control=control,
+    )
+
+
+def _run_repository_process(
+    repository: Repository,
+    args: list[str],
+    *,
+    timeout_seconds: int | None,
+    config_file: Path | None = None,
+    control: KopiaControlCallback | None = None,
+    identity_environment: dict[str, str] | None = None,
+    renew_identity: Callable[[], None] | None = None,
+) -> subprocess.CompletedProcess[str]:
     kopia_path = _kopia_path()
     config_file = config_file or _config_file(repository)
     _invalidate_changed_s3_connection(repository, config_file)
     env = _environment(repository)
+    if identity_environment is not None:
+        env.update(identity_environment)
     from .repository_health_budget import health_budget_active, remaining_health_seconds
 
     timeout = timeout_seconds or int(os.environ.get("HFL_KOPIA_TIMEOUT_SECONDS", "120"))
@@ -561,6 +596,8 @@ def _run_repository_command_unlocked(
         if execution is not None:
             if control is not None and control() != KopiaControlDecision.CONTINUE:
                 raise KopiaExecutionLeaseLost("Deletion execution lease was lost before dispatch.")
+            if renew_identity is not None:
+                return execution.run(command, env, timeout, renew_identity=renew_identity)
             return execution.run(command, env, timeout)
     process: subprocess.Popen[str] | None = None
     try:
@@ -574,6 +611,8 @@ def _run_repository_command_unlocked(
         )
         deadline = time.monotonic() + timeout
         while True:
+            if renew_identity is not None:
+                renew_identity()
             if control is not None:
                 decision = control()
                 if decision != KopiaControlDecision.CONTINUE:
@@ -815,8 +854,11 @@ def _environment(repository: Repository) -> dict[str, str]:
     config = repository.config or {}
     secrets_payload = resolve_repository_secrets(repository)
     env = os.environ.copy()
+    env.pop("KOPIA_S3_CREDENTIALS_FILE", None)
     env["AWS_ACCESS_KEY_ID"] = str(config.get("access_key_id") or "")
     env["AWS_SECRET_ACCESS_KEY"] = str(secrets_payload.get("secret_access_key") or "")
+    # Do not combine repository keys with an unrelated inherited STS identity.
+    env["AWS_SESSION_TOKEN"] = str(secrets_payload.get("session_token") or "")
     region = str(config.get("region") or "").strip()
     if region:
         env["AWS_REGION"] = region

@@ -24,11 +24,11 @@ afterEach(() => {
 
 describe('LanguageSwitcher', () => {
   it('keeps hover preview visually distinct from the selected language', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/components/LanguageSwitcher.vue'), 'utf8')
+    const source = readFileSync(resolve(process.cwd(), 'src/styles/nav-dropdown-panel.css'), 'utf8')
     expect(source).toMatch(/\.hfl-language-switcher-popper \.el-dropdown-menu\s*{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*gap:\s*2px;/s)
-    expect(source).toMatch(/item:not\(\.is-selected\):hover[\s\S]*?rgba\(255, 255, 255, 0\.08\)/)
-    expect(source).toMatch(/item\.is-selected\s*\{[\s\S]*?rgba\(109, 94, 246, 0\.22\)/)
-    expect(source).toMatch(/item\.is-selected:hover[\s\S]*?rgba\(109, 94, 246, 0\.3\)/)
+    expect(source).toMatch(/\.hfl-language-switcher-popper \.el-dropdown-menu__item:not\(\.is-selected\):hover[\s\S]*?var\(--color-primary-light/)
+    expect(source).toMatch(/\.hfl-language-switcher-popper \.el-dropdown-menu__item\.is-selected\s*,[\s\S]*?font-weight:\s*600/)
+    expect(source).toMatch(/:root\[data-theme="dark"\][\s\S]*?\.hfl-language-switcher-popper[\s\S]*?background:\s*var\(--color-primary-light/)
   })
 
   it('shows user-facing language names and selects a language directly', async () => {

@@ -37,6 +37,36 @@ def sync_backup_config_repository_policy(*, config_id: int) -> dict[str, Any]:
         }
     runtime_policy = build_backup_runtime_policy(config=config)
     repository_payload = bt._repository_runtime_payload(repository=repository, execution_target=target)
+    repository_authority = None
+    from apps.storage.services.internal.repository_provider import managed_repository_provider
+    if managed_repository_provider(repository) is not None:
+        from apps.membership.models import ResourceOwner
+        from apps.storage.services.internal.repository_provider import repository_task_authority
+
+        owner_id = ResourceOwner.objects.filter(
+            organization_id=config.organization_id,
+            resource_type="backup_config",
+            resource_id=config.id,
+        ).values_list("owner_id", flat=True).first()
+        repository_authority = repository_task_authority(
+            repository,
+            actor_id=owner_id,
+            organization_id=config.organization_id,
+            purpose="repository.policy.apply",
+            requirements=(
+                (
+                    "backup_config",
+                    config.id,
+                    "protection.backup_configurations.run",
+                ),
+                (
+                    "repository",
+                    repository.pk,
+                    "resource.view",
+                ),
+            ),
+            operation="write",
+        )
     results: list[dict[str, Any]] = []
     for directory in backup_config_directories(
         backup_config_id=config.id,
@@ -61,6 +91,7 @@ def sync_backup_config_repository_policy(*, config_id: int) -> dict[str, Any]:
             correlation_type="protection.repository_policy",
             correlation_id=f"backup-config:{config.id}:directory:{directory.id}",
             wait_timeout_seconds=300,
+            repository_authority=repository_authority,
         )
         results.append({
             "directory_id": directory.id,

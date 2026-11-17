@@ -121,6 +121,7 @@ def run_agent_task_async(
     requesting_organization_id: int | None = None,
     parent_task: Task | None = None,
     platform: bool = False,
+    repository_authority=None,
 ) -> AgentTaskHandle:
     """
     Long-running work: dispatch and return immediately; caller polls status.
@@ -162,6 +163,7 @@ def run_agent_task_async(
         correlation_id=correlation_id,
         requesting_organization_id=requesting_organization_id,
         parent_task=parent_task,
+        **({"repository_authority": repository_authority} if repository_authority is not None else {}),
     )
     return AgentTaskHandle(task_id=str(task.id), task=task)
 
@@ -298,6 +300,7 @@ def run_agent_task_sync(
     wait_timeout_seconds: int | None = None,
     on_stream_message: Callable[[dict[str, Any]], None] | None = None,
     platform: bool = False,
+    repository_authority=None,
 ) -> AgentTaskSyncResult:
     """
     Short tasks (e.g. browse directory): dispatch then block on ``task_stream``.
@@ -337,6 +340,7 @@ def run_agent_task_sync(
             correlation_id=correlation_id,
             requesting_organization_id=requesting_organization_id,
             parent_task=parent_task,
+            **({"repository_authority": repository_authority} if repository_authority is not None else {}),
         )
         task_id = task.id
 

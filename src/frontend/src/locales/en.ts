@@ -1,7 +1,23 @@
 /** English copy */
 import { enProtectionPages } from './enProtectionPages'
+import { enManagedStorage } from './enManagedStorage'
 
 export const en = {
+  managedStorage: enManagedStorage,
+  accountUsage: {
+    title: 'Resource Usage',
+    resources: 'Resource Usage',
+    general: 'General',
+    loadFailed: 'Unable to load resource usage. Try again.',
+    denied: 'You do not have access to this resource usage.',
+    knownUsage: 'Known usage: {value}.',
+    reasons: {
+      storage_attribution: 'Backup storage cannot yet be fully attributed to individual users.',
+      workspace_attribution: 'Some workspace capacity cannot be attributed or measured completely.',
+      unattributed_history: 'Some historical AI usage has no recorded user.',
+      unavailable: 'Usage cannot be measured completely.',
+    },
+  },
   organizationCreation: {
     title: "Create Organization",
     description: "Create an independent organization and become its Owner.",
@@ -326,6 +342,10 @@ export const en = {
     timezone: 'Time Zone: ',
     timezoneLabel: 'Time Zone',
     orgSwitcher: 'Organization',
+    switchOrganization: 'Switch Organization',
+    switchOrganizationNotice: 'Switching to {organization} will discard any unsaved changes on this page.',
+    switchOrganizationConfirm: 'Switch',
+    switchOrganizationFailed: 'Unable to switch organizations. Your current organization has not changed. Refresh the organization list and try again.',
     languageLabel: 'Language',
     languageSwitchDetail: '{current} · Switch to {language}',
     switchLanguage: 'Switch to {language}',
@@ -596,7 +616,7 @@ export const en = {
   protection: {
     moduleTitle: 'Data Protection',
     tags: {
-      title: 'Tag Management',
+      title: 'Source Tags',
       create: 'Add',
       edit: 'Edit',
       createTitle: 'Add Tag',
@@ -695,7 +715,7 @@ export const en = {
       sourceHosts: 'Source Hosts',
       sourceNas: 'Source NAS',
       sourceAgents: 'Proxy Hosts',
-      sourceTags: 'Tag Management',
+      sourceTags: 'Source Tags',
       snapshots: 'Snapshots',
       recovery: 'Recovery',
       retention: 'Retention',
@@ -3830,6 +3850,9 @@ export const en = {
         change_owner: 'Transfer resource ownership without changing its identity, configuration, data, or Group assignments.',
       },
       permissionDescriptions: {
+        configuration_managed_storage_view: "View Object Storage connections in the Personal organization.",
+        configuration_managed_storage_manage: "Add and configure Object Storage connections in the Personal organization.",
+        configuration_managed_storage_delete: "Delete unused Object Storage connection configurations without deleting their Buckets.",
         configuration_organizations_view: "View organization details and member counts.",
         configuration_members_view: "View organization members and their role assignments.",
         configuration_members_manage: "Add organization members and enable or disable their memberships.",
@@ -3981,6 +4004,7 @@ export const en = {
         other: 'Other Permissions',
       },
       resourceLabels: {
+        configuration_managed_storage: "Managed Storage",
         configuration_organizations: "Organization",
         configuration_members: "Members",
         configuration_roles: "Roles",
@@ -4029,6 +4053,9 @@ export const en = {
       selectResults: "Select Results",
       deselectResults: "Deselect Results",
       permissions: {
+        configuration_managed_storage_view: "View Managed Storage",
+        configuration_managed_storage_manage: "Manage Managed Storage",
+        configuration_managed_storage_delete: "Delete Managed Storage Connections",
         configuration_organizations_view: "View Organization",
         configuration_members_view: "View Members",
         configuration_members_manage: "Manage Members",
@@ -4187,11 +4214,11 @@ export const en = {
       roles: 'Roles',
       resources: 'Resources',
       resourceGroups: 'Groups',
-      subscription: 'Usage',
+      subscription: 'Organization Usage',
       apiKeys: 'API Keys',
     },
     orgTabs: {
-      subscription: 'Usage',
+      subscription: 'Organization Usage',
     },
     channels: {
       refresh: 'Refresh',
@@ -7919,7 +7946,7 @@ export const en = {
       groups: 'Groups',
       roles: 'Roles',
       resources: 'Resources',
-      subscription: 'Usage',
+      subscription: 'Organization Usage',
       name: 'Name',
       status: 'Status',
       email: 'Email',

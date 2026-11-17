@@ -898,6 +898,7 @@ def _fail_task_delivery(*, task: NodeTask, reason: str) -> NodeTask:
     return task
 
 
+@transaction.atomic
 def create_agent_task(
     *,
     org: Organization | None,
@@ -908,6 +909,7 @@ def create_agent_task(
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
     parent_task: Task | None = None,
+    repository_authority=None,
 ) -> NodeTask:
     from apps.node.services.internal.ownership import owner_id
 
@@ -941,6 +943,21 @@ def create_agent_task(
             payload=payload,
         ),
     )
+    if repository_authority is not None:
+        from apps.storage.repositories.models import Repository
+        from apps.storage.services.internal.repository_provider import (
+            RepositoryTaskAuthority, managed_repository_provider,
+        )
+        if not isinstance(repository_authority, RepositoryTaskAuthority):
+            raise ValueError("invalid repository execution evidence")
+        repository = Repository.objects.get(pk=repository_authority.repository_id)
+        provider = managed_repository_provider(repository)
+        if provider is None:
+            raise ValueError("repository execution provider is unavailable")
+        runtime = _resolve_task_delivery_payload(task.payload) or task.payload
+        if (runtime.get("repository") or {}).get("id") != repository.pk:
+            raise ValueError("repository execution evidence does not match the task payload")
+        provider.bind_task_authority(task, repository_authority)
     logger.info(
         "agent task created %s",
         task_log_context(
@@ -1061,6 +1078,21 @@ def _deliver_agent_task(
                 if key != "pre_upgrade_session_id"
             }
         candidate_payload = delivery_payload if delivery_payload is not None else task.payload
+        if (
+            isinstance(candidate_payload, dict)
+            and isinstance(candidate_payload.get("repository"), dict)
+            and candidate_payload["repository"].get("credential_mode")
+        ):
+            from apps.storage.repositories.models import Repository
+            from apps.storage.services.internal.repository_provider import managed_repository_provider
+            repository_id = candidate_payload["repository"].get("id")
+            repository = Repository.objects.filter(pk=repository_id).first() if repository_id else None
+            provider = managed_repository_provider(repository) if repository is not None else None
+            if provider is not None:
+                delivery_payload = provider.delivery_payload(task, candidate_payload)
+                candidate_payload = delivery_payload
+            else:
+                raise RuntimeError("Managed Repository execution authorization is unavailable")
         if (
             isinstance(candidate_payload, dict)
             and isinstance(candidate_payload.get("repository"), dict)
@@ -1376,6 +1408,7 @@ def dispatch_task(
     correlation_id: str = "",
     requesting_organization_id: int | None = None,
     parent_task: Task | None = None,
+    repository_authority=None,
 ) -> NodeTask:
     task = create_agent_task(
         org=org,
@@ -1386,6 +1419,7 @@ def dispatch_task(
         correlation_id=correlation_id,
         requesting_organization_id=requesting_organization_id,
         parent_task=parent_task,
+        **({"repository_authority": repository_authority} if repository_authority is not None else {}),
     )
     transaction.on_commit(
         lambda bound_task=task: deliver_agent_task(task=bound_task),

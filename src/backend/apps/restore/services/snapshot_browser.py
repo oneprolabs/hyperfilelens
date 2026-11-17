@@ -20,6 +20,7 @@ from apps.protection.services.snapshot_browser import (
     _normalize_entries,
     _parent_path,
     _repository_for_directory,
+    snapshot_repository_authority,
 )
 from apps.protection.services.snapshot_repository_locator import (
     resolve_snapshot_repository_reader,
@@ -68,6 +69,7 @@ def browse_snapshot_directory_from_target(
     path: str = "",
     limit: int = DEFAULT_SNAPSHOT_BROWSE_LIMIT,
     wait_timeout_seconds: int = DEFAULT_SNAPSHOT_BROWSER_TIMEOUT_SECONDS,
+    requested_by_id: int | None = None,
 ) -> dict[str, Any]:
     clean_path = _clean_relative_path(path)
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
@@ -108,6 +110,10 @@ def browse_snapshot_directory_from_target(
         correlation_type="restore.snapshot_browser",
         correlation_id=str(row.id),
         wait_timeout_seconds=wait_timeout_seconds,
+        **snapshot_repository_authority(
+            repository=repository, row=row, actor_id=requested_by_id,
+            kind="snapshot.browse", target_node_id=target_node_id,
+        ),
     )
     log_agent_outcome(
         "restore snapshot browse",
@@ -153,6 +159,7 @@ def get_snapshot_path_info_from_target(
     target_node_id: int,
     path: str,
     wait_timeout_seconds: int = DEFAULT_SNAPSHOT_BROWSER_TIMEOUT_SECONDS,
+    requested_by_id: int | None = None,
 ) -> dict[str, Any]:
     clean_path = _clean_relative_path(path)
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
@@ -184,6 +191,7 @@ def get_snapshot_path_info_from_target(
         path=parent,
         limit=1000,
         wait_timeout_seconds=wait_timeout_seconds,
+        requested_by_id=requested_by_id,
     )
     match = next(
         (

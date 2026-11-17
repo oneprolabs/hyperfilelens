@@ -29,6 +29,7 @@ const protectionRoutePrefixes = [
   '/protection/backup-sources',
   '/node/agents',
   '/node/repositories',
+  '/node/managed-storage',
   '/node/snapshots',
   '/node/deployment',
 ]
@@ -38,17 +39,20 @@ const insightRoutePrefixes = ['/node/ai-settings', '/node/knowledge-base', '/nod
 export function useAppPrimaryNav() {
   const { t } = useI18n()
   const route = useRoute()
-  const { has } = useTenantPermissions()
+  const { has, profile } = useTenantPermissions()
+  const managedStorageEntry = () => __HFL_EXTENSIONS_FRONTEND__
+    && profile?.value?.organization_mode === 'personal'
+    && has('configuration.managed_storage.view', true)
 
   const items = computed<AppPrimaryNavItem[]>(() => [
     { to: '/', label: t('nav.overview'), icon: LayoutDashboard },
-    { to: '/protection', label: t('nav.protection'), icon: ShieldCheck },
+    { to: managedStorageEntry() && resolveProtectionEntry(has) === '/' ? '/node/managed-storage' : '/protection', label: t('nav.protection'), icon: ShieldCheck },
     { to: '/insight', label: t('nav.insight'), icon: Sparkles },
     { to: '/node', label: t('nav.node'), icon: Settings },
     { to: '/ops', label: t('nav.ops'), icon: Activity },
   ].filter(item => {
     if (item.to === '/insight') return resolveInsightEntry(has) !== '/'
-    if (item.to === '/protection') return resolveProtectionEntry(has) !== '/'
+    if (item.to === '/protection') return resolveProtectionEntry(has) !== '/' || managedStorageEntry()
     if (item.to === '/ops') return resolveOperationsEntry(has, hasTenantHostMonitor()) !== '/'
     return true
   }))

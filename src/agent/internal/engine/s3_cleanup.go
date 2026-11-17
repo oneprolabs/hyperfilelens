@@ -52,6 +52,7 @@ func (e *Engine) runS3RepositoryCleanup(
 	if strings.TrimSpace(spec.Bucket) == "" {
 		return "failed", nil, "S3 bucket is required"
 	}
+	spec.CredentialsFile = repositoryCredentialFile(ctx)
 	client, err := newS3CleanupClient(spec)
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -133,6 +134,15 @@ func newS3CleanupClient(spec repositorySpec) (s3CleanupClient, error) {
 	if region == "" {
 		region = "us-east-1"
 	}
+	var credentialProvider aws.CredentialsProvider = credentials.NewStaticCredentialsProvider(
+		spec.AccessKeyID, spec.SecretAccessKey, spec.SessionToken,
+	)
+	if spec.CredentialLease != nil {
+		if spec.CredentialsFile == "" {
+			return nil, fmt.Errorf("temporary repository credential lease is not active")
+		}
+		credentialProvider = fileS3CredentialsProvider{path: spec.CredentialsFile}
+	}
 	return s3.New(s3.Options{
 		BaseEndpoint:               aws.String(endpoint),
 		Region:                     region,
@@ -141,11 +151,7 @@ func newS3CleanupClient(spec repositorySpec) (s3CleanupClient, error) {
 		RetryMaxAttempts:           2,
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
-		Credentials: credentials.NewStaticCredentialsProvider(
-			spec.AccessKeyID,
-			spec.SecretAccessKey,
-			"",
-		),
+		Credentials:                credentialProvider,
 	}), nil
 }
 

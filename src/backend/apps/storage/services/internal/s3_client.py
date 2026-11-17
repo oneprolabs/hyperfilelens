@@ -915,6 +915,35 @@ def delete_s3_prefix(
         use_tls=use_tls,
         timeout_seconds=timeout_seconds,
     )
+    return delete_s3_prefix_with_client(
+        client=client, bucket=bucket, prefix=normalized_prefix,
+        ownership_marker_key=normalized_marker_key, ownership_marker=ownership_marker,
+    )
+
+
+def delete_s3_prefix_with_client(
+    *, client, bucket: str, prefix: str, ownership_marker_key: str,
+    ownership_marker: dict[str, object], before_marker_delete=None,
+    resume_marker_cleanup: bool = False,
+) -> dict[str, int | str]:
+    """Reuse marker-last cleanup with a trusted, renewable scoped SDK client.
+
+    ``resume_marker_cleanup`` requires the caller's persisted proof that this
+    same repository execution previously reached the marker-only phase. It
+    never authorizes deletion of non-marker state without a live marker.
+    """
+    root_prefix = str(prefix or "").strip().replace("\\", "/").strip("/")
+    normalized_prefix = f"{root_prefix}/" if root_prefix else ""
+    normalized_marker_key = str(ownership_marker_key or "").strip().strip("/")
+    expected_marker_key = (
+        f"{normalized_prefix}{S3_OWNERSHIP_MARKER_PATH}"
+        if normalized_prefix
+        else S3_OWNERSHIP_MARKER_PATH
+    )
+    if normalized_marker_key != expected_marker_key:
+        raise S3ClientError(
+            "Repository ownership marker is outside the cleanup Prefix."
+        )
     deleted_objects = 0
     deleted_versions = 0
     deleted_markers = 0
@@ -923,89 +952,90 @@ def delete_s3_prefix(
     seen_version_batches: set[tuple[tuple[str, str], ...]] = set()
     seen_object_batches: set[tuple[str, ...]] = set()
     try:
-        _require_s3_cleanup_marker(
-            client=client,
-            bucket=bucket,
-            key=normalized_marker_key,
-            expected=ownership_marker,
-        )
-        while True:
-            upload_paginator = client.get_paginator("list_multipart_uploads")
-            page = next(
-                iter(
-                    upload_paginator.paginate(
-                        Bucket=bucket,
-                        Prefix=normalized_prefix,
+        if not resume_marker_cleanup:
+            _require_s3_cleanup_marker(
+                client=client,
+                bucket=bucket,
+                key=normalized_marker_key,
+                expected=ownership_marker,
+            )
+            while True:
+                upload_paginator = client.get_paginator("list_multipart_uploads")
+                page = next(
+                    iter(
+                        upload_paginator.paginate(
+                            Bucket=bucket,
+                            Prefix=normalized_prefix,
+                        )
+                    ),
+                    {},
+                )
+                uploads = page.get("Uploads", [])
+                if not uploads:
+                    break
+                aborted_this_page = 0
+                for upload in uploads:
+                    key = str(upload.get("Key") or "")
+                    upload_id = str(upload.get("UploadId") or "")
+                    if not key or not upload_id:
+                        continue
+                    identity = (key, upload_id)
+                    if identity in seen_uploads:
+                        continue
+                    client.abort_multipart_upload(
+                        Bucket=bucket, Key=key, UploadId=upload_id
                     )
-                ),
-                {},
-            )
-            uploads = page.get("Uploads", [])
-            if not uploads:
-                break
-            aborted_this_page = 0
-            for upload in uploads:
-                key = str(upload.get("Key") or "")
-                upload_id = str(upload.get("UploadId") or "")
-                if not key or not upload_id:
-                    continue
-                identity = (key, upload_id)
-                if identity in seen_uploads:
-                    continue
-                client.abort_multipart_upload(
-                    Bucket=bucket, Key=key, UploadId=upload_id
-                )
-                seen_uploads.add(identity)
-                aborted_uploads += 1
-                aborted_this_page += 1
-            if not aborted_this_page:
-                raise S3ClientError(
-                    "Unable to make progress aborting repository multipart uploads."
-                )
+                    seen_uploads.add(identity)
+                    aborted_uploads += 1
+                    aborted_this_page += 1
+                if not aborted_this_page:
+                    raise S3ClientError(
+                        "Unable to make progress aborting repository multipart uploads."
+                    )
 
-        while True:
-            version_entries, marker_entries = _next_s3_non_owner_version_batch(
-                client=client,
-                bucket=bucket,
-                prefix=normalized_prefix,
-                marker_key=normalized_marker_key,
-            )
-            if not version_entries and not marker_entries:
-                break
-            fingerprint = tuple(
-                sorted(
-                    (str(entry["Key"]), str(entry["VersionId"]))
-                    for entry in version_entries + marker_entries
+            while True:
+                version_entries, marker_entries = _next_s3_non_owner_version_batch(
+                    client=client,
+                    bucket=bucket,
+                    prefix=normalized_prefix,
+                    marker_key=normalized_marker_key,
                 )
-            )
-            if fingerprint in seen_version_batches:
-                raise S3ClientError(
-                    "Unable to make progress deleting repository object versions."
+                if not version_entries and not marker_entries:
+                    break
+                fingerprint = tuple(
+                    sorted(
+                        (str(entry["Key"]), str(entry["VersionId"]))
+                        for entry in version_entries + marker_entries
+                    )
                 )
-            seen_version_batches.add(fingerprint)
-            for batch in _chunks(version_entries + marker_entries, 1000):
-                _delete_s3_entries(client=client, bucket=bucket, entries=batch)
-            deleted_versions += len(version_entries)
-            deleted_markers += len(marker_entries)
+                if fingerprint in seen_version_batches:
+                    raise S3ClientError(
+                        "Unable to make progress deleting repository object versions."
+                    )
+                seen_version_batches.add(fingerprint)
+                for batch in _chunks(version_entries + marker_entries, 1000):
+                    _delete_s3_entries(client=client, bucket=bucket, entries=batch)
+                deleted_versions += len(version_entries)
+                deleted_markers += len(marker_entries)
 
-        while True:
-            entries = _next_s3_non_owner_object_batch(
-                client=client,
-                bucket=bucket,
-                prefix=normalized_prefix,
-                marker_key=normalized_marker_key,
-            )
-            if not entries:
-                break
-            fingerprint = tuple(sorted(str(entry["Key"]) for entry in entries))
-            if fingerprint in seen_object_batches:
-                raise S3ClientError(
-                    "Unable to make progress deleting repository objects."
+            while True:
+                entries = _next_s3_non_owner_object_batch(
+                    client=client,
+                    bucket=bucket,
+                    prefix=normalized_prefix,
+                    marker_key=normalized_marker_key,
                 )
-            seen_object_batches.add(fingerprint)
-            for batch in _chunks(entries, 1000):
-                _delete_s3_entries(client=client, bucket=bucket, entries=batch)
-            deleted_objects += len(entries)
+                if not entries:
+                    break
+                fingerprint = tuple(sorted(str(entry["Key"]) for entry in entries))
+                if fingerprint in seen_object_batches:
+                    raise S3ClientError(
+                        "Unable to make progress deleting repository objects."
+                    )
+                seen_object_batches.add(fingerprint)
+                for batch in _chunks(entries, 1000):
+                    _delete_s3_entries(client=client, bucket=bucket, entries=batch)
+                deleted_objects += len(entries)
 
         _verify_s3_prefix_contains_only_marker(
             client=client,
@@ -1013,6 +1043,8 @@ def delete_s3_prefix(
             prefix=normalized_prefix,
             marker_key=normalized_marker_key,
         )
+        if before_marker_delete is not None:
+            before_marker_delete()
         marker_entries = _s3_marker_version_entries(
             client=client,
             bucket=bucket,

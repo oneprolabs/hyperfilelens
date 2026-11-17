@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import logging
 import os
 import time
@@ -1314,18 +1316,25 @@ def _execute_maintenance(
             raise KopiaExecutionLeaseLost(
                 "Controller repository maintenance has no background capacity lease"
             )
-        result = run_maintenance(
-            repository_task.repository,
-            full=full,
-            owner_identity=repository_task.owner_identity,
-            timeout_seconds=settings.execution_timeout_seconds,
-            control=_controller_execution_control(
-                repository_task_id=repository_task.id,
-                execution_token=execution_token,
-                heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
-                background_lease=background_lease,
-            ),
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
+        provider = managed_repository_provider(repository_task.repository)
+        execution = (
+            provider.maintenance_execution(repository_task, execution_token)
+            if provider is not None else nullcontext()
         )
+        with execution:
+            result = run_maintenance(
+                repository_task.repository,
+                full=full,
+                owner_identity=repository_task.owner_identity,
+                timeout_seconds=settings.execution_timeout_seconds,
+                control=_controller_execution_control(
+                    repository_task_id=repository_task.id,
+                    execution_token=execution_token,
+                    heartbeat_interval_seconds=settings.heartbeat_interval_seconds,
+                    background_lease=background_lease,
+                ),
+            )
         if not background_lease.valid:
             raise KopiaExecutionLeaseLost(
                 "Controller repository maintenance background capacity lease was lost"

@@ -3,6 +3,22 @@
 HyperFileLens builds Kopia with the patches listed in `common.sh`. Do not edit
 `build/kopia/source` as product source: preparation recreates that cache.
 
+## Refreshable S3 identities
+
+Patch 0009 adds `--credentials-file` / `KOPIA_S3_CREDENTIALS_FILE`. The path is
+task-local and is not serialized into repository configuration. The S3 client
+reloads an atomically published JSON identity on each signed request, including
+requests from an already open repository. The file contains `access_key_id`,
+`secret_access_key`, `session_token`, and RFC3339 `expires_at`. Missing, malformed,
+incomplete or expired credentials fail closed; this provider is not part of the
+environment/instance credential fallback chain.
+
+This is a renewal mechanism, not a credential issuer or an authorization grant.
+The execution host must publish renewed identities only after control-plane
+authorization. Provider tests do not establish actual cloud policy enforcement.
+Legacy S3 repositories without this environment variable keep their existing
+credential path.
+
 ## Progress
 
 The `hfl-json` schema keeps logical processing and repository upload counters

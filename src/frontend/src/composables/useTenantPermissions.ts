@@ -8,5 +8,5 @@ export function useTenantPermissions() {
   const group = computed(() => new Set(profile.value?.group_permissions || []))
   const has = (key: string, organizationOnly = false) => !__HFL_EXTENSIONS_FRONTEND__ || organization.value.has(key)
     || (!organizationOnly && group.value.has(key))
-  return { has }
+  return { has, profile }
 }

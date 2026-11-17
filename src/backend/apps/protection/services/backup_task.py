@@ -731,6 +731,7 @@ def start_backup_tasks(
     backup_config_ids: list[int] | None = None,
     trigger_type: str = BackupSourceSnapshot.TriggerType.MANUAL,
     idempotency_key: str | None = None,
+    requested_by_id: int | None = None,
 ) -> dict[str, Any]:
     check_deadline = time.monotonic() + min(15, max(1, protection_conf.PROTECTION_BACKUP_REPOSITORY_CHECK_TIMEOUT_SECONDS))
     from apps.iam.models import Organization
@@ -1050,6 +1051,7 @@ def start_backup_tasks(
                             display_name=task_display_name,
                             trigger_type=task_trigger_type,
                             request_payload={
+                                **({"execution_actor_id": requested_by_id} if requested_by_id is not None else {}),
                                 "source_type": source.source_type,
                                 "source_ref_id": source.source_ref_id,
                                 "backup_config_id": locked_config.id,

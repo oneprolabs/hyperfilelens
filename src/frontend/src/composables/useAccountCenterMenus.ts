@@ -1,6 +1,6 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bell, User } from 'lucide-vue-next'
+import { Bell, Gauge, User } from 'lucide-vue-next'
 import type { MenuItem } from '../components/ModulePage.vue'
 
 /** Personal Account section shared by Configuration and account pages. */
@@ -16,6 +16,12 @@ export function useAccountCenterMenus() {
           pageTitle: t('account.pageProfileTitle'),
           icon: User,
         },
+        ...(__HFL_EXTENSIONS_FRONTEND__ ? [{
+          to: '/account/usage',
+          label: t('accountUsage.title'),
+          pageTitle: t('accountUsage.title'),
+          icon: Gauge,
+        }] : []),
         {
           to: '/account/notifications',
           label: t('account.sidebarNotifications'),

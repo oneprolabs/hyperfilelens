@@ -12,6 +12,7 @@ const platformOpsShell = source('src/platform-ops/layout/PlatformOpsShell.vue')
 const drawer = source('src/components/MobileNavigationDrawer.vue')
 const languageSwitcher = source('src/components/LanguageSwitcher.vue')
 const userMenu = source('src/components/NavUserMenu.vue')
+const orgSwitcher = source('src/components/OrgSwitcher.vue')
 const login = source('src/pages/auth/Login.vue')
 const register = source('src/pages/auth/Register.vue')
 const dropdownStyles = source('src/styles/nav-dropdown-panel.css')
@@ -43,15 +44,43 @@ describe('mobile header utilities', () => {
       /\.language-switcher__current\s*{[\s\S]*?line-height:\s*1\.4/,
     )
     expect(languageSwitcher).toMatch(
-      /\.language-switcher--navigation \.language-switcher__trigger,[\s\S]*?border-color:\s*var\(--tz-border/,
+      /\.language-switcher--navigation \.language-switcher__current\s*{[\s\S]*?line-height:\s*1\.5/,
     )
-    expect(languageSwitcher).toContain(':title="ariaLabel"')
+    expect(languageSwitcher).toMatch(
+      /\.language-switcher--navigation \.language-switcher__trigger,[\s\S]*?border-color:\s*var\(--nav-utility-border/,
+    )
+    expect(languageSwitcher).not.toContain(':title="ariaLabel"')
+    expect(languageSwitcher).toContain(':aria-label="ariaLabel"')
     expect(login).toMatch(
       /\.login-box-title\s*{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;[\s\S]*?align-items:\s*center/,
     )
     expect(register).toMatch(
       /\.register-box-title\s*{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\) auto;[\s\S]*?align-items:\s*center/,
     )
+  })
+
+  it('shows the tenant time zone as a quiet read-only status with an accessible label', () => {
+    expect(topNav).toContain('<Clock3')
+    expect(topNav).toContain(":aria-label=\"`${t('nav.timezone')} ${timezoneOffsetDisplay}`\"")
+    expect(topNav).not.toContain(':title="timezoneDisplay"')
+    expect(topNav).not.toContain(':title="t(\'nav.platformOps\')"')
+    const timezoneStyles = topNav.match(/\.timezone-display\s*{([^}]+)}/)?.[1] || ''
+    expect(timezoneStyles).toContain('color: var(--tz-color,')
+    expect(timezoneStyles).toContain('background: var(--nav-utility-bg)')
+    expect(timezoneStyles).toContain('border: 1px solid var(--nav-utility-border)')
+    expect(topNav).toContain('class="timezone-display__value"')
+    expect(topNav).toMatch(/\.timezone-display__value\s*{[\s\S]*?line-height:\s*1\.5;/)
+    expect(topNav).not.toContain('timezone-display__label')
+  })
+
+  it('aligns desktop utility text using matching heights and line boxes', () => {
+    expect(topNav).toMatch(/\.timezone-display\s*{[^}]*height:\s*32px;[^}]*box-sizing:\s*border-box;[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.5;/)
+    expect(topNav).toMatch(/\.platform-ops-entry\s*{[^}]*box-sizing:\s*border-box;[^}]*height:\s*32px;[^}]*line-height:\s*1\.5;/)
+    expect(orgSwitcher).toMatch(/\.org-switcher__trigger\s*{[^}]*box-sizing:\s*border-box;[^}]*height:\s*32px;[^}]*font-size:\s*13px;[^}]*line-height:\s*1\.5;/)
+    expect(orgSwitcher).not.toContain(':title="currentName"')
+    expect(orgSwitcher).toContain(':aria-label="`${t(\'nav.orgSwitcher\')}: ${currentName}`"')
+    expect(languageSwitcher).toMatch(/\.language-switcher--navigation\.language-switcher--static\s*{[^}]*box-sizing:\s*border-box;[^}]*height:\s*32px;[^}]*line-height:\s*1\.5;/)
+    expect(userMenu).toMatch(/\.nav-user-trigger__label\s*{[^}]*font-size:\s*14px;[^}]*line-height:\s*1\.5;/)
   })
 
   it('keeps time zone and language available in the Admin Console header', () => {
@@ -64,6 +93,8 @@ describe('mobile header utilities', () => {
     expect(timezoneIndex).toBeGreaterThan(returnIndex)
     expect(languageIndex).toBeGreaterThan(timezoneIndex)
     expect(userIndex).toBeGreaterThan(languageIndex)
+    expect(platformOpsShell).toContain('<Clock3')
+    expect(platformOpsShell).not.toContain('class="platform-ops-timezone__label"')
     expect(platformOpsShell).toContain(':timezone-offset-display="timezoneOffsetDisplay"')
   })
 
@@ -104,12 +135,14 @@ describe('mobile header utilities', () => {
     expect(locale).toContain("languageLabel: 'Language'")
   })
 
-  it('does not mount organization switching or creation in either navigation surface', () => {
+  it('mounts switching only for Enterprise tenant sites and never restores organization creation', () => {
+    expect(appShell).toContain("profile?.edition === 'enterprise' && profile.site_role === 'tenant'")
+    expect(topNav).toContain('v-if="showOrganizationSwitcher"')
+    expect(drawer.replace(/\s+/g, ' ')).toContain('<OrgSwitcher v-if="showOrganizationSwitcher" variant="mobile" />')
     for (const source of [topNav, drawer, appShell]) {
-      expect(source).not.toContain('OrgSwitcher')
-      expect(source).not.toContain('useOrganizationSwitcher')
-      expect(source).not.toContain('show-organization-switcher')
+      expect(source).not.toContain('/account/organizations/new')
     }
+    expect(platformOpsShell).not.toContain('OrgSwitcher')
   })
 
   it('keeps mobile triggers and popovers within narrow viewports', () => {

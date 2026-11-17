@@ -283,7 +283,20 @@ describe('NavUserMenu responsive trigger', () => {
       /\.nav-user-trigger\s*{[\s\S]*?min-width:\s*0[\s\S]*?max-width:\s*100%[\s\S]*?flex:\s*0 1 auto/,
     )
     expect(navUserMenuSource).toMatch(
-      /\.nav-user-trigger__label\s*{[\s\S]*?min-width:\s*0[\s\S]*?max-width:\s*140px[\s\S]*?flex:\s*1 1 auto/,
+      /\.nav-user-trigger__label\s*{[\s\S]*?min-width:\s*0[\s\S]*?max-width:\s*210px[\s\S]*?flex:\s*1 1 auto/,
+    )
+  })
+
+  it('gives common account names room on desktop and keeps compact breakpoints', () => {
+    expect(navUserMenuSource).toMatch(
+      /@media \(min-width: 1280px\) and \(max-width: 1439\.98px\)[\s\S]*?\.nav-user-trigger__label\s*{[\s\S]*?max-width:\s*190px/,
+    )
+    expect(navUserMenuSource).toMatch(
+      /@media \(min-width: 1024px\) and \(max-width: 1279\.98px\)[\s\S]*?\.nav-user-trigger__label\s*{[\s\S]*?max-width:\s*160px/,
+    )
+    expect(navUserMenuSource).toContain('text-overflow: ellipsis')
+    expect(navUserMenuSource).toMatch(
+      /@media \(max-width: 479\.98px\)[\s\S]*?\.nav-user-trigger__label\s*{[\s\S]*?max-width:\s*32px/,
     )
   })
 })

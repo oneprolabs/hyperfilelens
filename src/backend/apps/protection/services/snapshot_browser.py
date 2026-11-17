@@ -190,6 +190,23 @@ def _normalize_entries(raw_entries: Any, *, base_path: str, limit: int) -> list[
     return rows
 
 
+def snapshot_repository_authority(*, repository, row, actor_id, kind, target_node_id=None):
+    from apps.storage.services.internal.repository_provider import repository_task_authority
+    action = "protection.backup_data.browse" if kind == "snapshot.browse" else "protection.backup_data.download"
+    refs = [
+        ("backup_config", row.backup_config_id, action),
+        ("repository", repository.pk, action),
+    ]
+    if target_node_id is not None:
+        refs.append(("node", target_node_id, "resource.view"))
+    authority = repository_task_authority(
+        repository, actor_id=actor_id, organization_id=row.organization_id,
+        purpose="snapshot.browse" if kind == "snapshot.browse" else "snapshot.download",
+        requirements=tuple(refs), snapshot_directory_id=row.pk,
+    )
+    return {"repository_authority": authority} if authority is not None else {}
+
+
 def _run_snapshot_agent_task(
     *,
     row: BackupSourceSnapshotDirectory,
@@ -198,6 +215,8 @@ def _run_snapshot_agent_task(
     wait_timeout_seconds: int,
     extra_payload: dict[str, Any] | None = None,
     required_capability: str = "",
+    requested_by_id: int | None = None,
+    parent_task=None,
 ) -> Any:
     snapshot = row.source_snapshot
     repository = _repository_for_directory(row)
@@ -278,6 +297,10 @@ def _run_snapshot_agent_task(
         correlation_type="protection.snapshot_browser",
         correlation_id=str(row.id),
         wait_timeout_seconds=wait_timeout_seconds,
+        **snapshot_repository_authority(
+            repository=repository, row=row, actor_id=requested_by_id, kind=kind,
+        ),
+        **({"parent_task": parent_task} if parent_task is not None else {}),
     )
     if outcome.timed_out:
         logger.warning("snapshot browser agent timed out %s", ctx)
@@ -303,6 +326,7 @@ def plan_snapshot_download_groups(
     directory_id: int,
     groups: list[dict[str, Any]],
     wait_timeout_seconds: int | None = None,
+    requested_by_id: int | None = None,
 ) -> dict[str, int]:
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
     outcome = _run_snapshot_agent_task(
@@ -316,6 +340,7 @@ def plan_snapshot_download_groups(
         ),
         extra_payload={"groups": groups},
         required_capability=_snapshot_download_groups_capability(groups),
+        requested_by_id=requested_by_id,
     )
     if getattr(outcome, "timed_out", False):
         raise SnapshotBrowserError("Snapshot download size calculation timed out.")
@@ -353,6 +378,7 @@ def browse_snapshot_directory(
     limit: int = DEFAULT_SNAPSHOT_BROWSE_LIMIT,
     cursor: str = "",
     wait_timeout_seconds: int | None = None,
+    requested_by_id: int | None = None,
 ) -> dict[str, Any]:
     clean_path = _clean_relative_path(path)
     cursor_offset = _cursor_offset(cursor)
@@ -363,6 +389,7 @@ def browse_snapshot_directory(
         path=clean_path,
         wait_timeout_seconds=_snapshot_browser_timeout_seconds() if wait_timeout_seconds is None else wait_timeout_seconds,
         extra_payload={"limit": limit, "cursor": cursor},
+        requested_by_id=requested_by_id,
     )
     if getattr(outcome, "timed_out", False):
         raise SnapshotBrowserError("Snapshot browse timed out.")
@@ -407,6 +434,8 @@ def download_snapshot_file(
     upload_artifact=None,
     paths: list[str] | None = None,
     allow_directory_root: bool = False,
+    requested_by_id: int | None = None,
+    parent_task=None,
 ) -> SnapshotFileDownload:
     clean_path = _clean_relative_path(path)
     row = _get_directory(organization_id=organization_id, directory_id=directory_id)
@@ -453,6 +482,8 @@ def download_snapshot_file(
         path=clean_path,
         wait_timeout_seconds=_snapshot_browser_timeout_seconds() if wait_timeout_seconds is None else wait_timeout_seconds,
         extra_payload=extra_payload,
+        requested_by_id=requested_by_id,
+        parent_task=upload_artifact.task if upload_artifact is not None else parent_task,
     )
     if upload_artifact is not None:
         upload_artifact.refresh_from_db()
@@ -512,6 +543,7 @@ def download_snapshot_groups(
     groups: list[dict[str, Any]],
     upload_artifact,
     wait_timeout_seconds: int | None = None,
+    requested_by_id: int | None = None,
 ) -> SnapshotFileDownload:
     from apps.protection.services.snapshot_download import prepare_snapshot_artifact_upload
 
@@ -544,6 +576,8 @@ def download_snapshot_groups(
             ),
         },
         required_capability=_snapshot_download_groups_capability(groups),
+        requested_by_id=requested_by_id,
+        parent_task=upload_artifact.task,
     )
     upload_artifact.refresh_from_db()
     if upload_artifact.status == upload_artifact.Status.READY:

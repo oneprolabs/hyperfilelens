@@ -117,6 +117,7 @@ class TargetValidationInput:
     source_ref_id: int
     repository_id: int
     repository_endpoint_type: str = "external"
+    authorization_config_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,7 @@ class _ResolvedAssignment:
     repository: Repository
     repository_access: RepositoryAccess | None = None
     probe: str = "backup_target_validation"
+    requested_by_id: int | None = None
 
     @property
     def route_key(self) -> tuple[int, int, str, str]:
@@ -154,6 +156,14 @@ class _ResolvedAssignment:
                     str(access.mode),
                     str(access.repository_payload.get("subdir") or ""),
                 )
+            )
+        if (self.repository.config or {}).get("credential_mode"):
+            # One physical route can represent different authorization
+            # scopes. A managed probe must keep the actual source/target
+            # and restore configuration attached to its own live Lease.
+            access_key += (
+                f":{self.request.source_type}:{self.request.source_ref_id}"
+                f":{self.request.authorization_config_id}"
             )
         return (self.target.node.id, self.repository.id, endpoint, access_key)
 
@@ -200,6 +210,7 @@ def validate_backup_targets(
     *,
     organization_id: int,
     sources: list[dict[str, Any]],
+    requested_by_id: int | None = None,
 ) -> dict[str, Any]:
     started_at = time.monotonic()
     validation_deadline = started_at + TARGET_VALIDATION_ACTIVE_SECONDS
@@ -249,6 +260,7 @@ def validate_backup_targets(
                 request=item,
                 target=target,
                 repository=repository,
+                requested_by_id=requested_by_id,
             )
             routes.setdefault(assignment.route_key, []).append(assignment)
         except Exception as exc:
@@ -401,6 +413,7 @@ def validate_restore_repository_assignments(
     assignments: list[
         tuple[TargetValidationInput, ExecutionTarget, Repository, RepositoryAccess]
     ],
+    requested_by_id: int | None = None,
 ) -> dict[str, TargetValidationResult]:
     """Validate snapshot repository access from restore execution nodes."""
 
@@ -417,6 +430,7 @@ def validate_restore_repository_assignments(
             repository=repository,
             repository_access=repository_access,
             probe="restore_target_validation",
+            requested_by_id=requested_by_id,
         )
         routes.setdefault(assignment.route_key, []).append(assignment)
     route_results = validate_resolved_repository_routes(
@@ -520,6 +534,30 @@ def _run_thread_job(
         close_old_connections()
 
 
+def _managed_validation_authority(assignment):
+    from apps.storage.services.internal.repository_provider import managed_repository_provider, repository_task_authority
+    if managed_repository_provider(assignment.repository) is None:
+        return {}
+    restoring = assignment.probe == "restore_target_validation"
+    action = "protection.restore_plans.run" if restoring else "resource.view"
+    refs = [
+        ("node" if assignment.request.source_type == "agent" else "source_resource",
+         assignment.request.source_ref_id, action),
+        ("repository", assignment.repository.pk, action),
+    ]
+    if restoring:
+        if not assignment.request.authorization_config_id:
+            raise ValidationError("Restore validation requires an authorized Backup Configuration.")
+        refs.append(("backup_config", assignment.request.authorization_config_id, action))
+    authority = repository_task_authority(
+        assignment.repository, actor_id=assignment.requested_by_id,
+        organization_id=assignment.repository.organization_id,
+        purpose="validation.restore" if restoring else "validation.backup",
+        requirements=tuple(refs),
+    )
+    return {"repository_authority": authority} if authority is not None else {}
+
+
 def _validate_s3_route(
     *,
     assignment: _ResolvedAssignment,
@@ -552,6 +590,7 @@ def _validate_s3_route(
             registry=registry,
             deadline=validation_deadline,
             max_wait_seconds=TARGET_VALIDATION_AGENT_SECONDS,
+            **_managed_validation_authority(assignment),
         )
         return _s3_outcome_result(
             outcome,
@@ -612,6 +651,7 @@ def _validate_restore_direct_route(
             registry=registry,
             deadline=validation_deadline,
             max_wait_seconds=TARGET_VALIDATION_AGENT_SECONDS,
+            **(_managed_validation_authority(assignment) if assignment.repository.repo_type == Repository.Type.S3 else {}),
         )
         if assignment.repository.repo_type == Repository.Type.NAS:
             validation_result = _nas_outcome_result(
@@ -1144,6 +1184,7 @@ def _execute_agent_task(
     registry: _ActivityRegistry,
     deadline: float,
     max_wait_seconds: int,
+    repository_authority=None,
 ) -> _AgentOutcome:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
@@ -1165,6 +1206,7 @@ def _execute_agent_task(
             persisted_payload=scrub_secrets(payload, extra_values=secret_values),
             correlation_type=TARGET_VALIDATION_CORRELATION_TYPE,
             correlation_id=request_id,
+            **({"repository_authority": repository_authority} if repository_authority is not None else {}),
         )
         registry.add(handle.task_id)
         timeout_seconds = max(1, min(int(remaining), int(max_wait_seconds)))

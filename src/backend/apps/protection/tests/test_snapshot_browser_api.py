@@ -756,7 +756,7 @@ class SnapshotBrowserApiTests(TestCase):
     def test_create_snapshot_download_task(self, mock_queue):
         response = self.client.post(
             f"/api/v1/protection/backup-source-snapshot-directories/{self.directory.id}/download-tasks/",
-            {"path": "readme.txt"},
+            {"path": "readme.txt", "execution_actor_id": self.user.pk + 1000},
             format="json",
             **self._headers(),
         )
@@ -773,6 +773,7 @@ class SnapshotBrowserApiTests(TestCase):
         )
         self.assertEqual(response.data["request_payload"]["path"], "readme.txt")
         task = Task.objects.get(task_uuid=response.data["task_uuid"])
+        self.assertEqual(task.request_payload["execution_actor_id"], self.user.pk)
         source_resource = task.resources.get(
             resource_type=TaskResource.Type.BACKUP_SOURCE
         )

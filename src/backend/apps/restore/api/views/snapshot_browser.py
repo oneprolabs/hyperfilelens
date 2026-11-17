@@ -68,6 +68,7 @@ class RestoreSnapshotDirectoryBrowseView(APIView):
         try:
             data = browse_snapshot_directory_from_target(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 directory_id=int(directory_id),
                 target_node_id=_required_int_query(
                     request.query_params.get("target_node_id"),
@@ -104,6 +105,7 @@ class RestoreSnapshotDirectoryPathInfoView(APIView):
         try:
             data = get_snapshot_path_info_from_target(
                 organization_id=org.id,
+                requested_by_id=request.user.pk,
                 directory_id=int(directory_id),
                 target_node_id=_required_int_query(
                     request.query_params.get("target_node_id"),
