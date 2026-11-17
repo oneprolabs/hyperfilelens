@@ -335,7 +335,7 @@ grep -F 'set_key("DJANGO_DEBUG", "true")' \
 for setting in \
 	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
 	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
-	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
+	'LENSNODE_MAX_CONCURRENT_RUNS: ${LENSNODE_MAX_CONCURRENT_RUNS:-8}' \
 	'LENSNODE_STREAM_RECOVERY_ATTEMPTS: "3"' \
 	'LENSNODE_STREAM_RECOVERY_BACKOFF_S: "1"' \
 	'LENSNODE_STREAM_RECOVERY_BACKOFF_MAX_S: "8"'; do
@@ -565,13 +565,16 @@ grep -F 'LENSNODE_DRAIN_TIMEOUT_S: "240"' \
 for setting in \
 	'LENSNODE_PLANNING_REASONING_EFFORT: "medium"' \
 	'LENSNODE_EXECUTION_BACKEND: "trusted_container"' \
-	'LENSNODE_MAX_CONCURRENT_RUNS: "1"' \
 	'LENSNODE_STREAM_RECOVERY_ATTEMPTS: "3"' \
 	'LENSNODE_STREAM_RECOVERY_BACKOFF_S: "1"' \
 	'LENSNODE_STREAM_RECOVERY_BACKOFF_MAX_S: "8"'; do
 	grep -F "${setting}" \
 		"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 done
+grep -F 'local run_concurrency="${LENSNODE_MAX_CONCURRENT_RUNS:-}"' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
+grep -F 'run_concurrency="${run_concurrency:-8}"' \
+	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 grep -F 'LENSNODE_TLS_SKIP_VERIFY: "${HFL_INSECURE_TLS}"' \
 	"${ROOT}/deploy/bootstrap/gateway-install-lensnode-sidecar.sh" >/dev/null
 
@@ -1654,7 +1657,7 @@ for cert_file in tls.crt tls.key root-ca.crt SHA256SUMS README.md; do
 	}
 done
 [[ ! -e "${ROOT}/deploy/nginx/certs/.gitignore" ]]
-legacy_public_port_pattern='104(42|43|44|45|46)'
+legacy_public_port_pattern='(^|[^0-9])104(42|43|44|45|46)([^0-9]|$)'
 if git -C "${ROOT}" grep -n -E "${legacy_public_port_pattern}" -- .; then
 	printf 'ERROR: tracked HFL files must not reference legacy 104xx public ports\n' >&2
 	exit 1
