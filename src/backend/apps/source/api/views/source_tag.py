@@ -32,6 +32,18 @@ from apps.source.services.internal.selectable_ids import parse_selectable_id
 from common.extension_spi import get_authz_provider
 
 
+class SourceTagsCapabilityMixin:
+    """Apply the product boundary to every tag and tag-assignment endpoint."""
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        from apps.iam.organization_policy import require_organization_capability
+
+        require_organization_capability(
+            require_org(request).pk, "source_tags", request=request,
+        )
+
+
 def _tag_payload(tag):
     return {
         "id": tag.id,
@@ -199,7 +211,7 @@ def _visible_tag_count(request, tag):
     )
 
 
-class SourceTagListView(APIView):
+class SourceTagListView(SourceTagsCapabilityMixin, APIView):
     permission_classes = [IsAuthenticated, TagPermission]
 
     def get(self, request):
@@ -318,7 +330,7 @@ class SourceTagListView(APIView):
         return Response(_tag_payload(tag), status=status.HTTP_201_CREATED)
 
 
-class SourceTagDetailView(APIView):
+class SourceTagDetailView(SourceTagsCapabilityMixin, APIView):
     permission_classes = [IsAuthenticated, TagPermission]
 
     def _get(self, request, pk):
@@ -388,7 +400,7 @@ class SourceTagDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class SourceTagAssignmentView(APIView):
+class SourceTagAssignmentView(SourceTagsCapabilityMixin, APIView):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get_permissions(self):
@@ -484,7 +496,7 @@ class SourceTagAssignmentView(APIView):
         )
 
 
-class SourceTagAssignmentListView(APIView):
+class SourceTagAssignmentListView(SourceTagsCapabilityMixin, APIView):
     permission_classes = [IsAuthenticated, IsOrgStaffReader]
 
     def get(self, request):
@@ -537,7 +549,7 @@ class SourceTagAssignmentListView(APIView):
         return Response({"results": results})
 
 
-class SourceTagBulkAssignmentView(APIView):
+class SourceTagBulkAssignmentView(SourceTagsCapabilityMixin, APIView):
     """Add/remove selected associations without replacing sources' other tags."""
 
     permission_classes = [IsAuthenticated, IsOrgOperator]
@@ -647,7 +659,7 @@ class SourceTagBulkAssignmentView(APIView):
             )
 
 
-class SourceTagSourceListView(APIView):
+class SourceTagSourceListView(SourceTagsCapabilityMixin, APIView):
     """Authorize both the label and source rows in SQL before count/page."""
 
     permission_classes = [IsAuthenticated, TagPermission]

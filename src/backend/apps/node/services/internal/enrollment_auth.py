@@ -185,6 +185,10 @@ def resolve_enrollment_authorization(
     namespace: str | None = None,
 ) -> EnrollmentAuthorization | None:
     """Accept an installation session or a backward-compatible enrollment token."""
+    if org is not None and role == Node.Role.PROXY:
+        from apps.iam.organization_policy import require_organization_capability
+
+        require_organization_capability(org.pk, "proxy_hosts")
     session = active_installation_session(
         org=org, secret=secret, role=role, namespace=namespace,
     )
@@ -224,6 +228,10 @@ def open_installation_session(
     )
     if token is None:
         raise PermissionError("invalid or expired enrollment token")
+    if org is not None and role == Node.Role.PROXY:
+        from apps.iam.organization_policy import require_organization_capability
+
+        require_organization_capability(org.pk, "proxy_hosts")
 
     now = timezone.now()
     expired_session_ids = list(

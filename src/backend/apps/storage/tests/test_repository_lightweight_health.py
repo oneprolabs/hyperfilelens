@@ -47,7 +47,7 @@ class LightweightHealthTests(SimpleTestCase):
                 repository_health_check_mode()
 
     def test_s3_modes_do_not_fall_back(self):
-        repository = SimpleNamespace(repo_type=Repository.Type.S3)
+        repository = SimpleNamespace(repo_type=Repository.Type.S3, config={})
         with (
             mock.patch(
                 "apps.storage.services.internal.repository_health.check_s3_repository_lightweight"
@@ -70,6 +70,24 @@ class LightweightHealthTests(SimpleTestCase):
             ):
                 probe_repository_health(repository)
                 legacy.assert_called_once_with(repository)
+
+    def test_managed_s3_uses_provider_health_check(self):
+        repository = SimpleNamespace(repo_type=Repository.Type.S3, config={})
+        with (
+            mock.patch(
+                "apps.storage.services.internal.repository_provider.managed_repository_provider",
+                return_value=object(),
+            ),
+            mock.patch(
+                "apps.storage.services.internal.repository_health.check_s3_repository"
+            ) as managed_check,
+            mock.patch(
+                "apps.storage.services.internal.repository_health.check_s3_repository_lightweight"
+            ) as lightweight_check,
+        ):
+            self.assertEqual(probe_repository_health(repository), "online")
+            managed_check.assert_called_once_with(repository)
+            lightweight_check.assert_not_called()
 
     def test_exact_two_bounded_reads_and_owner_validation(self):
         with (

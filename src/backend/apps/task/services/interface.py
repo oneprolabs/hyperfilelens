@@ -37,7 +37,6 @@ TASK_CREATION_TRIGGER_MAP = {
 
 BACKUP_SOURCE_ONLY_TASK_TYPES = frozenset(
     {
-        Task.Type.BACKUP,
         Task.Type.RESTORE,
         Task.Type.INSIGHT_WORKSPACE_RESTORE,
         Task.Type.SNAPSHOT_DOWNLOAD,
@@ -201,7 +200,21 @@ def create_task(
         raise ValidationError(
             {"resources": "A task can have at most one primary resource."}
         )
-    if task_type in BACKUP_SOURCE_ONLY_TASK_TYPES:
+    if task_type == Task.Type.BACKUP:
+        # A backup task is authorized against both its source and its target
+        # repository.  Keep both persisted resources so execution providers
+        # can verify that the repository used by the snapshot belongs to the
+        # task, rather than trusting the request payload alone.
+        allowed_resource_types = {
+            TaskResource.Type.BACKUP_SOURCE,
+            TaskResource.Type.REPOSITORY,
+        }
+        resource_defs = [
+            resource
+            for resource in resource_defs
+            if str(resource.get("resource_type") or "") in allowed_resource_types
+        ]
+    elif task_type in BACKUP_SOURCE_ONLY_TASK_TYPES:
         resource_defs = [
             resource
             for resource in resource_defs

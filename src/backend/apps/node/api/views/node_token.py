@@ -4,6 +4,7 @@ from rest_framework import status, viewsets
 from rest_framework.response import Response
 
 from apps.iam.org_context import require_org_matching_body
+from apps.iam.organization_policy import require_organization_capability
 from apps.node.api import permissions as node_permissions
 from apps.node.api.serializers import NodeTokenCreateSerializer, NodeTokenSerializer
 from apps.node.api.views.mixins import SoftDeleteDestroyMixin
@@ -48,6 +49,8 @@ class NodeTokenViewSet(
         ser = NodeTokenCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         org = require_org_matching_body(request, ser.validated_data.pop("org", None))
+        if ser.validated_data.get("role") == "proxy":
+            require_organization_capability(org.pk, "proxy_hosts", request=request)
         token_row = ser.save(organization=org, created_by=request.user)
         out = NodeTokenSerializer(
             token_row,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from django.db import transaction
 from rest_framework import permissions
 from rest_framework.exceptions import PermissionDenied
@@ -17,6 +19,25 @@ from apps.iam.resource_access import (
 from common.extension_spi import get_authz_provider
 
 
+def organization_resource_allowed(
+    request: Any, *, resource_type: str, subtype: str | None = None,
+) -> bool:
+    """Apply a product boundary without treating it as a user permission."""
+    from apps.iam.organization_policy import (
+        DIRECT_REPOSITORY_CAPABILITIES, resolve_organization_policy,
+    )
+
+    policy = resolve_organization_policy(require_org(request).pk, request=request)
+    capability = None
+    if resource_type == "repository":
+        capability = DIRECT_REPOSITORY_CAPABILITIES.get(str(subtype or ""))
+    elif resource_type == "source_resource" and str(subtype or "") in {"nas", "nfs", "cifs"}:
+        capability = "source_nas"
+    elif resource_type == "node" and subtype == "proxy":
+        capability = "proxy_hosts"
+    return capability is None or policy.capabilities()[capability]
+
+
 class GovernedResourcePermission(permissions.BasePermission):
     def has_permission(self, request, view) -> bool:
         if get_membership(request) is None:
@@ -28,6 +49,25 @@ class GovernedResourcePermission(permissions.BasePermission):
         if gate is None:
             return False
         action = view._resource_action()
+        operation = getattr(view, "action", "")
+        if operation in ("create", "validate_s3", "test_draft") or (
+            view.governance_resource_type == "source_resource"
+            and operation in ("update", "partial_update")
+        ):
+            data = request.data if isinstance(request.data, dict) else {}
+            if view.action == "validate_s3":
+                resource_type, subtype = "repository", "s3"
+            else:
+                resource_type = view.governance_resource_type
+                subtype = (
+                    data.get("repo_type")
+                    if resource_type == "repository"
+                    else data.get("resource_type") or data.get("role")
+                )
+            if not organization_resource_allowed(
+                request, resource_type=resource_type, subtype=subtype,
+            ):
+                return False
         from apps.iam.query_authorization import request_authorization
 
         context = request_authorization(
@@ -162,6 +202,11 @@ class GovernedResourceMixin:
             data = request.data if isinstance(request.data, dict) else {}
             role = data.get("role") or request.query_params.get("role") or "agent"
             repo_type = data.get("repo_type") or data.get("type") or data.get("kind")
+            subtype = repo_type if self.governance_resource_type == "repository" else role
+            if not organization_resource_allowed(
+                request, resource_type=self.governance_resource_type, subtype=subtype,
+            ):
+                raise PermissionDenied("This organization does not provide that resource type.")
             obj = SimpleNamespace(role=role, repo_type=repo_type)
             key = resource_permission(self.governance_resource_type, "manage", obj)
             if not key or not provider.has_org_action(

@@ -237,15 +237,17 @@ def get_access_profile(
         authority_source = "support_readonly"
         role = Membership.Role.AUDITOR if membership else ""
         feature_keys = normalize_feature_keys(list(FEATURE_KEYS)) if membership else ["dashboard"]
-    mode = ""
-    if membership and membership.pk and not support_readonly:
-        from common.extension_spi import get_authz_provider
+    from apps.iam.organization_policy import resolve_organization_policy
 
-        mode_resolver = getattr(get_authz_provider(), "organization_mode", None)
-        if callable(mode_resolver):
-            mode = mode_resolver(organization_id=membership.organization.pk)
+    policy = (
+        resolve_organization_policy(membership.organization.pk)
+        if membership and provider is not None
+        else None
+    )
     return {
-        "organization_mode": mode,
+        "organization_kind": policy.kind if policy else "",
+        "organization_mode": policy.mode if policy else "",
+        "organization_capabilities": policy.capabilities() if policy else {},
         "permissions": grants,
         "group_permissions": group_grants,
         "org_key": getattr(membership.organization, "key", "") if membership else "",

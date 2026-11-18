@@ -1178,6 +1178,18 @@ def _record_automatic_repository_health_failure(
 def probe_repository_health(repository: Repository) -> str:
     """Probe a repository without persisting health, timestamps, or usage."""
     if repository.repo_type == Repository.Type.S3:
+        # Managed repositories use the EE provider's temporary identity and
+        # ownership marker protocol. The lightweight legacy probe intentionally
+        # uses the repository's static S3 secret and must not be used for this
+        # credential mode; it would reject the repository before contacting
+        # object storage.
+        from apps.storage.services.internal.repository_provider import (
+            managed_repository_provider,
+        )
+
+        if managed_repository_provider(repository) is not None:
+            check_s3_repository(repository)
+            return Repository.Health.ONLINE
         if repository_health_check_mode() == "lightweight":
             check_s3_repository_lightweight(repository)
         else:

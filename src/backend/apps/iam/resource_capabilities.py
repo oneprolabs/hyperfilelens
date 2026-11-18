@@ -19,6 +19,9 @@ from apps.iam.permission_catalog import (
     REPOSITORY_PERMISSION_PREFIXES,
 )
 from apps.iam.resource_access import resolve_resource_reference
+from apps.iam.organization_policy import (
+    DIRECT_REPOSITORY_CAPABILITIES, resolve_organization_policy,
+)
 from common.extension_spi import get_authz_provider
 
 
@@ -246,7 +249,16 @@ class ResourceCapabilitiesView(APIView):
             create[kind] = False
             for obj in objects:
                 permission = resource_permission(kind, "manage", obj)
-                allowed = not support and (
+                product_allowed = True
+                if kind == "repository":
+                    capability = DIRECT_REPOSITORY_CAPABILITIES.get(
+                        str(getattr(obj, "repo_type", "")),
+                    )
+                    if capability is not None:
+                        product_allowed = resolve_organization_policy(
+                            org.pk, request=request,
+                        ).capabilities().get(capability) is True
+                allowed = not support and product_allowed and (
                     provider is None
                     or bool(
                         permission

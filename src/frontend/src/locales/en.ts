@@ -3850,8 +3850,8 @@ export const en = {
         change_owner: 'Transfer resource ownership without changing its identity, configuration, data, or Group assignments.',
       },
       permissionDescriptions: {
-        configuration_managed_storage_view: "View Object Storage connections in the Personal organization.",
-        configuration_managed_storage_manage: "Add and configure Object Storage connections in the Personal organization.",
+        configuration_managed_storage_view: "View Object Storage connections in the Personal Edition organization.",
+        configuration_managed_storage_manage: "Add and configure Object Storage connections in the Personal Edition organization.",
         configuration_managed_storage_delete: "Delete unused Object Storage connection configurations without deleting their Buckets.",
         configuration_organizations_view: "View organization details and member counts.",
         configuration_members_view: "View organization members and their role assignments.",

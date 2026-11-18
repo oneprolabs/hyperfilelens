@@ -160,6 +160,13 @@ def verify_empty_prefix(
 def prepare_s3_creation(create):
     @wraps(create)
     def wrapped(**kwargs):
+        from apps.iam.organization_policy import (
+            DIRECT_REPOSITORY_CAPABILITIES, require_organization_capability,
+        )
+
+        capability = DIRECT_REPOSITORY_CAPABILITIES.get(kwargs.get("repo_type"))
+        if capability is not None:
+            require_organization_capability(kwargs["organization_id"], capability)
         if kwargs.get("repo_type") != Repository.Type.S3:
             return create(**kwargs)
         from apps.storage.services.internal.repository_initializer import (

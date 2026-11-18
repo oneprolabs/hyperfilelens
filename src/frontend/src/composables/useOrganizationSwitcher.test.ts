@@ -16,7 +16,7 @@ vi.mock('../lib/notify', () => ({ notifyError: mocks.notify }))
 vi.mock('element-plus', async (load) => ({ ...(await load<typeof import('element-plus')>()), ElMessageBox: { confirm: mocks.confirm } }))
 vi.mock('./useAuth', () => ({ currentUser: mocks.currentUser, getEffectiveOrgKey: mocks.getEffectiveOrgKey }))
 
-const rows = [{ id: 1, key: 'org-a', name: 'Organization A' }, { id: 2, key: 'org-b', name: 'Personal' }]
+const rows = [{ id: 1, key: 'org-a', name: 'Organization A' }, { id: 2, key: 'org-b', name: 'Personal Edition' }]
 const response = { access_profile: { org_key: 'org-b', landing_path: '/protection/backups' } }
 async function render() {
   const { useOrganizationSwitcher } = await import('./useOrganizationSwitcher')
@@ -152,7 +152,7 @@ describe('Enterprise organization switching', () => {
     wrapper.findComponent(ElDropdown).vm.$emit('command', 'org-b')
     await flushPromises()
     expect(mocks.confirm).toHaveBeenCalledWith(
-      en.nav.switchOrganizationNotice.replace('{organization}', 'Personal'),
+      en.nav.switchOrganizationNotice.replace('{organization}', 'Personal Edition'),
       en.nav.switchOrganization,
       expect.objectContaining({ confirmButtonText: en.nav.switchOrganizationConfirm }),
     )
