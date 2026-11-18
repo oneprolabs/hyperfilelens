@@ -29,6 +29,13 @@ describe('TaskDetailDrawer NAS repository write denial', () => {
   })
 })
 
+describe('FlowBackupSourceDetailDrawer repository failure localization', () => {
+  it('reuses the shared repository failure translator', () => {
+    expect(readFileSync(resolve(process.cwd(), 'src/pages/protection/components/FlowBackupSourceDetailDrawer.vue'), 'utf8'))
+      .toContain("import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'")
+  })
+})
+
 describe('TaskDetailDrawer structured detail layout', () => {
   it('lets failure and skipped-item details use the unused event-time column', () => {
     expect(source).toContain("['failure_details', 'skipped_details']")

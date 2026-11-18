@@ -8,6 +8,20 @@ import zh from '../../../../../../language-packs/packs/zh-hans/frontend/messages
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it.each([false, true])('localizes the missing bucket and keeps raw evidence (terminal metadata: %s)', (projected) => {
+    const raw = 'unable to read repository ownership marker: S3: GetObject, StatusCode: 404, RequestID: test-request, HostID: test-host, api error NoSuchBucket'
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { taskType: 'backup', metadata: projected
+        ? { terminal_failure: { error_code: 'POLICY_APPLY_FAILED', message: raw } }
+        : { error_code: 'POLICY_APPLY_FAILED', error_message: raw } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh } })] },
+    })
+    const box = wrapper.get('.task-event-failure__terminal-box')
+    expect(box.text()).toContain(zh.ops.task.failureDetails.reason.repositoryBucketMissing)
+    expect(box.get('details pre').text()).toBe(raw)
+    expect(box.get('details').attributes('open')).toBeUndefined()
+    wrapper.unmount()
+  })
   it('renders offline deregistration reasons instead of a generic English error and unrelated advice', () => {
     const diagnostic = 'Agent "Test Host" is offline — remote uninstall is required in strict mode.'
     const wrapper = mount(TaskEventFailureDetails, {

@@ -26,6 +26,7 @@ const taskEventMessageKeys: Record<string, string> = {
   'late backup result ignored due to newer backup task': 'ops.task.eventMessage.lateBackupResultIgnored',
   'late backup result adopted': 'ops.task.eventMessage.lateBackupResultAdopted',
   'directory backup failed': 'ops.task.eventMessage.directoryBackupFailed',
+  'directory policy preparation failed': 'ops.task.eventMessage.directoryPolicyPreparationFailed',
   'directory backup cancelled': 'ops.task.eventMessage.directoryBackupCancelled',
   'resuming directory backup agent task': 'ops.task.eventMessage.resumingDirectoryBackup',
   'proxy repository server started': 'ops.task.eventMessage.proxyRepositoryServerStarted',
