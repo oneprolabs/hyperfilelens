@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -31,12 +32,17 @@ type policyLog struct {
 	writer    *lumberjack.Logger
 	closed    bool
 	lastError error
-	queue     chan []byte
+	queue     chan logWrite
 	stop      chan struct{}
 	closing   atomic.Bool
 	done      chan struct{}
 	tailMu    sync.Mutex
 	tail      []byte
+}
+
+type logWrite struct {
+	data []byte
+	ack  chan error
 }
 
 // All runtime writers share the budget. Errors are observable but never fail a
@@ -58,11 +64,35 @@ func (p *policyLog) Write(data []byte) (int, error) {
 	}
 	copyData := append([]byte(nil), data...)
 	select {
-	case p.queue <- copyData:
+	case p.queue <- logWrite{data: copyData}:
 	default:
 		policyLogs.dropped.Add(1)
 	} // bounded best-effort logging.
 	return len(data), nil
+}
+
+// writeAndWait bypasses best-effort dropping for the service's final diagnostic.
+// The single writer preserves ordering and acknowledges only after file I/O.
+func (p *policyLog) writeAndWait(ctx context.Context, data []byte) error {
+	if p.closing.Load() {
+		return errors.New("runtime log is closed")
+	}
+	request := logWrite{data: append([]byte(nil), data...), ack: make(chan error, 1)}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.stop:
+		return errors.New("runtime log is closed")
+	case p.queue <- request:
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.stop:
+		return errors.New("runtime log is closed")
+	case err := <-request.ack:
+		return err
+	}
 }
 
 // RuntimeLogTail keeps startup diagnostics independent of optional disk I/O.
@@ -115,13 +145,20 @@ func (p *policyLog) run() {
 		select {
 		case <-p.stop:
 			return
-		case data := <-p.queue:
+		case request := <-p.queue:
 			policyLogs.Lock()
+			var writeErr error
 			if p.mirror {
-				_, _ = (stderrWriter{}).Write(data)
+				_, _ = (stderrWriter{}).Write(request.data)
 			}
 			if p.writer != nil {
-				_, p.lastError = p.writer.Write(data)
+				_, writeErr = p.writer.Write(request.data)
+				p.lastError = writeErr
+			} else {
+				writeErr = errors.New("runtime log writer unavailable")
+			}
+			if request.ack != nil {
+				request.ack <- writeErr
 			}
 			policyLogs.Unlock()
 		}
@@ -156,7 +193,7 @@ func runtimeLogWriter(path string, mirror bool) *policyLog {
 	if existing := policyLogs.files[path]; existing != nil && !existing.closing.Load() {
 		return existing
 	}
-	writer := &policyLog{path: path, mirror: mirror, queue: make(chan []byte, 64), stop: make(chan struct{}), done: make(chan struct{})}
+	writer := &policyLog{path: path, mirror: mirror, queue: make(chan logWrite, 64), stop: make(chan struct{}), done: make(chan struct{})}
 	writer.writer = &lumberjack.Logger{Filename: path,
 		MaxSize:    max(1, policyLogs.budgetMB/(maxLogBackups+1)),
 		MaxBackups: maxLogBackups, MaxAge: policyLogs.days}

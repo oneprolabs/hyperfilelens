@@ -76,30 +76,32 @@ func New(store *config.Store) *Agent {
 func (a *Agent) Startup(ctx context.Context) error {
 	cfg := a.store.Current()
 	if err := Setup(ctx, cfg); err != nil {
-		return err
+		return startupError("HFL-STARTUP-001", "environment setup", err)
 	}
 	engine.CleanupStaleSnapshotDownloadArtifacts()
 
 	dataRoot, logDir, _, err := ResolveLayout(cfg)
 	if err != nil {
-		return err
+		return startupError("HFL-STARTUP-001", "resolve Agent layout", err)
 	}
 	db, err := database.Open(ctx, database.DefaultPath(dataRoot))
 	if err != nil {
-		return fmt.Errorf("open task database: %w", err)
+		return startupError("HFL-STARTUP-002", "task database initialization", err)
 	}
 	a.db = db
 	slog.Info("task database ready", "path", db.Path())
 
+	slog.Info("agent startup phase", "phase", "cache_layout_migration")
 	if err := kopialayout.Migrate(ctx, dataRoot, logDir, database.NewRepoRepo(db).RelocateConfigPaths); err != nil {
 		var incomplete *kopialayout.IncompleteError
 		if !errors.As(err, &incomplete) {
 			_ = db.Close()
 			a.db = nil
-			return fmt.Errorf("prepare disposable cache layout: %w", err)
+			return startupError("HFL-STARTUP-003", "cache layout migration", err)
 		}
 		slog.Warn("cache layout migration incomplete; cache is not safe to discard", "retained_entries", incomplete.Count)
 	}
+	slog.Info("agent startup phase completed", "phase", "cache_layout_migration")
 	repo := database.NewTaskRepo(db)
 	pathSizeConcurrency := 1
 	if cfg.Role == model.RoleProxy || cfg.Role == model.RoleGateway {
@@ -115,7 +117,7 @@ func (a *Agent) Startup(ctx context.Context) error {
 	a.taskFixer = controller.NewTaskFixer(repo, a.tracker, dataRoot, logDir)
 
 	if _, err := a.repairRunning(ctx); err != nil {
-		return err
+		return startupError("HFL-STARTUP-004", "runtime recovery", err)
 	}
 
 	wss := strings.TrimSpace(cfg.WSSURL)
@@ -134,6 +136,13 @@ func (a *Agent) Startup(ctx context.Context) error {
 	go snapshotDownloadCleanupLoop(ctx)
 
 	return nil
+}
+
+func startupError(code, stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %s failed: %w", code, stage, err)
 }
 
 func snapshotDownloadCleanupLoop(ctx context.Context) {

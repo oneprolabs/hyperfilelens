@@ -1,10 +1,20 @@
 package app
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"hyperfilelens/agent/internal/model"
 )
+
+func TestStartupErrorIncludesDiagnosticStageAndCause(t *testing.T) {
+	err := startupError("HFL-STARTUP-003", "cache layout migration", errors.New("migration lock is busy"))
+	if got := err.Error(); !strings.Contains(got, "HFL-STARTUP-003: cache layout migration failed") ||
+		!strings.Contains(got, "migration lock is busy") {
+		t.Fatalf("startupError() = %q, want diagnostic stage and cause", got)
+	}
+}
 
 func TestHeartbeatPayloadIncludesCapabilities(t *testing.T) {
 	agent := &Agent{

@@ -352,6 +352,12 @@ func failureActions(operation string, failure InstallFailure) []string {
 			"Alternatively, use another host without an existing Agent.",
 		}
 	}
+	if operation == "install" && failure.CodeKey == "HFL-VERIFY-004" {
+		return []string{
+			"Review the Agent service log for the startup error.",
+			"Correct the reported local issue, then run the same installation command again.",
+		}
+	}
 	if operation == "install" && failure.Stage == "Post-install verification" {
 		return []string{
 			"Check outbound network access to the control plane.",

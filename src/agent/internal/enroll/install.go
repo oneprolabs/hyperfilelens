@@ -508,12 +508,14 @@ func finishEnrollment(
 	}
 	logStep("Waiting for the Agent to come online.")
 	if err := enrollmentclient.WaitNodeOnline(ctx, agentCfg, nodeID, 30*time.Second); err != nil {
-		abortInstall(
-			"Post-install verification",
-			"The Agent could not establish a control-plane WebSocket connection: "+err.Error(),
-			3,
-			"HFL-VERIFY-003",
-		)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		currentService := serviceState(ctx)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		abortInstallFailure(onlineVerificationFailure(err, currentService))
 	}
 	logOK("Node is online in HyperFileLens")
 

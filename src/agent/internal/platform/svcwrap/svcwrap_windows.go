@@ -4,9 +4,12 @@ package svcwrap
 
 import (
 	"context"
-	"log/slog"
+	"os"
+	"time"
 
 	"github.com/kardianos/service"
+
+	"hyperfilelens/agent/internal/infra/logging"
 )
 
 const (
@@ -15,33 +18,14 @@ const (
 	serviceDescription = "HyperFileLens backup agent (WebSocket control plane and local CLI)"
 )
 
-type daemonRunner struct {
-	run    func(context.Context) error
-	cancel context.CancelFunc
-	done   chan struct{}
-}
-
-func (d *daemonRunner) Start(service.Service) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	d.cancel = cancel
-	d.done = make(chan struct{})
-	go func() {
-		defer close(d.done)
-		if err := d.run(ctx); err != nil && err != context.Canceled {
-			slog.Error("agent service stopped with error", "err", err)
-		}
-	}()
-	return nil
-}
-
-func (d *daemonRunner) Stop(service.Service) error {
-	if d.cancel != nil {
-		d.cancel()
-	}
-	if d.done != nil {
-		<-d.done
-	}
-	return nil
+func exitOnFailure(err error) {
+	// Await the critical diagnostic, but do not let broken log storage leave
+	// an inert service marked Running indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = logging.ErrorAndFlush(ctx, "agent service stopped with error", err)
+	// A failure exit lets SCM apply the existing recovery actions.
+	os.Exit(1)
 }
 
 // RunIfService registers with Windows SCM when the process is started as a service.
@@ -49,7 +33,7 @@ func RunIfService(run func(context.Context) error) (handled bool, err error) {
 	if service.Interactive() {
 		return false, nil
 	}
-	svc, err := service.New(&daemonRunner{run: run}, &service.Config{
+	svc, err := service.New(&daemonRunner{run: run, onFailure: exitOnFailure}, &service.Config{
 		Name:        serviceName,
 		DisplayName: serviceDisplayName,
 		Description: serviceDescription,

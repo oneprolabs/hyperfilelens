@@ -49,6 +49,29 @@ func seedConnection(t *testing.T, root, name string) []byte {
 	return data
 }
 
+func TestMigrationCompletesForFreshAgentRoot(t *testing.T) {
+	root := t.TempDir()
+	switched := false
+	m := testMigrator(t, root)
+	m.switchReferences = func(_ context.Context, paths map[string]string) error {
+		switched = true
+		if len(paths) != 0 {
+			t.Fatalf("fresh root migration paths = %#v, want none", paths)
+		}
+		return nil
+	}
+
+	if err := m.run(context.Background()); err != nil {
+		t.Fatalf("fresh root migration failed: %v", err)
+	}
+	if !switched || m.state.Status != "completed" {
+		t.Fatalf("fresh root migration status=%q switched=%v, want completed", m.state.Status, switched)
+	}
+	if len(m.state.Entries) != 0 || len(m.state.Retained) != 0 {
+		t.Fatalf("fresh root migration retained entries=%v state entries=%v", m.state.Retained, m.state.Entries)
+	}
+}
+
 func TestMigrationKeepsFilenamesWarmCacheAndUnknownConfigFields(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(LegacyConfigDir(root), "repo-42.config")
