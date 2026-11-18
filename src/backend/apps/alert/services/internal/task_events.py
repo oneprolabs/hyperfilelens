@@ -32,6 +32,14 @@ def _task_policies_for(task: Task):
 
 def handle_task_event(task: Task) -> None:
     event_type = _task_event_type(task)
+    subject = " ".join((task.display_name or "").split()) or str(task.task_uuid)
+    event_label = {"task_failed": "Task failed", "task_timeout": "Task timed out"}.get(
+        event_type, f"Task alert: {event_type}"
+    )
+    title = f"{event_label}: {subject}"
+    title_limit = AlertRecord._meta.get_field("title").max_length - len("Resolved: ")
+    if len(title) > title_limit:
+        title = f"{title[:title_limit - 1].rstrip()}…"
     task_type = task.task_type
     operation = getattr(task, "repository_operation", None) if task_type == Task.Type.REPOSITORY_OPERATION else None
     operation_type = operation.operation_type if operation is not None else None
@@ -50,7 +58,7 @@ def handle_task_event(task: Task) -> None:
         fire_alert(
             policy,
             resource=task,
-            title=f"Task alert: {event_type}",
+            title=title,
             message=task.error_message or f"Task {task.task_uuid} status={task.status}",
             alert_key=f"{task_type}:{operation_type or '-'}:{event_type}",
             metadata={

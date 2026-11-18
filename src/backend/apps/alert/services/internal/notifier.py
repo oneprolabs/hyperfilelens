@@ -6,6 +6,7 @@ import logging
 
 from django.utils import timezone
 
+from apps.alert.constants import AlertType
 from apps.alert.models import AlertPolicy, AlertRecord
 from apps.alert.services.internal.alert_email import (
     build_alert_email_model,
@@ -59,7 +60,7 @@ def _payload_for_alert(alert: AlertRecord, *, resolved: bool) -> dict:
         "policy_type": policy.type if policy else (alert.type or ""),
         "severity": alert.severity,
         "status": alert.status,
-        "title": alert.title,
+        "title": f"Resolved: {alert.title}" if resolved and alert.type == AlertType.TASK else alert.title,
         "message": alert.message,
         "resource_type": alert.resource_type,
         "resource_id": alert.resource_id,

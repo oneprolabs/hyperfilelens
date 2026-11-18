@@ -151,6 +151,18 @@ describe('operational event localization', () => {
       .toBe(t('ops.events.taskAlert', { event: t(`ops.alertsCenter.taskEvents.${event}`) }))
   })
 
+  it.each(['en', 'zh-hans', 'es'])('keeps the backup source in task alert titles and search in %s', (locale) => {
+    const { t } = translator(locale)
+    const title = 'Task failed: Backup aimychats.com'
+    const localized = `${t('ops.alertsCenter.taskEvents.task_failed')}: Backup aimychats.com`
+    expect(taskAlertDisplay({ type: 'task', title }, t).title).toBe(localized)
+    expect(taskAlertNotificationDisplay({ kind: 'alert', title: `Resolved: ${title}` }, t).title)
+      .toBe(t('ops.events.resolvedTaskAlert', { title: localized }))
+    if (localized.toLowerCase() !== title.toLowerCase()) {
+      expect(operationalSearchAliases(localized, t, 'alert')).toContain(title)
+    }
+  })
+
   it('preserves custom titles, unknown diagnostics, unrelated records and multiline evidence', () => {
     const { t } = translator()
     const message = 'upload error: unsupported source: /data\nEngine diagnostic: exit 7'
