@@ -16,7 +16,7 @@ describe('primary navigation icons', () => {
   it('defines one shared Lucide icon for every primary destination', () => {
     expect(primaryNavSource).toContain("{ to: '/', label: t('nav.overview'), icon: LayoutDashboard }")
     expect(primaryNavSource).toMatch(
-      /\{\s*to:\s*managedStorageEntry\(\)\s*&&\s*resolveProtectionEntry\(has\)\s*===\s*'\/'\s*\?\s*'\/node\/managed-storage'\s*:\s*'\/protection',\s*label:\s*t\('nav\.protection'\),\s*icon:\s*ShieldCheck\s*\}/,
+      /\{\s*to:\s*managedStorageEntry\(\)\s*\?\s*'\/node\/managed-storage'\s*:\s*'\/protection',\s*label:\s*t\('nav\.protection'\),\s*icon:\s*ShieldCheck\s*\}/,
     )
     expect(primaryNavSource).toContain(
       "{ to: '/insight', label: t('nav.insight'), icon: Sparkles }",
