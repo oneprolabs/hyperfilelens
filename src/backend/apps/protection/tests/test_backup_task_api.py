@@ -405,6 +405,13 @@ class ProtectionBackupTaskApiTests(TestCase):
         )
         self.assertEqual(source_resource.resource_subtype, "agent")
         self.assertEqual(source_resource.resource_id, self.agent.id)
+        self.assertTrue(
+            TaskResource.objects.filter(
+                task=task,
+                resource_type=TaskResource.Type.REPOSITORY,
+                resource_id=self.repository.id,
+            ).exists()
+        )
         mock_queue.assert_called_once()
         mock_size_refresh.assert_called_once_with(
             config_id=self.config.id,

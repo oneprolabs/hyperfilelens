@@ -1423,8 +1423,12 @@ def _build_create_failure_result_payload(
         technical_detail["repo_type"] = repository.repo_type
         if repository.repo_type == Repository.Type.S3:
             config = repository.config or {}
-            technical_detail["provider"] = config.get("platform") or config.get(
-                "s3_platform", ""
+            # ``s3_platform`` is a Repository column, not part of the
+            # connection config payload. Keeping this detail accurate is
+            # especially important for managed repositories, where the
+            # provider determines the credential issuer and endpoint rules.
+            technical_detail["provider"] = repository.s3_platform or config.get(
+                "platform", ""
             )
             endpoint = str(config.get("endpoint") or "")
             if endpoint:

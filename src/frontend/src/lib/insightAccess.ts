@@ -1,5 +1,7 @@
 /** Navigation hints only. Backend permissions still authorize every operation. */
-export type InsightPermissionCheck = (permission: string, organizationOnly?: boolean) => boolean
+import { organizationCapabilityAvailable, sourcePermissionCapability, type OrganizationCapability, type OrganizationPolicyProfile } from './organizationCapabilities'
+
+export type InsightPermissionCheck = (permission: string, organizationOnly?: boolean, capability?: OrganizationCapability) => boolean
 
 export const insightPages = [
   { path: '/insight/copilot', permission: 'insights.chats.view', organizationOnly: false },
@@ -12,12 +14,14 @@ export function resolveInsightEntry(has: InsightPermissionCheck): string {
 }
 
 export function insightPermissionHints(
-  profile: { permissions?: readonly string[]; group_permissions?: readonly string[] } | undefined,
+  profile: (OrganizationPolicyProfile & { permissions?: readonly string[]; group_permissions?: readonly string[] }) | undefined,
   enterprise = __HFL_EXTENSIONS_FRONTEND__,
 ): InsightPermissionCheck {
-  return (permission, organizationOnly = false) => !enterprise
-    || Boolean(profile?.permissions?.includes(permission))
-    || (!organizationOnly && Boolean(profile?.group_permissions?.includes(permission)))
+  return (permission, organizationOnly = false, capability = sourcePermissionCapability(permission)) =>
+    (!capability || organizationCapabilityAvailable(profile, capability, enterprise))
+    && (!enterprise
+      || Boolean(profile?.permissions?.includes(permission))
+      || (!organizationOnly && Boolean(profile?.group_permissions?.includes(permission))))
 }
 
 /** Return a safe destination before a protected page is mounted. */

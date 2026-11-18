@@ -10029,7 +10029,7 @@
   "managedStorage.loadFailed": "426bdee7ee4bb94613bb99e3c501a5fcbde3cee0e99548eeec7f59a4c130ef2d",
   "managedStorage.saveFailed": "f67546a9557d3cca1ea2d33ca399cd3e0fde990a031bca64b55af33615ea5316",
   "managedStorage.saved": "6948fa1a3e51be68be6f0894f0111e89ade3720845b881b86a328a6e1ed95890",
-  "managedStorage.personalOnly": "237fab4b7053754ce65addb7f02c83e8c6d22ebf2b95c7dde88d5c1e7f203928",
+  "managedStorage.personalOnly": "28a123305f7319d9bae1291037fc809ef7e19f79d8affab209538bb7d2e45768",
   "managedStorage.noManage": "7c4d5332e986225ebd4b5e5c2cdf244bc689704b8d2cf9192cb4ba081cf18869",
   "managedStorage.statuses.creating": "24c203e6fbea50cc98873ea959407947e80a1e1edfd30f10c19e653c3b89672f",
   "managedStorage.statuses.create_failed": "cadd769daf3e9545c8168549a227a637ed3b017c8abd36f74a7b5f7c90659c9d",
@@ -10041,8 +10041,8 @@
   "settings.rolesPage.permissions.configuration_managed_storage_view": "c16034cf164def6777342d21515654488ed282e0bd9fe6ca4e71cd67d41680cc",
   "settings.rolesPage.permissions.configuration_managed_storage_manage": "ee2407469c148e6ebdb502241d27bb4e0369596af7e56cfc0ca351d08fa48a71",
   "settings.rolesPage.permissions.configuration_managed_storage_delete": "6d5290f8350dc441846b06d5c810274db67d3d62595b1b7fa71f417e76a62ec8",
-  "settings.rolesPage.permissionDescriptions.configuration_managed_storage_view": "25cb8a92d4a06b3c64e95836bb9c7ad1eee2992e3f17f4a1b3c1577b7638aad5",
-  "settings.rolesPage.permissionDescriptions.configuration_managed_storage_manage": "b8f287e336ac7038f96724a049eea4b62aaf5cbdc4be4a008d6352547ff48b89",
+  "settings.rolesPage.permissionDescriptions.configuration_managed_storage_view": "7f83ec11f02ec6e2ba98de1b67899300d4fc630441fdc636fa524e8fea55aa92",
+  "settings.rolesPage.permissionDescriptions.configuration_managed_storage_manage": "d6e5dd5bbbb6920d03019a96d8ed7ebeb62512439e03fdd46242851300f54151",
   "settings.rolesPage.permissionDescriptions.configuration_managed_storage_delete": "506af0262059b7c9f77733e6c062446c8e71d142931740a7037869797a4b2921",
   "managedStorage.addRepository": "499a246c06bd2340ec9aa56b54c3512be122783aef59340df21667d34da25020",
   "managedStorage.addRepositoryDescription": "f4b967359af9f90191f074b9f385746564accfabf81685d170c637ec63ada864",
@@ -10069,5 +10069,10 @@
   "managedStorage.addConnectionDescription": "3240ded129f46523e1f5ff4dbe44ddf631d66cfb5c53addb1a2f0b2b39f10558",
   "managedStorage.platform": "fe88d39165e5d544ad0a1c3a48c858347469a45cc82485a1fee0fb1a57d8dcd5",
   "managedStorage.connectionAuth": "646244d88c521bea5b7cb2449865f749e561c01380c429772a6c8602aac75075",
-  "managedStorage.storageConfiguration": "ec0a8c8a081c1b5f906fb28acfafde7750c91223ef3a28673a9eb987785b3dda"
+  "managedStorage.storageConfiguration": "ec0a8c8a081c1b5f906fb28acfafde7750c91223ef3a28673a9eb987785b3dda",
+  "managedStorage.deleteRepository": "d030269ad326b4a41c8387296008db62d5bf5ecfb5ecafed067e697b87bc4ad4",
+  "managedStorage.deleteRepositoryNotice": "e579d427e81662e2a43b16cf1de6bc85b2a4ab4fe76ebf72457bc277125d94cf",
+  "managedStorage.iamEndpointHint": "7f3efcf5469853c5fd23efecfcde216d6501fbcc94a7106ab4a9f4e88c3ec8cc",
+  "managedStorage.iamMainlandChina": "4bda3096813527e6433fc7f43b9efcedd051adeb71852cadd37323cd0ff1469e",
+  "managedStorage.iamEurope": "8313d0d97f37a178d1c9a6d87abb43694d27e37eae479fd6a3f3a793e3f7656e"
 }

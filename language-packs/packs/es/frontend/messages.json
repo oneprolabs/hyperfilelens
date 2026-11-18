@@ -10645,6 +10645,11 @@
     "nameHint": "Nombre reconocible para esta conexión de almacenamiento de objetos.",
     "basePrefixHint": "Los repositorios usan subprefijos dentro de esta ruta; déjela sin cambios salvo que sea necesario.",
     "credentialsConfigured": "Configuradas",
-    "noConnections": "No hay conexiones de almacenamiento de objetos habilitadas. Solicite una a un administrador de la organización."
+    "noConnections": "No hay conexiones de almacenamiento de objetos habilitadas. Solicite una a un administrador de la organización.",
+    "deleteRepository": "Eliminar repositorio de copias de seguridad",
+    "deleteRepositoryNotice": "Esta acción elimina permanentemente el repositorio de copias de seguridad y sus datos. No se eliminan otros repositorios ni el bucket compartido.",
+    "iamEndpointHint": "Use el endpoint de IAM de su sitio de Huawei Cloud. Es independiente de la región de OBS.",
+    "iamMainlandChina": "China continental",
+    "iamEurope": "Europa"
   }
 }

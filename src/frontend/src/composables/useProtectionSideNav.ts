@@ -5,11 +5,11 @@ import type { MenuItem } from '../components/ModulePage.vue'
 import { sourceAgentSidebarIcon, targetNasSidebarIcon } from '../lib/resourceIcons'
 import { useTenantPermissions } from './useTenantPermissions'
 import { sourceHostIcon, sourceNasIcon } from '../lib/sourceTypeIcons'
-import { protectionPages } from '../lib/protectionAccess'
+import { canViewManagedStorage, protectionPages } from '../lib/protectionAccess'
 
 export function useProtectionSideNav() {
   const { t } = useI18n()
-  const { has, profile } = useTenantPermissions()
+  const { has } = useTenantPermissions()
   return computed<MenuItem[]>(() => ([
     {
       label: t('protection.side.groupDataSecurity'),
@@ -74,11 +74,10 @@ export function useProtectionSideNav() {
   ] as MenuItem[]).map((section) => ({
     ...section, children: section.children?.filter((item) => {
       if (item.to === '/node/managed-storage') {
-        return __HFL_EXTENSIONS_FRONTEND__ && profile?.value?.organization_mode === 'personal'
-          && (has('protection.object_storage_repositories.view') || has('configuration.managed_storage.view', true))
+        return __HFL_EXTENSIONS_FRONTEND__ && canViewManagedStorage(has)
       }
       const page = protectionPages.find(page => page.to === item.to)
-      return page && has(page.permission)
+      return page && has(page.permission, false, page.capability)
     }),
   })).filter((section) => section.children?.length))
 }

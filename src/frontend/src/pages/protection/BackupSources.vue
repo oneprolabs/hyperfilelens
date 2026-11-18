@@ -37,6 +37,7 @@ import { useRouteResourceDetail } from '../../composables/useRouteResourceDetail
 import FlowSourceReadyStatusCell from './components/FlowSourceReadyStatusCell.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useTenantPermissions } from '../../composables/useTenantPermissions'
+import { organizationCapabilityAvailable } from '../../lib/organizationCapabilities'
 import { useListTableLayout } from '../../composables/useListTableLayout'
 import { useListSearch } from '../../composables/useListSearch'
 import { sourceAgentSidebarIcon, nasMountProtocolIcon } from '../../lib/resourceIcons'
@@ -119,7 +120,8 @@ const PROXY_DEPLOY_ROUTE = { path: '/node/nodes/deploy', query: { role: 'proxy' 
 const { t, te } = useI18n()
 const sideNav = useProtectionSideNav()
 const pageRequests = usePageRequestScope()
-const { has: hasTenantPermission } = useTenantPermissions()
+const { has: hasTenantPermission, profile } = useTenantPermissions()
+const sourceTagsAvailable = computed(() => organizationCapabilityAvailable(profile.value, 'source_tags'))
 
 /* ---------- View (sidebar: host / NAS) ---------- */
 type SourceViewTab = 'hostFileSystem' | 'nas'
@@ -344,7 +346,7 @@ const pagedHostAgents = computed(() => {
 
 async function refreshSourceTagRows(ids: string[]) {
   const request = ++tagsRequest
-  if (!ids.length) return
+  if (!sourceTagsAvailable.value || !ids.length) return
   try {
     const chunks = await Promise.all(Array.from({ length: Math.ceil(ids.length / 100) }, (_, index) =>
       listSourceTagAssignments(ids.slice(index * 100, (index + 1) * 100))))
@@ -2405,6 +2407,7 @@ onUnmounted(() => {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  v-if="sourceTagsAvailable"
                   divided
                   :disabled="hostBatchDisabled || tagSaving || busy"
                   @click="openTagAction('add')"
@@ -2418,6 +2421,7 @@ onUnmounted(() => {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  v-if="sourceTagsAvailable"
                   :disabled="hostTagUnbindDisabled"
                   @click="openTagAction('remove')"
                 >
@@ -2501,6 +2505,7 @@ onUnmounted(() => {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  v-if="sourceTagsAvailable"
                   divided
                   :disabled="nasBatchDisabled || tagSaving || busy"
                   @click="openTagAction('add')"
@@ -2514,6 +2519,7 @@ onUnmounted(() => {
                   </span>
                 </ElDropdownItem>
                 <ElDropdownItem
+                  v-if="sourceTagsAvailable"
                   :disabled="nasTagUnbindDisabled"
                   @click="openTagAction('remove')"
                 >
@@ -2751,7 +2757,7 @@ onUnmounted(() => {
                 />
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.tags.column')" min-width="130">
+            <el-table-column v-if="sourceTagsAvailable" :label="t('protection.tags.column')" min-width="130">
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip source-tag-list">
                   <SourceTagBadge
@@ -2971,7 +2977,7 @@ onUnmounted(() => {
                 </div>
               </template>
             </el-table-column>
-            <el-table-column :label="t('protection.tags.column')" min-width="130">
+            <el-table-column v-if="sourceTagsAvailable" :label="t('protection.tags.column')" min-width="130">
               <template #default="{ row }">
                 <div class="hfl-table-no-tooltip source-tag-list">
                   <SourceTagBadge

@@ -1167,3 +1167,10 @@ class RepositoryViewSet(GovernedResourceMixin, _RepositoryViewSetBase):
 
     governance_resource_type = "repository"
     governance_manage_action = "protection.manage"
+
+    def _resource_action(self):
+        # Legacy storage may no longer be offered by the organization's product
+        # policy, but authorized deletion and its preflight must remain possible.
+        if self.action in ("cleanup_preflight", "release_residual_location"):
+            return "resource.delete"
+        return super()._resource_action()

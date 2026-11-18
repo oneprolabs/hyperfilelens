@@ -26,6 +26,7 @@ import { operationsRouteRedirect } from '../lib/operationsAccess'
 import { hasTenantHostMonitor } from '../ops/resolveRoutes'
 import { configurationRouteRedirect } from '../lib/configurationAccess'
 import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
+import type { OrganizationPolicyProfile } from '../lib/organizationCapabilities'
 
 export interface User {
   id: number
@@ -37,10 +38,9 @@ export interface User {
   language?: string
   timezone?: string
   requires_password_change?: boolean
-  access_profile?: {
+  access_profile?: OrganizationPolicyProfile & {
     org_key: string
     org_name?: string
-    organization_mode?: 'personal' | 'team' | ''
     role: string
     authority_source?: 'installation_admin' | 'owner' | 'role' | 'support_readonly' | ''
     is_organization_member?: boolean

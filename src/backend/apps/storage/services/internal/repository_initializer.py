@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from ipaddress import ip_address
 from time import sleep
 from urllib.parse import urlparse
@@ -58,6 +59,48 @@ S3_URL_STYLE_PROBE_RETRY_DELAYS = (1, 2)
 
 class S3UrlStyleProbeError(RepositoryInitializationError):
     pass
+
+
+logger = logging.getLogger(__name__)
+
+
+def _managed_initialization_error(repository: Repository, exc: Exception) -> str:
+    """Return a scrubbed diagnostic while keeping the public error generic.
+
+    Managed repositories obtain short-lived credentials inside the EE provider.
+    The provider must not pass cloud SDK or Kopia errors to the task contract
+    verbatim, but silently discarding them makes a failed initialization
+    impossible to diagnose. Keep the task-facing message stable and emit only a
+    scrubbed diagnostic to the backend log.
+    """
+    try:
+        secret_values = secret_values_for_scrub(
+            repository,
+            resolve_repository_secrets(repository),
+        )
+        detail = str(
+            scrub_secrets(str(exc), extra_values=secret_values)
+        ).strip()
+    except Exception:
+        # Diagnostics must never replace the original failure or make secret
+        # scrubbing optional when a credential record is already damaged.
+        detail = "<diagnostic unavailable>"
+    if detail:
+        logger.warning(
+            "managed repository initialization failed repository_id=%s "
+            "repository_task_context=%s detail=%s",
+            repository.id,
+            "temporary_credentials",
+            detail[-2000:],
+        )
+    else:
+        logger.warning(
+            "managed repository initialization failed repository_id=%s "
+            "repository_task_context=%s detail=<empty>",
+            repository.id,
+            "temporary_credentials",
+        )
+    return "Managed Repository initialization failed."
 
 
 def resolve_s3_url_style(*, s3_url_style: str | None, **bucket_args) -> str:
@@ -128,10 +171,14 @@ def initialize_s3_repository(
             provider.initialize(repository, recovery=recovery)
         except RepositoryAlreadyExistsError:
             raise
-        except Exception:
+        except Exception as exc:
             # Cloud errors may contain signing context. This boundary must not
-            # write them to durable RepositoryTask events.
-            raise RepositoryInitializationError("Managed Repository initialization failed.") from None
+            # write them to durable RepositoryTask events. Keep the scrubbed
+            # detail in the process log for operators instead of losing the
+            # only actionable cause.
+            raise RepositoryInitializationError(
+                _managed_initialization_error(repository, exc)
+            ) from None
         return
     config = dict(repository.config or {})
     secrets_payload = resolve_repository_secrets(repository)

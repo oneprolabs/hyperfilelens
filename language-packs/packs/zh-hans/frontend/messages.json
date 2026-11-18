@@ -10645,6 +10645,11 @@
     "nameHint": "用于识别此对象存储连接的名称。",
     "basePrefixHint": "仓库会在此路径下使用各自的子前缀；除非必要，请保持不变。",
     "credentialsConfigured": "已配置",
-    "noConnections": "暂无已启用的对象存储连接，请联系组织管理员添加。"
+    "noConnections": "暂无已启用的对象存储连接，请联系组织管理员添加。",
+    "deleteRepository": "删除备份仓库",
+    "deleteRepositoryNotice": "此操作将永久删除该备份仓库及其数据，不会删除其他仓库或共享存储桶。",
+    "iamEndpointHint": "请使用对应华为云站点的 IAM 地址，该地址与 OBS 区域相互独立。",
+    "iamMainlandChina": "中国大陆",
+    "iamEurope": "欧洲"
   }
 }
