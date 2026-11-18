@@ -6,6 +6,8 @@ from rest_framework.test import APIClient
 
 @override_settings(
     HFL_EMAIL_SIGNUP_ENABLED=False,
+    HFL_ENTERPRISE_REGISTRATION_ENABLED=False,
+    HFL_PERSONAL_REGISTRATION_ENABLED=False,
     HFL_EMAIL_CODE_LOGIN_ENABLED=False,
     HFL_PLATFORM_OPS_ENABLED=True,
     HFL_ADMIN_PORT=11444,
@@ -15,7 +17,14 @@ from rest_framework.test import APIClient
     EMAIL_HOST_USER="",
     EMAIL_HOST_PASSWORD="",
 )
-@patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "false"})
+@patch.dict(
+    "os.environ",
+    {
+        "HFL_EMAIL_SIGNUP_ENABLED": "false",
+        "HFL_ENTERPRISE_REGISTRATION_ENABLED": "false",
+        "HFL_PERSONAL_REGISTRATION_ENABLED": "false",
+    },
+)
 class DeployProfileViewTest(TestCase):
     def setUp(self):
         from django.contrib.auth.models import User
@@ -74,7 +83,11 @@ class DeployProfileViewTest(TestCase):
         self.assertEqual(response.data["edition"], "enterprise")
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
-    def test_password_reset_stays_off_on_community_empty_socket(self):
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=False,
+    )
+    def test_password_reset_stays_off_on_community_empty_socket(self, _identity):
         response = self.client.get("/api/v1/meta/deploy-profile")
         self.assertFalse(response.data["password_reset_available"])
 

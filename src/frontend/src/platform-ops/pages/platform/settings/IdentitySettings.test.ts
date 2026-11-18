@@ -3,6 +3,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import IdentitySettings from './IdentitySettings.vue'
+import { en } from '../../../../locales/en'
 
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
@@ -72,6 +73,51 @@ async function render(enterprise = true, allowlist: string[] = []) {
   return wrapper
 }
 
+describe('User Sign-In copy and layout', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('keeps each description below its switch without a separate footer note', async () => {
+    const wrapper = await render()
+    try {
+      const panel = wrapper.findAll('section').find(section =>
+        section.find('h3').text() === 'platformOps.settings.identity.tenantAuthTitle',
+      )!
+      const rows = panel.findAll('.platform-settings__setting-row')
+      expect(rows).toHaveLength(4)
+      for (const [index, key] of [
+        'passwordLogin', 'emailCodeLogin', 'enterpriseRegistration', 'personalRegistration',
+      ].entries()) {
+        const row = rows[index]!
+        expect(row.get('.platform-settings__setting-label').text())
+          .toBe(`platformOps.settings.identity.${key}`)
+        const control = row.get('.platform-settings__setting-control')
+        expect(control.get('input').element.nextElementSibling)
+          .toBe(control.get('.platform-settings__hint').element)
+        expect(control.get('.platform-settings__hint').text())
+          .toBe(`platformOps.settings.identity.${key}Hint`)
+      }
+      expect(panel.findAll('.platform-settings__hint')).toHaveLength(4)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('uses the agreed English labels and includes email prerequisites in each relevant description', () => {
+    const copy = en.platformOps.settings.identity
+    expect(copy.passwordLogin).toBe('Password Sign-In')
+    expect(copy.passwordLoginHint).toBe('Sign in with an email address and password.')
+    expect(copy.emailCodeLogin).toBe('Email Code Sign-In')
+    expect(copy.enterpriseRegistration).toBe('Enterprise Registration')
+    expect(copy.personalRegistration).toBe('Personal Registration')
+    expect(copy.emailCodeLoginHint)
+      .toBe('Sign in with a code sent by email. Requires a configured Email Service.')
+    expect(copy.enterpriseRegistrationHint)
+      .toBe('Create a new organization and become its Owner. Requires a configured Email Service.')
+    expect(copy.personalRegistrationHint)
+      .toBe('Join Personal Edition as a regular member. Requires a configured Email Service.')
+  })
+})
+
 describe('EE Turnstile IP allowlist settings', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.copy.mockResolvedValue(undefined) })
 
@@ -120,7 +166,10 @@ describe('EE Turnstile IP allowlist settings', () => {
     mocks.patch.mockResolvedValue(payload(false))
     await wrapper.findAll('button').at(-1)!.trigger('click')
     await flushPromises()
-    expect(mocks.patch).toHaveBeenCalledWith({ platform_ops_allowed_cidrs: '' })
+    expect(mocks.patch).toHaveBeenCalledWith({
+      platform_ops_allowed_cidrs: '',
+      password_login_enabled: true,
+    })
     wrapper.unmount()
   })
 })

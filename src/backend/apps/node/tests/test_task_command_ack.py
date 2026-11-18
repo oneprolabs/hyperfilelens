@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from unittest.mock import patch
 
+from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
@@ -102,6 +103,30 @@ class TaskCommandAckTests(TestCase):
                 self.assertIsNone(task.accepted_at)
 
         self.assertEqual(send_command.call_count, 6)
+
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch(
+        "apps.node.services.internal.task._node_route_state",
+        return_value=_RouteState.ONLINE,
+    )
+    @patch(
+        "apps.node.services.internal.task._send_task_command",
+        side_effect=ValidationError("Managed Repository authorization failed."),
+    )
+    def test_delivery_validation_error_fails_task_instead_of_leaving_it_pending(
+        self, send_command, _route, _set_info, _push_stream
+    ):
+        task = deliver_agent_task(
+            task=self.task(
+                kind="restore.run",
+                correlation_type="restore.record",
+            )
+        )
+
+        self.assertEqual(task.status, NodeTask.Status.FAILED)
+        self.assertIn("Managed Repository authorization failed.", task.last_error)
+        send_command.assert_called_once()
 
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
     @patch("apps.node.services.internal.task._send_task_command")

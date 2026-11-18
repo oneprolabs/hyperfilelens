@@ -659,3 +659,16 @@ msgstr "请选择与临时密码不同的新密码。"
 #: apps/iam/member-onboarding
 msgid "An account already uses this email. Sign in to that account first."
 msgstr "已有账号使用此邮箱，请先登录该账号。"
+
+#: src/backend/apps/iam/auth/views/registration.py:532
+#: src/backend/apps/iam/auth/views/registration.py:533
+msgid "Select a valid registration type"
+msgstr "请选择有效的注册类型"
+
+#: src/backend/apps/iam/auth/views/registration.py:595
+msgid "Personal registration is temporarily unavailable"
+msgstr "个人版注册暂不可用"
+
+#: src/backend/apps/iam/auth/views/login.py:225
+msgid "Password sign-in is disabled"
+msgstr "密码登录已禁用"

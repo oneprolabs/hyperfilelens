@@ -23,7 +23,9 @@ const redirectUri = computed(() => (meta.value?.google_oauth_redirect_uri || '')
 const enterpriseIdentityEnabled = computed(() => Boolean(meta.value?.enterprise_identity_enabled))
 const hasRuntimeOverride = computed(() => Boolean(meta.value?.has_runtime_override))
 const form = reactive({
-  email_signup_enabled: false,
+  enterprise_registration_enabled: false,
+  personal_registration_enabled: false,
+  password_login_enabled: true,
   email_code_login_enabled: false,
   platform_ops_enabled: true,
   platform_ops_allowed_cidrs: '',
@@ -43,7 +45,9 @@ const form = reactive({
 
 function applyPayload(data: PlatformIdentitySettings) {
   meta.value = data
-  form.email_signup_enabled = data.email_signup_enabled
+  form.enterprise_registration_enabled = Boolean(data.enterprise_registration_enabled)
+  form.personal_registration_enabled = Boolean(data.personal_registration_enabled)
+  form.password_login_enabled = data.password_login_enabled !== false
   form.email_code_login_enabled = data.email_code_login_enabled
   form.platform_ops_enabled = data.platform_ops_enabled
   form.platform_ops_allowed_cidrs = (data.platform_ops_allowed_cidrs || []).join(', ')
@@ -108,9 +112,11 @@ async function save() {
   try {
     const body: Record<string, unknown> = {
       platform_ops_allowed_cidrs: form.platform_ops_allowed_cidrs,
+      password_login_enabled: form.password_login_enabled,
     }
     if (enterpriseIdentityEnabled.value) {
-      body.email_signup_enabled = form.email_signup_enabled
+      body.enterprise_registration_enabled = form.enterprise_registration_enabled
+      body.personal_registration_enabled = form.personal_registration_enabled
       body.email_code_login_enabled = form.email_code_login_enabled
       body.google_oauth_enabled = form.google_oauth_enabled
       body.google_client_id = form.google_client_id
@@ -209,12 +215,26 @@ onMounted(load)
           </div>
         </section>
 
-        <template v-if="enterpriseIdentityEnabled">
-          <section class="platform-settings__panel">
-            <header class="platform-settings__panel-head">
-              <h3>{{ t('platformOps.settings.identity.tenantAuthTitle') }}</h3>
-            </header>
-            <div class="platform-settings__rows">
+        <section class="platform-settings__panel">
+          <header class="platform-settings__panel-head">
+            <h3>{{ t('platformOps.settings.identity.tenantAuthTitle') }}</h3>
+          </header>
+          <div class="platform-settings__rows">
+            <div class="platform-settings__setting-row">
+              <div class="platform-settings__setting-label">
+                <span>{{ t('platformOps.settings.identity.passwordLogin') }}</span>
+              </div>
+              <div class="platform-settings__setting-control">
+                <el-switch
+                  v-model="form.password_login_enabled"
+                  :disabled="saving"
+                />
+                <p class="platform-settings__hint">
+                  {{ t('platformOps.settings.identity.passwordLoginHint') }}
+                </p>
+              </div>
+            </div>
+            <template v-if="enterpriseIdentityEnabled">
               <div class="platform-settings__setting-row">
                 <div class="platform-settings__setting-label">
                   <span>{{ t('platformOps.settings.identity.emailCodeLogin') }}</span>
@@ -225,27 +245,43 @@ onMounted(load)
                     :disabled="saving"
                   />
                   <p class="platform-settings__hint">
-                    {{ t('platformOps.settings.identity.emailServiceRequired') }}
+                    {{ t('platformOps.settings.identity.emailCodeLoginHint') }}
                   </p>
                 </div>
               </div>
               <div class="platform-settings__setting-row">
                 <div class="platform-settings__setting-label">
-                  <span>{{ t('platformOps.settings.identity.emailSignup') }}</span>
+                  <span>{{ t('platformOps.settings.identity.enterpriseRegistration') }}</span>
                 </div>
                 <div class="platform-settings__setting-control">
                   <el-switch
-                    v-model="form.email_signup_enabled"
+                    v-model="form.enterprise_registration_enabled"
                     :disabled="saving"
                   />
                   <p class="platform-settings__hint">
-                    {{ t('platformOps.settings.identity.emailServiceRequired') }}
+                    {{ t('platformOps.settings.identity.enterpriseRegistrationHint') }}
                   </p>
                 </div>
               </div>
-            </div>
-          </section>
+              <div class="platform-settings__setting-row">
+                <div class="platform-settings__setting-label">
+                  <span>{{ t('platformOps.settings.identity.personalRegistration') }}</span>
+                </div>
+                <div class="platform-settings__setting-control">
+                  <el-switch
+                    v-model="form.personal_registration_enabled"
+                    :disabled="saving"
+                  />
+                  <p class="platform-settings__hint">
+                    {{ t('platformOps.settings.identity.personalRegistrationHint') }}
+                  </p>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
 
+        <template v-if="enterpriseIdentityEnabled">
           <section class="platform-settings__panel">
             <header class="platform-settings__panel-head">
               <h3>{{ t('platformOps.settings.googleOAuthTitle') }}</h3>

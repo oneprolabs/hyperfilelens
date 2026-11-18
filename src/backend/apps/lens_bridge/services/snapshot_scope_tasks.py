@@ -33,6 +33,9 @@ from apps.protection.services.snapshot_repository_locator import (
 from apps.storage.services.internal.repository_access import (
     RepositoryReaderUnavailableError,
 )
+from apps.storage.services.internal.repository_provider import (
+    repository_task_authority,
+)
 from apps.storage.services.internal.repository_workload import (
     RepositoryWorkload,
     lock_repositories_for_workload,
@@ -376,6 +379,31 @@ def dispatch_snapshot_operation(
         "reader_mode": access.mode,
         **(extra_payload or {}),
     }
+    # Managed repositories require a short-lived, server-issued execution
+    # lease.  The regular protection snapshot browser already supplies this
+    # evidence; Insight snapshot browsing must do the same or delivery falls
+    # back to the generic execution path, which (correctly) rejects the
+    # Insight task kind as unsupported.  Legacy repositories return ``None``
+    # here and continue using their existing execution path.
+    repository_authority = repository_task_authority(
+        repository,
+        actor_id=requesting_user_id,
+        organization_id=organization_id,
+        purpose="snapshot.browse",
+        requirements=(
+            (
+                "backup_config",
+                directory.backup_config_id,
+                "protection.backup_data.browse",
+            ),
+            (
+                "repository",
+                repository.pk,
+                "protection.backup_data.browse",
+            ),
+        ),
+        snapshot_directory_id=directory.id,
+    )
     handle = run_agent_task_async(
         organization_id=access.node.organization_id,
         **({"platform": True} if access.node.organization_id is None else {}),
@@ -386,6 +414,11 @@ def dispatch_snapshot_operation(
         correlation_type=correlation_type,
         correlation_id=correlation_id,
         requesting_organization_id=organization_id,
+        **(
+            {"repository_authority": repository_authority}
+            if repository_authority is not None
+            else {}
+        ),
     )
     return handle.task
 

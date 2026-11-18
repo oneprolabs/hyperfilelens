@@ -128,6 +128,63 @@ class EmailLoginApiTests(APITestCase):
         self.assertEqual(response.data["error"]["error_code"], "INVALID_PASSWORD")
         self.assertIn("password", response.data["error"]["fields"])
 
+    @patch("apps.iam.auth.views.login.password_login_enabled", return_value=False)
+    def test_password_login_can_be_disabled(self, _password_login_enabled):
+        response = self.client.post(
+            reverse("email_login"),
+            self._payload("disabled-password-login@example.com"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "PASSWORD_LOGIN_DISABLED",
+        )
+
+    @patch("apps.iam.auth.views.login.resolve_site_role", return_value="ops")
+    @patch("apps.iam.auth.views.login.password_login_enabled", return_value=False)
+    def test_password_login_setting_does_not_disable_admin_console(
+        self,
+        _password_login_enabled,
+        _resolve_site_role,
+    ):
+        response = self.client.post(
+            reverse("email_login"),
+            self._payload("ops-password-login@example.com"),
+            format="json",
+        )
+
+        self.assertNotEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertNotEqual(
+            response.data.get("error", {}).get("error_code"),
+            "PASSWORD_LOGIN_DISABLED",
+        )
+
+    @patch.dict("os.environ", {"HFL_PASSWORD_LOGIN_ENABLED": "false"})
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+        return_value=False,
+    )
+    def test_community_retains_password_login_with_disabled_deployment_flag(
+        self, _identity,
+    ):
+        email = "community-password@example.com"
+        User.objects.create_user(
+            username=email,
+            email=email,
+            password="CorrectPass123",
+        )
+
+        response = self.client.post(
+            reverse("email_login"),
+            self._payload(email, password="CorrectPass123"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertIn("access_token", response.cookies)
+
     @patch.dict("os.environ", {"TURNSTILE_ENABLED": ""})
     @override_settings(
         TURNSTILE_ENABLED=True,

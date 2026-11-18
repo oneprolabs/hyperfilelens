@@ -14,9 +14,11 @@ from typing import TYPE_CHECKING, Any
 
 import redis
 from channels.exceptions import ChannelFull, InvalidChannelLayerError, MessageTooLarge
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import F, Q, QuerySet
 from django.utils import timezone
+from rest_framework.exceptions import PermissionDenied
 
 from apps.iam.models import Organization
 from apps.node import conf as node_conf
@@ -51,6 +53,8 @@ _DELIVERY_PROTOCOL_LEGACY = "legacy"
 _DOWNLINK_ERRORS = (
     RuntimeError,
     OSError,
+    PermissionDenied,
+    ValidationError,
     redis.RedisError,
     ChannelFull,
     InvalidChannelLayerError,

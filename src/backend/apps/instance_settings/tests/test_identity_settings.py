@@ -9,6 +9,8 @@ from rest_framework.test import APIClient
 
 from apps.configuration.services.runtime_settings import (
     KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+    KEY_IDENTITY_PERSONAL_REGISTRATION,
     KEY_IDENTITY_TURNSTILE_IP_ALLOWLIST,
     get_source,
     invalidate_runtime_settings_cache,
@@ -117,8 +119,16 @@ class PlatformIdentitySettingsCommunityTests(TestCase):
         self.assertFalse(response.data["turnstile_enabled"])
         self.assertEqual(response.data["turnstile_site_key"], "")
         self.assertFalse(response.data["turnstile_secret_configured"])
+        self.assertTrue(response.data["password_login_enabled"])
 
 
+@patch.dict(
+    "os.environ",
+    {
+        "HFL_ENTERPRISE_REGISTRATION_ENABLED": "",
+        "HFL_PERSONAL_REGISTRATION_ENABLED": "",
+    },
+)
 class PlatformIdentitySettingsEnterpriseTests(TestCase):
     path = "/api/v1/instance-settings/identity"
 
@@ -204,6 +214,96 @@ class PlatformIdentitySettingsEnterpriseTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["enterprise_identity_enabled"])
         self.assertTrue(response.data["email_signup_enabled"])
+
+    def test_registration_modes_are_saved_independently(self):
+        response = self._patch({
+            "enterprise_registration_enabled": True,
+            "personal_registration_enabled": False,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["enterprise_registration_enabled"])
+        self.assertFalse(response.data["personal_registration_enabled"])
+        self.assertEqual(get_source(KEY_IDENTITY_ENTERPRISE_REGISTRATION), "runtime")
+        self.assertEqual(get_source(KEY_IDENTITY_PERSONAL_REGISTRATION), "runtime")
+
+    @patch(
+        "apps.instance_settings.api.views.settings.email_code_login_enabled",
+        return_value=False,
+    )
+    @patch(
+        "apps.instance_settings.api.views.settings.google_oauth_enabled",
+        return_value=False,
+    )
+    def test_password_login_cannot_be_disabled_without_a_tenant_fallback(
+        self,
+        _google_enabled,
+        _email_code_enabled,
+    ):
+        response = self._patch({"password_login_enabled": False})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["code"], "TENANT_SIGN_IN_METHOD_REQUIRED")
+
+    @patch(
+        "apps.instance_settings.api.views.settings.email_delivery_configured",
+        return_value=True,
+    )
+    def test_last_sign_in_method_cannot_be_disabled_by_partial_patch(self, _email_ready):
+        response = self._patch({
+            "password_login_enabled": False,
+            "email_code_login_enabled": True,
+            "google_oauth_enabled": False,
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self._patch({"email_code_login_enabled": False})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["code"], "TENANT_SIGN_IN_METHOD_REQUIRED")
+        response = self.client.get(self.path, HTTP_X_HFL_SITE_ROLE="ops")
+        self.assertTrue(response.data["email_code_login_enabled"])
+        self.assertFalse(response.data["password_login_enabled"])
+
+    @patch(
+        "apps.instance_settings.api.views.settings.google_client_secret",
+        return_value="",
+    )
+    def test_google_toggle_without_credentials_is_not_a_fallback(self, _secret):
+        response = self._patch({
+            "password_login_enabled": False,
+            "email_code_login_enabled": False,
+            "google_oauth_enabled": True,
+            "google_client_id": "example-client",
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["code"], "TENANT_SIGN_IN_METHOD_REQUIRED")
+
+    def test_google_credentials_can_be_configured_while_disabling_password(self):
+        response = self._patch({
+            "password_login_enabled": False,
+            "email_code_login_enabled": False,
+            "google_oauth_enabled": True,
+            "google_client_id": "example-client",
+            "google_client_secret": "example-secret",
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["google_oauth_enabled"])
+
+        response = self._patch({"google_client_id": ""})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data["code"], "TENANT_SIGN_IN_METHOD_REQUIRED")
+
+    def test_sign_in_toggles_require_boolean_values(self):
+        for field in (
+            "password_login_enabled",
+            "email_code_login_enabled",
+            "google_oauth_enabled",
+        ):
+            with self.subTest(field=field):
+                response = self._patch({field: "false"})
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_clear_runtime_restores_deployment_defaults(self):
         response = self.client.patch(

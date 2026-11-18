@@ -67,6 +67,9 @@ from apps.configuration.services.runtime_settings import (
     KEY_EMAIL_USE_SSL,
     KEY_EMAIL_USE_TLS,
     KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+    KEY_IDENTITY_PERSONAL_REGISTRATION,
+    KEY_IDENTITY_PASSWORD_LOGIN,
     KEY_IDENTITY_EMAIL_CODE_LOGIN,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
     KEY_IDENTITY_GOOGLE_OAUTH,
@@ -88,16 +91,21 @@ from apps.configuration.services.runtime_settings import (
     clear_identity_runtime_settings,
     email_code_login_enabled,
     email_connection_kwargs,
+    email_delivery_configured,
     email_signup_enabled,
+    enterprise_registration_enabled,
     gemini_api_key,
     get_source,
     google_client_id,
+    google_client_secret,
     google_oauth_enabled,
     has_identity_runtime_override,
     mask_secret,
     openai_api_base,
     openai_api_key,
     password_reset_available,
+    personal_registration_enabled,
+    password_login_enabled,
     platform_ops_allowed_cidrs,
     platform_ops_enabled,
     secret_configured,
@@ -297,6 +305,8 @@ class PlatformOpsSettingsEmailTestView(APIView):
 _EE_IDENTITY_PATCH_FIELDS = frozenset(
     {
         "email_signup_enabled",
+        "enterprise_registration_enabled",
+        "personal_registration_enabled",
         "email_code_login_enabled",
         "google_oauth_enabled",
         "google_client_id",
@@ -364,6 +374,9 @@ class PlatformOpsSettingsIdentityView(APIView):
             {
                 "enterprise_identity_enabled": identity_enabled,
                 "email_signup_enabled": email_signup_enabled(),
+                "enterprise_registration_enabled": enterprise_registration_enabled(),
+                "personal_registration_enabled": personal_registration_enabled(),
+                "password_login_enabled": password_login_enabled(),
                 "email_code_login_enabled": email_code_login_enabled(),
                 "platform_ops_enabled": platform_ops_enabled(),
                 "platform_ops_allowed_cidrs": platform_ops_allowed_cidrs(),
@@ -482,8 +495,63 @@ class PlatformOpsSettingsIdentityView(APIView):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
+        sign_in_fields = {
+            "password_login_enabled",
+            "email_code_login_enabled",
+            "google_oauth_enabled",
+            "google_client_id",
+            "google_client_secret",
+        }
+        for field in (
+            "password_login_enabled",
+            "email_code_login_enabled",
+            "google_oauth_enabled",
+        ):
+            if field in data and not isinstance(data[field], bool):
+                return Response(
+                    {"detail": f"{field} must be a boolean."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        if sign_in_fields.intersection(data) and not data.get(
+            "password_login_enabled", password_login_enabled()
+        ):
+            identity_enabled = runtime_settings_svc.enterprise_identity_enabled()
+            email_code_available = bool(
+                identity_enabled
+                and data.get("email_code_login_enabled", email_code_login_enabled())
+                and email_delivery_configured()
+            )
+            prospective_google_id = (
+                str(data["google_client_id"] or "").strip()
+                if "google_client_id" in data else google_client_id()
+            )
+            # An empty submitted secret preserves the installed secret.
+            prospective_google_secret = (
+                str(data.get("google_client_secret") or "").strip()
+                or google_client_secret()
+            )
+            google_available = bool(
+                identity_enabled
+                and data.get("google_oauth_enabled", google_oauth_enabled())
+                and prospective_google_id
+                and prospective_google_secret
+            )
+            if not (email_code_available or google_available):
+                return Response(
+                    {
+                        "detail": (
+                            "Keep Password Sign-In enabled until another "
+                            "tenant sign-in method is configured."
+                        ),
+                        "code": "TENANT_SIGN_IN_METHOD_REQUIRED",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         bool_map = {
             "email_signup_enabled": KEY_IDENTITY_EMAIL_SIGNUP,
+            "enterprise_registration_enabled": KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+            "personal_registration_enabled": KEY_IDENTITY_PERSONAL_REGISTRATION,
+            "password_login_enabled": KEY_IDENTITY_PASSWORD_LOGIN,
             "email_code_login_enabled": KEY_IDENTITY_EMAIL_CODE_LOGIN,
             "google_oauth_enabled": KEY_IDENTITY_GOOGLE_OAUTH,
             "turnstile_enabled": KEY_IDENTITY_TURNSTILE_ENABLED,
@@ -793,6 +861,9 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                 "effective": {
                     "tenant_public_url": tenant_public_url(),
                     "email_signup_enabled": email_signup_enabled(),
+                    "enterprise_registration_enabled": enterprise_registration_enabled(),
+                    "personal_registration_enabled": personal_registration_enabled(),
+                    "password_login_enabled": password_login_enabled(),
                     "email_code_login_enabled": email_code_login_enabled(),
                     "password_reset_available": password_reset_available(),
                     "platform_ops_enabled": platform_ops_enabled(),
@@ -809,6 +880,21 @@ class PlatformOpsSettingsEnvironmentView(APIView):
                         KEY_IDENTITY_EMAIL_SIGNUP,
                         env_name="HFL_EMAIL_SIGNUP_ENABLED",
                         settings_attr="HFL_EMAIL_SIGNUP_ENABLED",
+                    ),
+                    "enterprise_registration_enabled": get_source(
+                        KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+                        env_name="HFL_ENTERPRISE_REGISTRATION_ENABLED",
+                        settings_attr="HFL_ENTERPRISE_REGISTRATION_ENABLED",
+                    ),
+                    "personal_registration_enabled": get_source(
+                        KEY_IDENTITY_PERSONAL_REGISTRATION,
+                        env_name="HFL_PERSONAL_REGISTRATION_ENABLED",
+                        settings_attr="HFL_PERSONAL_REGISTRATION_ENABLED",
+                    ),
+                    "password_login_enabled": get_source(
+                        KEY_IDENTITY_PASSWORD_LOGIN,
+                        env_name="HFL_PASSWORD_LOGIN_ENABLED",
+                        settings_attr="HFL_PASSWORD_LOGIN_ENABLED",
                     ),
                     "email_code_login_enabled": get_source(
                         KEY_IDENTITY_EMAIL_CODE_LOGIN,

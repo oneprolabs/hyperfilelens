@@ -9,6 +9,10 @@ from __future__ import annotations
 from typing import Any, Protocol, Sequence
 
 
+class RegistrationUnavailableError(RuntimeError):
+    """Raised when an extension-backed registration mode is not ready."""
+
+
 class AuthzProvider(Protocol):
     """Org + platform authorization (typically one commercial plugin)."""
 
@@ -256,9 +260,22 @@ class RepositoryProvider(Protocol):
         ...
 
 
+class RegistrationProvider(Protocol):
+    """Optional extension-owned self-service registration capabilities."""
+
+    def registration_options(self) -> dict[str, Any]:
+        """Return public availability flags for the registration page."""
+        ...
+
+    def provision_personal_registration(self, user: Any) -> Any:
+        """Join the installation Personal organization and provision resources."""
+        ...
+
+
 _authz_provider: AuthzProvider | None = None
 _quota_provider: QuotaProvider | None = None
 _repository_provider: RepositoryProvider | None = None
+_registration_provider: RegistrationProvider | None = None
 
 
 def register_repository_provider(provider: RepositoryProvider | None) -> None:
@@ -270,6 +287,17 @@ def register_repository_provider(provider: RepositoryProvider | None) -> None:
 
 def get_repository_provider() -> RepositoryProvider | None:
     return _repository_provider
+
+
+def register_registration_provider(provider: RegistrationProvider | None) -> None:
+    global _registration_provider
+    if provider is not None and _registration_provider is not None:
+        raise RuntimeError("RegistrationProvider already registered (singleton slot)")
+    _registration_provider = provider
+
+
+def get_registration_provider() -> RegistrationProvider | None:
+    return _registration_provider
 
 
 def register_authz_provider(provider: AuthzProvider | None) -> None:
@@ -294,19 +322,35 @@ def get_quota_provider() -> QuotaProvider | None:
     return _quota_provider
 
 
-def clear_providers_for_tests() -> tuple[AuthzProvider | None, QuotaProvider | None, RepositoryProvider | None]:
+def clear_providers_for_tests() -> tuple[
+    AuthzProvider | None,
+    QuotaProvider | None,
+    RepositoryProvider | None,
+    RegistrationProvider | None,
+]:
     """Test helper: clear singleton slots; return previous providers for restore."""
-    global _authz_provider, _quota_provider, _repository_provider
-    previous = (_authz_provider, _quota_provider, _repository_provider)
+    global _authz_provider, _quota_provider, _repository_provider, _registration_provider
+    previous = (
+        _authz_provider,
+        _quota_provider,
+        _repository_provider,
+        _registration_provider,
+    )
     _authz_provider = None
     _quota_provider = None
     _repository_provider = None
+    _registration_provider = None
     return previous
 
 
 def restore_providers_for_tests(
-    previous: tuple[AuthzProvider | None, QuotaProvider | None, RepositoryProvider | None],
+    previous: tuple[
+        AuthzProvider | None,
+        QuotaProvider | None,
+        RepositoryProvider | None,
+        RegistrationProvider | None,
+    ],
 ) -> None:
     """Test helper: restore providers saved by ``clear_providers_for_tests``."""
-    global _authz_provider, _quota_provider, _repository_provider
-    _authz_provider, _quota_provider, _repository_provider = previous
+    global _authz_provider, _quota_provider, _repository_provider, _registration_provider
+    _authz_provider, _quota_provider, _repository_provider, _registration_provider = previous

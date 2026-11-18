@@ -19,6 +19,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from common.deploy.site import resolve_site_role
 from common.http.public_api import AnonymousPublicViewMixin
 
 from apps.iam.auth.authentication import OptionalJWTAuthenticationFromCookies
@@ -37,6 +38,7 @@ from apps.iam.services.token_service import (
     generate_token_family_id,
     store_refresh_token_family,
 )
+from apps.configuration.services.runtime_settings import password_login_enabled
 
 User = get_user_model()
 
@@ -218,6 +220,16 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
+        # The platform setting controls tenant authentication only. Admin
+        # Console access must retain password sign-in because email-code
+        # authentication is intentionally tenant-only.
+        if resolve_site_role(request) == "tenant" and not password_login_enabled():
+            return _build_error_response(
+                "PASSWORD_LOGIN_DISABLED",
+                _("Password sign-in is disabled"),
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Check if authentication detected a token version mismatch (force logout from another session)
         auth_error = getattr(request, 'auth_error', None)
         email = (request.data.get("email") or "").strip().lower()

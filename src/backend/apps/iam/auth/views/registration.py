@@ -13,14 +13,15 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
-from rest_framework import status
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework import serializers, status
+from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.http.public_api import AnonymousPublicViewMixin
+from common.extension_spi import RegistrationUnavailableError
 
 from apps.iam.profile_models import Profile
 from apps.iam.services.turnstile_verification import (
@@ -49,12 +50,33 @@ from apps.configuration.services import runtime_settings as runtime_settings_svc
 from apps.configuration.services.runtime_settings import (
     email_delivery_configured,
     email_signup_enabled,
+    enterprise_registration_enabled,
+    personal_registration_enabled,
 )
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
 DEBUG_MODE = getattr(settings, 'DEBUG', False)
+
+
+def _registration_mode(data, *, default: str = "enterprise") -> str | None:
+    """Normalize the public registration mode, retaining legacy defaults."""
+    value = data.get("registration_mode", default)
+    if value is None:
+        value = default
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    return value if value in {"personal", "enterprise"} else None
+
+
+def _registration_mode_enabled(mode: str) -> bool:
+    return (
+        personal_registration_enabled()
+        if mode == "personal"
+        else enterprise_registration_enabled()
+    )
 
 
 def _reset_rate_error(rate):
@@ -246,6 +268,10 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
                 "type": "object",
                 "properties": {
                     "email": {"type": "string", "description": "User email"},
+                    "registration_mode": {
+                        "type": "string",
+                        "enum": ["personal", "enterprise"],
+                    },
                     "turnstile_token": {
                         "type": "string",
                         "description": "Required when Turnstile is enabled",
@@ -257,7 +283,14 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
-        if not email_signup_enabled():
+        registration_mode = _registration_mode(request.data)
+        if registration_mode is None:
+            return _build_error_response(
+                "INVALID_REGISTRATION_MODE",
+                _("Select a valid registration type"),
+                fields={"registration_mode": [_("Select a valid registration type")]},
+            )
+        if not _registration_mode_enabled(registration_mode):
             return _email_signup_disabled_response()
         if not email_delivery_configured():
             return _email_service_unavailable_response()
@@ -371,7 +404,8 @@ class EmailRegisterView(AnonymousPublicViewMixin, APIView):
     )
     @transaction.atomic
     def post(self, request):
-        if not email_signup_enabled():
+        # This legacy endpoint has always represented Enterprise registration.
+        if not enterprise_registration_enabled():
             return _email_signup_disabled_response()
         if not email_delivery_configured():
             return _email_service_unavailable_response()
@@ -499,20 +533,48 @@ class EmailRegisterConfirmView(AnonymousPublicViewMixin, APIView):
                     "email": {"type": "string", "description": "User email"},
                     "code": {"type": "string", "description": "6-digit verification code"},
                     "password": {"type": "string", "description": "Password (8-20 chars, must contain uppercase, lowercase and digits)"},
+                    "registration_mode": {
+                        "type": "string",
+                        "enum": ["personal", "enterprise"],
+                    },
+                    "organization_name": {
+                        "type": "string",
+                        "description": "Required for enterprise registration",
+                    },
                 },
+                # Omitted mode remains Enterprise for existing clients.
                 "required": ["email", "code", "password"],
             }
         },
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
-        if not email_signup_enabled():
-            return _email_signup_disabled_response()
-
         email = (request.data.get("email") or "").strip().lower()
         code = request.data.get("code")
         password = request.data.get("password")
+        registration_mode = _registration_mode(request.data)
 
+        if registration_mode is None:
+            return _build_error_response(
+                "INVALID_REGISTRATION_MODE",
+                _("Select a valid registration type"),
+                fields={"registration_mode": [_("Select a valid registration type")]},
+            )
+        if not _registration_mode_enabled(registration_mode):
+            return _email_signup_disabled_response()
+        try:
+            organization_name = serializers.CharField(
+                required=False,
+                allow_blank=True,
+                allow_null=True,
+                max_length=200,
+            ).run_validation(request.data.get("organization_name", ""))
+        except ValidationError as exc:
+            return _build_error_response(
+                "VALIDATION_ERROR",
+                str(exc.detail[0]),
+                fields={"organization_name": exc.detail},
+            )
         if not all([email, code, password]):
             return Response(
                 {
@@ -562,7 +624,19 @@ class EmailRegisterConfirmView(AnonymousPublicViewMixin, APIView):
                 fields={"email": [msg]},
             )
 
-        success, error_reason, org = complete_user_registration(user, password, code)
+        try:
+            success, error_reason, org = complete_user_registration(
+                user,
+                password,
+                code,
+                registration_mode=registration_mode,
+                organization_name=organization_name or None,
+            )
+        except RegistrationUnavailableError:
+            return _build_error_response(
+                "PERSONAL_REGISTRATION_UNAVAILABLE",
+                _("Personal registration is temporarily unavailable"),
+            )
         if not success:
             if error_reason == "ALREADY_ACTIVE":
                 msg = _("Account is already active")

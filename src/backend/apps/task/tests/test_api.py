@@ -574,8 +574,6 @@ class TaskApiTests(TestCase):
 
     def test_new_source_scoped_tasks_only_persist_backup_source_resources(self):
         source_scoped_types = (
-            Task.Type.RESTORE,
-            Task.Type.INSIGHT_WORKSPACE_RESTORE,
             Task.Type.SNAPSHOT_DOWNLOAD,
             Task.Type.SNAPSHOT_DELETE,
             Task.Type.BACKUP_CONFIG_RESET,
@@ -611,32 +609,39 @@ class TaskApiTests(TestCase):
                     [TaskResource.Type.BACKUP_SOURCE],
                 )
 
-    def test_new_backup_tasks_persist_source_and_repository_but_not_snapshot(self):
-        backup_task = create_task(
-            organization_id=self.org.id,
-            task_type=Task.Type.BACKUP,
-            display_name="backup task",
-            resources=[
-                {
-                    "resource_type": TaskResource.Type.BACKUP_SOURCE,
-                    "resource_subtype": "agent",
-                    "resource_id": 1,
-                    "is_primary": True,
-                },
-                {
-                    "resource_type": TaskResource.Type.REPOSITORY,
-                    "resource_id": 2,
-                },
-                {
-                    "resource_type": TaskResource.Type.SNAPSHOT,
-                    "resource_id": 3,
-                },
-            ],
-        )
-        self.assertEqual(
-            list(backup_task.resources.values_list("resource_type", flat=True)),
-            [TaskResource.Type.BACKUP_SOURCE, TaskResource.Type.REPOSITORY],
-        )
+    def test_repository_backed_tasks_persist_source_and_repository_resources(self):
+        for task_type in (
+            Task.Type.BACKUP,
+            Task.Type.RESTORE,
+            Task.Type.INSIGHT_WORKSPACE_RESTORE,
+        ):
+            with self.subTest(task_type=task_type):
+                task = create_task(
+                    organization_id=self.org.id,
+                    task_type=task_type,
+                    display_name=f"{task_type} task",
+                    resources=[
+                        {
+                            "resource_type": TaskResource.Type.BACKUP_SOURCE,
+                            "resource_subtype": "agent",
+                            "resource_id": 1,
+                            "is_primary": True,
+                        },
+                        {
+                            "resource_type": TaskResource.Type.REPOSITORY,
+                            "resource_id": 2,
+                        },
+                        {
+                            "resource_type": TaskResource.Type.SNAPSHOT,
+                            "resource_id": 3,
+                        },
+                    ],
+                )
+
+                self.assertEqual(
+                    list(task.resources.values_list("resource_type", flat=True)),
+                    [TaskResource.Type.BACKUP_SOURCE, TaskResource.Type.REPOSITORY],
+                )
 
     def test_new_task_creation_does_not_rewrite_existing_resource_associations(self):
         existing_task = Task.objects.create(

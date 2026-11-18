@@ -35,14 +35,19 @@ TASK_CREATION_TRIGGER_MAP = {
     Task.TriggerType.HOOK: Task.TriggerType.MANUAL,
 }
 
-BACKUP_SOURCE_ONLY_TASK_TYPES = frozenset(
+SOURCE_ONLY_TASK_TYPES = frozenset(
     {
-        Task.Type.RESTORE,
-        Task.Type.INSIGHT_WORKSPACE_RESTORE,
         Task.Type.SNAPSHOT_DOWNLOAD,
         Task.Type.SNAPSHOT_DELETE,
         Task.Type.BACKUP_CONFIG_RESET,
         Task.Type.SOURCE_UNREGISTER,
+    }
+)
+REPOSITORY_BACKED_TASK_TYPES = frozenset(
+    {
+        Task.Type.BACKUP,
+        Task.Type.RESTORE,
+        Task.Type.INSIGHT_WORKSPACE_RESTORE,
     }
 )
 
@@ -200,11 +205,11 @@ def create_task(
         raise ValidationError(
             {"resources": "A task can have at most one primary resource."}
         )
-    if task_type == Task.Type.BACKUP:
-        # A backup task is authorized against both its source and its target
-        # repository.  Keep both persisted resources so execution providers
-        # can verify that the repository used by the snapshot belongs to the
-        # task, rather than trusting the request payload alone.
+    if task_type in REPOSITORY_BACKED_TASK_TYPES:
+        # Repository-backed tasks are authorized against both their source and
+        # repository. Keep both persisted resources so execution providers can
+        # verify the repository used by the operation belongs to the task,
+        # rather than trusting the request payload alone.
         allowed_resource_types = {
             TaskResource.Type.BACKUP_SOURCE,
             TaskResource.Type.REPOSITORY,
@@ -214,7 +219,7 @@ def create_task(
             for resource in resource_defs
             if str(resource.get("resource_type") or "") in allowed_resource_types
         ]
-    elif task_type in BACKUP_SOURCE_ONLY_TASK_TYPES:
+    elif task_type in SOURCE_ONLY_TASK_TYPES:
         resource_defs = [
             resource
             for resource in resource_defs
