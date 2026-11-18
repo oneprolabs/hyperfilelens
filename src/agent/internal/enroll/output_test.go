@@ -21,6 +21,21 @@ func TestJoinDetail(t *testing.T) {
 	}
 }
 
+func TestStartupVerificationFailureProvidesLocalRecoveryActions(t *testing.T) {
+	failure := InstallFailure{
+		Stage:   "Post-install verification",
+		CodeKey: "HFL-VERIFY-004",
+	}
+	actions := failureActions("install", failure)
+	if len(actions) != 2 {
+		t.Fatalf("failureActions() returned %d actions, want 2", len(actions))
+	}
+	if !strings.Contains(actions[0], "service log") ||
+		!strings.Contains(actions[1], "same installation command") {
+		t.Fatalf("failureActions() = %#v, want local startup recovery guidance", actions)
+	}
+}
+
 func TestEmitDetailLineKeepsShortDetailsOnOneLine(t *testing.T) {
 	t.Setenv("HFL_OUTPUT", "plain")
 	t.Setenv("NO_COLOR", "1")

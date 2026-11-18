@@ -10,7 +10,7 @@ import (
 )
 
 func TestOptionalLogWriterIsBoundedAndKeepsDiagnostics(t *testing.T) {
-	p := &policyLog{queue: make(chan []byte, 1), stop: make(chan struct{})}
+	p := &policyLog{queue: make(chan logWrite, 1), stop: make(chan struct{})}
 	start := time.Now()
 	for i := 0; i < 1000; i++ {
 		data := []byte("startup diagnostic " + strconv.Itoa(i) + "\n")

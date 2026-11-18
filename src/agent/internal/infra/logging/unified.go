@@ -118,9 +118,19 @@ func buildMessage(msg string, attrs []slog.Attr) string {
 func attrsToMap(attrs []slog.Attr) map[string]any {
 	out := make(map[string]any, len(attrs))
 	for _, attr := range attrs {
-		out[attr.Key] = attr.Value.Any()
+		out[attr.Key] = attrValue(attr.Value)
 	}
 	return out
+}
+
+func attrValue(value slog.Value) any {
+	value = value.Resolve()
+	if value.Kind() == slog.KindAny {
+		if err, ok := value.Any().(error); ok {
+			return err.Error()
+		}
+	}
+	return value.Any()
 }
 
 type unifiedHandler struct {
@@ -145,6 +155,13 @@ func (h *unifiedHandler) Enabled(_ context.Context, level slog.Level) bool {
 }
 
 func (h *unifiedHandler) Handle(ctx context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, err := h.w.Write([]byte(formatRecord(ctx, r)))
+	return err
+}
+
+func formatRecord(ctx context.Context, r slog.Record) string {
 	file, line := sourceLocation(r.PC)
 	level := strings.ToUpper(r.Level.String())
 	traceID := formatTraceID(traceIDFrom(ctx))
@@ -156,7 +173,7 @@ func (h *unifiedHandler) Handle(ctx context.Context, r slog.Record) error {
 		return true
 	})
 
-	lineText := fmt.Sprintf(
+	return fmt.Sprintf(
 		"[%s] [%s] [%s] [%s] [%s] [%s(%s:%d)] - %s\n",
 		formatTimestamp(r.Time),
 		level,
@@ -168,11 +185,31 @@ func (h *unifiedHandler) Handle(ctx context.Context, r slog.Record) error {
 		line,
 		buildMessage(r.Message, attrs),
 	)
+}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	_, err := h.w.Write([]byte(lineText))
-	return err
+// ErrorAndFlush waits for the final service error to be written to agent.log.
+// Unlike normal logging, a full queue cannot silently drop this diagnostic.
+// The context bounds both enqueueing and disk-I/O acknowledgement.
+func ErrorAndFlush(ctx context.Context, message string, cause error) error {
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+	record := slog.NewRecord(time.Now(), slog.LevelError, message, pcs[0])
+	record.AddAttrs(slog.Any("err", cause))
+	handler := slog.Default().Handler()
+	if h, ok := handler.(*unifiedHandler); ok {
+		if writer, ok := h.w.(*policyLog); ok {
+			return writer.writeAndWait(ctx, []byte(formatRecord(ctx, record)))
+		}
+	}
+	// Fallback handlers (for example stderr-only setup) may block too.
+	done := make(chan error, 1)
+	go func() { done <- handler.Handle(ctx, record) }()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-done:
+		return err
+	}
 }
 
 func (h *unifiedHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
