@@ -312,6 +312,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             id=31,
             organization_id=5,
             repository_id=7,
+            backup_config_id=61,
             source_snapshot_id=71,
             kopia_snapshot_id="kopia-1",
             source_snapshot=SimpleNamespace(source_type="host", source_ref_id=9),
@@ -325,7 +326,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             gateway=gateway,
             execution_organization_id=20,
         )
-        lock_repositories.return_value = [SimpleNamespace(id=7)]
+        lock_repositories.return_value = [SimpleNamespace(id=7, pk=7, config={})]
         resolve_reader.return_value = SimpleNamespace(
             node=gateway,
             repository_payload={"type": "s3"},
@@ -375,6 +376,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             id=31,
             organization_id=5,
             repository_id=7,
+            backup_config_id=61,
             source_snapshot_id=71,
             kopia_snapshot_id="kopia-1",
             source_snapshot=SimpleNamespace(source_type="host", source_ref_id=9),
@@ -383,7 +385,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             gateway=SimpleNamespace(id=17),
             execution_organization_id=20,
         )
-        lock_repositories.return_value = [SimpleNamespace(id=7)]
+        lock_repositories.return_value = [SimpleNamespace(id=7, pk=7, config={})]
 
         invalid_accesses = (
             SimpleNamespace(
@@ -436,6 +438,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             id=31,
             organization_id=5,
             repository_id=7,
+            backup_config_id=61,
             source_snapshot_id=71,
             kopia_snapshot_id="kopia-1",
             source_snapshot=SimpleNamespace(source_type="host", source_ref_id=9),
@@ -445,7 +448,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             gateway=gateway,
             execution_organization_id=5,
         )
-        lock_repositories.return_value = [SimpleNamespace(id=7)]
+        lock_repositories.return_value = [SimpleNamespace(id=7, pk=7, config={})]
         resolve_reader.return_value = SimpleNamespace(
             node=gateway,
             repository_payload={"type": "s3"},
@@ -492,6 +495,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             id=31,
             organization_id=5,
             repository_id=7,
+            backup_config_id=61,
             source_snapshot_id=71,
             kopia_snapshot_id="kopia-1",
             source_snapshot=SimpleNamespace(source_type="host", source_ref_id=9),
@@ -500,7 +504,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             gateway=SimpleNamespace(id=17),
             execution_organization_id=5,
         )
-        lock_repositories.return_value = [SimpleNamespace(id=7)]
+        lock_repositories.return_value = [SimpleNamespace(id=7, pk=7, config={})]
         resolve_reader.return_value = SimpleNamespace(
             node=SimpleNamespace(
                 id=12,
@@ -560,6 +564,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             id=31,
             organization_id=5,
             repository_id=7,
+            backup_config_id=61,
             source_snapshot_id=71,
             kopia_snapshot_id="kopia-file-1",
             path_type="file",
@@ -571,7 +576,7 @@ class SnapshotScopeTaskNormalizationTests(TestCase):
             gateway=SimpleNamespace(id=17),
             execution_organization_id=5,
         )
-        lock_repositories.return_value = [SimpleNamespace(id=7)]
+        lock_repositories.return_value = [SimpleNamespace(id=7, pk=7, config={})]
         resolve_reader.return_value = SimpleNamespace(
             node=SimpleNamespace(
                 id=12,

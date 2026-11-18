@@ -37,6 +37,8 @@ import {
 } from '../../lib/sessionNotice'
 
 const emailSignupEnabled = ref(false)
+const passwordLoginEnabled = ref(true)
+const siteRole = ref<'tenant' | 'ops'>('tenant')
 const passwordResetAvailable = ref(false)
 const emailCodeLoginAvailable = ref(false)
 const showEula = appConfig.showEula
@@ -171,6 +173,9 @@ const cardView = ref<'login' | 'reset'>('login')
 type AuthMode = 'password' | 'email-code'
 
 const authMode = ref<AuthMode>('password')
+const passwordLoginAvailable = computed(
+  () => siteRole.value === 'ops' || passwordLoginEnabled.value,
+)
 const authModeTabs = ref<Partial<Record<AuthMode, HTMLButtonElement>>>({})
 const resetStep = ref<'request' | 'reset'>('request')
 const regEmail = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/
@@ -755,11 +760,6 @@ async function handleFieldsError(fields?: Record<string, string[]>) {
   }
 }
 
-function goRegister() {
-  if (loginState.value !== 'idle') return
-  router.push('/register')
-}
-
 function goForgetPwd() {
   if (!passwordResetAvailable.value || loginState.value !== 'idle') return
   cardView.value = 'reset'
@@ -836,9 +836,14 @@ onMounted(async () => {
   void loadGoogleConfig()
   await restoreExistingSession()
   const profile = await fetchDeployProfile()
+  siteRole.value = profile?.site_role === 'ops' ? 'ops' : 'tenant'
   emailSignupEnabled.value = !!profile?.email_signup_enabled
+  passwordLoginEnabled.value = profile?.password_login_enabled !== false
   passwordResetAvailable.value = !!profile?.password_reset_available
   emailCodeLoginAvailable.value = !!profile?.email_code_login_available
+  if (!passwordLoginAvailable.value && emailCodeLoginAvailable.value) {
+    authMode.value = 'email-code'
+  }
   await loadTurnstileConfig()
 })
 </script>
@@ -940,7 +945,7 @@ onMounted(async () => {
           </section>
 
           <div
-            v-if="emailCodeLoginAvailable && !isRecoveryState"
+            v-if="emailCodeLoginAvailable && passwordLoginAvailable && !isRecoveryState"
             class="login-method-tabs"
             role="tablist"
             :aria-label="t('login.methodLabel')"
@@ -996,10 +1001,12 @@ onMounted(async () => {
             id="login-method-panel"
             class="login-method-panel"
             role="tabpanel"
-            :aria-labelledby="emailCodeLoginAvailable ? `login-method-tab-${authMode}` : 'login-card-title'"
+            :aria-labelledby="emailCodeLoginAvailable && passwordLoginAvailable
+              ? `login-method-tab-${authMode}`
+              : 'login-card-title'"
           >
             <form
-              v-if="authMode === 'password'"
+              v-if="authMode === 'password' && passwordLoginAvailable"
               class="login-password-form"
               :class="{ 'is-validation-shaking': validationShake }"
               novalidate
@@ -1138,11 +1145,19 @@ onMounted(async () => {
             </form>
 
             <EmailCodeLoginForm
-              v-else
+              v-else-if="emailCodeLoginAvailable"
               v-model:email="formItems.email.value"
               :disabled="submitLoading"
               @verified="handleEmailCodeVerified"
               @verification-unknown="handleEmailCodeVerificationUnknown"
+            />
+
+            <ElAlert
+              v-else
+              class="login-form-alert"
+              type="warning"
+              :title="t('login.passwordLoginDisabled')"
+              show-icon
             />
 
             <div
@@ -1217,9 +1232,8 @@ onMounted(async () => {
             >
               <span class="footer-text">{{ t('login.noAccount') }}</span>
               <a
-                href="#"
+                href="/register"
                 class="footer-link sign-up-link"
-                @click.prevent="goRegister"
               >{{ t('login.freeRegister') }}</a>
             </div>
             <p

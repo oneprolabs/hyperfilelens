@@ -67,7 +67,11 @@ def unique_org_key_for_name(name: str) -> str:
 
 
 @transaction.atomic
-def provision_registered_user_tenant(user: User) -> tuple[Organization, Membership]:
+def provision_registered_user_tenant(
+    user: User,
+    *,
+    organization_name: str | None = None,
+) -> tuple[Organization, Membership]:
     """
     Create a dedicated organization and owner membership for a newly registered user.
     Idempotent when the user already has an active membership.
@@ -101,7 +105,7 @@ def provision_registered_user_tenant(user: User) -> tuple[Organization, Membersh
         return existing.organization, existing
     org = Organization.objects.create(
         key=unique_org_key_for_email(email or user.username),
-        name=(email or local or user.username or "org")[:200],
+        name=(organization_name or email or local or user.username or "org")[:200],
         is_active=True,
     )
     from apps.subscription.services.interface import (
@@ -132,7 +136,14 @@ def provision_registered_user_tenant(user: User) -> tuple[Organization, Membersh
 
 
 @transaction.atomic
-def complete_user_registration(user: User, password: str, code: str) -> tuple[bool, str | None, Organization | None]:
+def complete_user_registration(
+    user: User,
+    password: str,
+    code: str,
+    *,
+    registration_mode: str = "enterprise",
+    organization_name: str | None = None,
+) -> tuple[bool, str | None, Organization | None]:
     """
     Verify email code, activate user, set password, and provision tenant resources.
 
@@ -171,7 +182,23 @@ def complete_user_registration(user: User, password: str, code: str) -> tuple[bo
             registered_at=timezone.now(),
         )
 
-    org, _membership = provision_registered_user_tenant(user)
+    if registration_mode == "personal":
+        from common.extension_spi import (
+            RegistrationUnavailableError,
+            get_registration_provider,
+        )
+
+        provider = get_registration_provider()
+        if provider is None:
+            raise RegistrationUnavailableError(
+                "Personal registration is temporarily unavailable."
+            )
+        org = provider.provision_personal_registration(user)
+    else:
+        org, _membership = provision_registered_user_tenant(
+            user,
+            organization_name=organization_name,
+        )
     from apps.lens_bridge.services.chat_user_provisioning import enqueue_sl_chat_user_provision
 
     enqueue_sl_chat_user_provision(user_id=user.id)

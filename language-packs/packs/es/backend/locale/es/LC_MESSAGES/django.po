@@ -724,3 +724,16 @@ msgstr "Elige una contraseña distinta de la contraseña temporal."
 #: apps/iam/member-onboarding
 msgid "An account already uses this email. Sign in to that account first."
 msgstr "Ya existe una cuenta con este correo. Inicia sesión en esa cuenta primero."
+
+#: src/backend/apps/iam/auth/views/registration.py:532
+#: src/backend/apps/iam/auth/views/registration.py:533
+msgid "Select a valid registration type"
+msgstr "Seleccione un tipo de registro válido"
+
+#: src/backend/apps/iam/auth/views/registration.py:595
+msgid "Personal registration is temporarily unavailable"
+msgstr "El registro personal no está disponible temporalmente"
+
+#: src/backend/apps/iam/auth/views/login.py:225
+msgid "Password sign-in is disabled"
+msgstr "El inicio de sesión con contraseña está deshabilitado"

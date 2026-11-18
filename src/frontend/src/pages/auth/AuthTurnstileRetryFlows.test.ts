@@ -142,6 +142,14 @@ describe('authentication Turnstile retry flows', () => {
     vi.clearAllMocks()
     localStorage.clear()
     mocks.fetchDeployProfile.mockResolvedValue({ email_signup_enabled: true })
+    mocks.api.mockResolvedValue({
+      code: 0,
+      message: 'success',
+      data: {
+        personal: { enabled: true, available: true },
+        enterprise: { enabled: true },
+      },
+    })
     mocks.loadTurnstileConfig.mockResolvedValue(undefined)
     mocks.retryTurnstileConfig.mockResolvedValue(undefined)
     mocks.buildTurnstilePayload.mockImplementation((token: string) => (
@@ -504,6 +512,16 @@ describe('authentication Turnstile retry flows', () => {
   it('uses a replacement token when registration code sending is retried', async () => {
     let sendAttempt = 0
     mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/meta/registration-options') {
+        return {
+          code: 0,
+          message: 'success',
+          data: {
+            personal: { enabled: true, available: true },
+            enterprise: { enabled: true },
+          },
+        }
+      }
       if (path !== '/api/v1/auth/email-register/send-code') {
         throw new Error(`Unexpected API path: ${path}`)
       }
@@ -523,7 +541,8 @@ describe('authentication Turnstile retry flows', () => {
 
     const wrapper = mountRegister()
     await flushPromises()
-    await wrapper.find('input[type="text"]').setValue('person@example.com')
+    mocks.api.mockClear()
+    await wrapper.get('input[autocomplete="email"]').setValue('person@example.com')
     const turnstile = wrapper.getComponent(AuthTurnstileFieldStub)
     const sendCode = wrapper.get('button.send-code-btn')
 

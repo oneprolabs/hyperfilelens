@@ -28,6 +28,9 @@ KEY_EMAIL_HOST_USER = "email.host_user"
 KEY_EMAIL_FROM = "email.from_email"
 
 KEY_IDENTITY_EMAIL_SIGNUP = "identity.email_signup_enabled"
+KEY_IDENTITY_ENTERPRISE_REGISTRATION = "identity.enterprise_registration_enabled"
+KEY_IDENTITY_PERSONAL_REGISTRATION = "identity.personal_registration_enabled"
+KEY_IDENTITY_PASSWORD_LOGIN = "identity.password_login_enabled"
 KEY_IDENTITY_EMAIL_CODE_LOGIN = "identity.email_code_login_enabled"
 KEY_IDENTITY_PLATFORM_OPS = "identity.platform_ops_enabled"
 KEY_IDENTITY_OPS_CIDRS = "identity.platform_ops_allowed_cidrs"
@@ -86,6 +89,9 @@ EMAIL_RUNTIME_KEYS = (
 
 IDENTITY_RUNTIME_KEYS = (
     KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+    KEY_IDENTITY_PERSONAL_REGISTRATION,
+    KEY_IDENTITY_PASSWORD_LOGIN,
     KEY_IDENTITY_EMAIL_CODE_LOGIN,
     KEY_IDENTITY_PLATFORM_OPS,
     KEY_IDENTITY_OPS_CIDRS,
@@ -351,15 +357,85 @@ def enterprise_identity_enabled() -> bool:
         return False
 
 
-def email_signup_enabled() -> bool:
-    """Return whether anonymous email/password account creation is allowed."""
+def _has_deployment_value(
+    *,
+    env_name: str,
+    settings_attr: str,
+) -> bool:
+    """Return whether a deployment value was explicitly supplied."""
+    if env_name and _env_str(env_name):
+        return True
+    if settings_attr:
+        value = getattr(settings, settings_attr, None)
+        if isinstance(value, bool):
+            return True
+        if isinstance(value, str) and value.strip():
+            return True
+    return False
+
+
+def enterprise_registration_enabled() -> bool:
+    """Return whether self-service Enterprise registration is enabled.
+
+    The legacy email sign-up setting remains the fallback for existing
+    deployments.  A new Enterprise setting, when explicitly supplied, always
+    takes precedence over that legacy value.
+    """
     if not enterprise_identity_enabled():
         return False
+    if has_runtime_override(KEY_IDENTITY_ENTERPRISE_REGISTRATION) or _has_deployment_value(
+        env_name="HFL_ENTERPRISE_REGISTRATION_ENABLED",
+        settings_attr="HFL_ENTERPRISE_REGISTRATION_ENABLED",
+    ):
+        return get_bool(
+            KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+            env_name="HFL_ENTERPRISE_REGISTRATION_ENABLED",
+            settings_attr="HFL_ENTERPRISE_REGISTRATION_ENABLED",
+            default=False,
+        )
     return get_bool(
         KEY_IDENTITY_EMAIL_SIGNUP,
         env_name="HFL_EMAIL_SIGNUP_ENABLED",
         settings_attr="HFL_EMAIL_SIGNUP_ENABLED",
         default=False,
+    )
+
+
+def personal_registration_enabled() -> bool:
+    """Return whether self-service Personal Edition registration is enabled."""
+    if not enterprise_identity_enabled():
+        return False
+    return get_bool(
+        KEY_IDENTITY_PERSONAL_REGISTRATION,
+        env_name="HFL_PERSONAL_REGISTRATION_ENABLED",
+        settings_attr="HFL_PERSONAL_REGISTRATION_ENABLED",
+        default=False,
+    )
+
+
+def email_signup_enabled() -> bool:
+    """Return whether either self-service registration mode is enabled.
+
+    This compatibility aggregate keeps existing login and navigation clients
+    working while the two registration modes are configured independently.
+    """
+    return enterprise_registration_enabled() or personal_registration_enabled()
+
+
+def password_login_enabled() -> bool:
+    """Return whether tenant password sign-in is allowed.
+
+    Community deployments only provide password sign-in for tenant users, so
+    never allow a deployment value to lock that path when EE is unavailable.
+    Admin Console password sign-in is enforced separately by its site role.
+    """
+    if not enterprise_identity_enabled():
+        return True
+    return get_bool(
+        KEY_IDENTITY_PASSWORD_LOGIN,
+        env_name="HFL_PASSWORD_LOGIN_ENABLED",
+        settings_attr="HFL_PASSWORD_LOGIN_ENABLED",
+        default=True,
     )
 
 

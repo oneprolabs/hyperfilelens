@@ -24,6 +24,8 @@ from apps.iam.services.registration_service import (
     {
         "EMAIL_BACKEND": "django.core.mail.backends.locmem.EmailBackend",
         "HFL_EMAIL_SIGNUP_ENABLED": "true",
+        "HFL_ENTERPRISE_REGISTRATION_ENABLED": "true",
+        "HFL_PERSONAL_REGISTRATION_ENABLED": "false",
     },
 )
 class RegistrationApiTests(APITestCase):
@@ -89,6 +91,137 @@ class RegistrationApiTests(APITestCase):
         self.assertTrue(membership.is_active)
         self.assertEqual(Membership.objects.filter(user=user).count(), 1)
         self.assertEqual(Organization.objects.filter(memberships__user=user).count(), 1)
+
+    def test_confirm_enterprise_uses_the_requested_organization_name(self):
+        email = "named-owner@example.com"
+        user = User.objects.create_user(
+            username="named-owner",
+            email=email,
+            password="unused",
+            is_active=False,
+        )
+        code, error = generate_registration_verification_code(user)
+        self.assertIsNone(error)
+
+        response = self.client.post(
+            reverse("email_register_confirm"),
+            {
+                "email": email,
+                "code": code,
+                "password": "Pass1234",
+                "registration_mode": "enterprise",
+                "organization_name": "Example Inc.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["data"]["organization"]["name"], "Example Inc.")
+
+    def test_confirm_rejects_unknown_registration_mode(self):
+        response = self.client.post(
+            reverse("email_register_confirm"),
+            {
+                "email": "unknown-mode@example.com",
+                "code": "123456",
+                "password": "Pass1234",
+                "registration_mode": "unknown",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["error"]["error_code"],
+            "INVALID_REGISTRATION_MODE",
+        )
+
+    def test_confirm_rejects_invalid_organization_names(self):
+        for name in (True, {"name": "Example"}, ["Example"], "a" * 201):
+            with self.subTest(name=name):
+                response = self.client.post(
+                    reverse("email_register_confirm"),
+                    {
+                        "email": "invalid-name@example.com",
+                        "code": "123456",
+                        "password": "Pass1234",
+                        "registration_mode": "enterprise",
+                        "organization_name": name,
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("organization_name", response.data["error"]["fields"])
+
+    @patch(
+        "apps.iam.auth.views.registration.personal_registration_enabled",
+        return_value=True,
+    )
+    @patch("common.extension_spi.get_registration_provider")
+    def test_personal_provisioning_failure_rolls_back_activation_and_code(
+        self, get_provider, _personal_enabled,
+    ):
+        from common.extension_spi import RegistrationUnavailableError
+
+        user = User.objects.create_user(
+            username="personal-pending",
+            email="personal-pending@example.com",
+            is_active=False,
+        )
+        code, error = generate_registration_verification_code(user)
+        self.assertIsNone(error)
+        get_provider.return_value.provision_personal_registration.side_effect = (
+            RegistrationUnavailableError("Storage unavailable")
+        )
+
+        response = self.client.post(
+            reverse("email_register_confirm"),
+            {
+                "email": user.email,
+                "code": code,
+                "password": "Pass1234",
+                "registration_mode": "personal",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            response.data["error"]["error_code"], "PERSONAL_REGISTRATION_UNAVAILABLE",
+        )
+        user.refresh_from_db()
+        self.assertFalse(user.is_active)
+        self.assertTrue(
+            EmailVerificationCode.objects.filter(user=user, is_used=False).exists(),
+        )
+        self.assertFalse(Membership.objects.filter(user=user).exists())
+
+    def test_registration_options_keep_personal_disabled_without_extension(self):
+        response = self.client.get("/api/v1/meta/registration-options")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["enterprise"]["enabled"])
+        self.assertFalse(response.data["personal"]["available"])
+
+    @patch(
+        "apps.configuration.services.runtime_settings.enterprise_registration_enabled",
+        return_value=False,
+    )
+    @patch(
+        "apps.configuration.services.runtime_settings.personal_registration_enabled",
+        return_value=True,
+    )
+    def test_registration_options_keep_modes_independent(
+        self,
+        _personal_enabled,
+        _enterprise_enabled,
+    ):
+        response = self.client.get("/api/v1/meta/registration-options")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data["enterprise"]["enabled"])
+        self.assertTrue(response.data["personal"]["enabled"])
+        self.assertFalse(response.data["personal"]["available"])
 
     def test_confirm_invalid_code_returns_code_field_error(self):
         email = "invalid-code@example.com"
@@ -192,8 +325,19 @@ class RegistrationApiTests(APITestCase):
         self.assertEqual(response.data["code"], "0000")
 
 
-@override_settings(HFL_EMAIL_SIGNUP_ENABLED=False)
-@patch.dict("os.environ", {"HFL_EMAIL_SIGNUP_ENABLED": "false"})
+@override_settings(
+    HFL_EMAIL_SIGNUP_ENABLED=False,
+    HFL_ENTERPRISE_REGISTRATION_ENABLED=False,
+    HFL_PERSONAL_REGISTRATION_ENABLED=False,
+)
+@patch.dict(
+    "os.environ",
+    {
+        "HFL_EMAIL_SIGNUP_ENABLED": "false",
+        "HFL_ENTERPRISE_REGISTRATION_ENABLED": "false",
+        "HFL_PERSONAL_REGISTRATION_ENABLED": "false",
+    },
+)
 class EmailSignupDisabledTests(APITestCase):
     def test_email_signup_endpoints_are_forbidden(self):
         requests = (

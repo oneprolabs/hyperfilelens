@@ -3,8 +3,18 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Mail, Lock, Key, Eye, EyeOff, CheckCircle2 } from 'lucide-vue-next'
+import {
+  Mail,
+  Lock,
+  Key,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+  UserRound,
+  Building2,
+} from 'lucide-vue-next'
 import { api } from '../../lib/api'
+import { unwrapApiPayload } from '../../lib/parse'
 import { useTurnstileConfig } from '../../composables/useTurnstileConfig'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import AuthBackdrop from '../../components/auth/AuthBackdrop.vue'
@@ -62,6 +72,25 @@ const agree = ref(false)
 const shakeTerms = ref(false)
 const registerSuccess = ref(false)
 const showPassword = ref(false)
+const registrationMode = ref<'personal' | 'enterprise'>('personal')
+const organizationName = ref('')
+const organizationNameError = ref('')
+const registrationOptions = ref<{
+  personal: { enabled: boolean; available: boolean; reason?: string | null }
+  enterprise: { enabled: boolean }
+} | null>(null)
+const enterpriseRegistrationEnabled = computed(
+  () => registrationOptions.value?.enterprise.enabled === true,
+)
+const personalRegistrationAvailable = computed(
+  () => {
+    const options = registrationOptions.value
+    return options?.personal.enabled === true && options.personal.available === true
+  },
+)
+const hasRegistrationChoice = computed(
+  () => personalRegistrationAvailable.value && enterpriseRegistrationEnabled.value,
+)
 
 let cooldownTimer: ReturnType<typeof setInterval> | null = null
 
@@ -229,6 +258,28 @@ function clearCodeError() {
   formItems.code.showError = false
 }
 
+function selectRegistrationMode(mode: 'personal' | 'enterprise') {
+  if (mode === 'personal' && !personalRegistrationAvailable.value) return
+  if (mode === 'enterprise' && !enterpriseRegistrationEnabled.value) return
+  registrationMode.value = mode
+  if (mode === 'personal') {
+    organizationName.value = ''
+    organizationNameError.value = ''
+  }
+}
+
+function handleRegistrationModeKeydown(event: KeyboardEvent) {
+  if (!hasRegistrationChoice.value) return
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+  event.preventDefault()
+  const mode = event.key === 'Home' ? 'personal'
+    : event.key === 'End' ? 'enterprise'
+      : registrationMode.value === 'personal' ? 'enterprise' : 'personal'
+  selectRegistrationMode(mode)
+  const button = event.currentTarget as HTMLButtonElement
+  button.parentElement?.querySelector<HTMLButtonElement>(`[data-mode="${mode}"]`)?.focus()
+}
+
 function applyFieldError(field: keyof typeof formItems, message: string) {
   formItems[field].errorMsg = message
   formItems[field].showError = Boolean(message)
@@ -254,6 +305,11 @@ function applyRegisterFieldsError(fields?: Record<string, string[]>) {
 
   let handled = false
   for (const [field, msgs] of Object.entries(fields)) {
+    if (field === 'organization_name') {
+      organizationNameError.value = msgs[0] || ''
+      handled = true
+      continue
+    }
     if (field in formItems) {
       applyFieldError(field as keyof typeof formItems, msgs[0] || '')
       handled = true
@@ -309,6 +365,7 @@ async function handleSendCode() {
       method: 'POST',
       body: JSON.stringify({
         email: formItems.email.value.trim().toLowerCase(),
+        registration_mode: registrationMode.value,
         ...buildTurnstilePayload(turnstileToken.value),
       }),
     })
@@ -334,6 +391,22 @@ async function handleSendCode() {
 function validateForm() {
   let hasError = false
 
+  if (
+    registrationMode.value === 'personal'
+    && !personalRegistrationAvailable.value
+  ) {
+    ElMessage.error({
+      message: t('register.personalUnavailable'),
+      grouping: true,
+    })
+    hasError = true
+  }
+
+  if (registrationMode.value === 'enterprise' && !enterpriseRegistrationEnabled.value) {
+    ElMessage.error({ message: t('register.enterpriseUnavailable'), grouping: true })
+    hasError = true
+  }
+
   const emailError = checkMail(formItems.email.value)
   if (emailError) {
     formItems.email.errorMsg = emailError
@@ -344,6 +417,14 @@ function validateForm() {
   if (!formItems.code.value) {
     formItems.code.errorMsg = t('register.codeErrRequired')
     formItems.code.showError = true
+    hasError = true
+  }
+
+  if (registrationMode.value === 'enterprise' && !organizationName.value.trim()) {
+    ElMessage.warning({
+      message: t('register.organizationRequired'),
+      grouping: true,
+    })
     hasError = true
   }
 
@@ -381,6 +462,9 @@ async function handleSubmit() {
         email: formItems.email.value.trim().toLowerCase(),
         code: formItems.code.value,
         password: formItems.password.value,
+        registration_mode: registrationMode.value,
+        organization_name: organizationName.value.trim() || undefined,
+        eula_accepted: showEula ? agree.value : true,
       }),
     })
 
@@ -415,6 +499,30 @@ onMounted(async () => {
     await router.replace({ name: LOGIN_ROUTE_NAME })
     return
   }
+  if (profile.email_signup_enabled) {
+    try {
+      const options = unwrapApiPayload<{
+        personal: { enabled: boolean; available: boolean; reason?: string | null }
+        enterprise: { enabled: boolean }
+      }>(await api<unknown>('/api/v1/meta/registration-options'))
+      registrationOptions.value = options
+      if (options.personal.enabled && options.personal.available) {
+        registrationMode.value = 'personal'
+      } else if (options.enterprise.enabled) {
+        registrationMode.value = 'enterprise'
+      } else {
+        await router.replace({ name: LOGIN_ROUTE_NAME })
+        return
+      }
+    } catch {
+      registrationOptions.value = {
+        personal: { enabled: false, available: false, reason: 'unavailable' },
+        enterprise: { enabled: false },
+      }
+      await router.replace({ name: LOGIN_ROUTE_NAME })
+      return
+    }
+  }
   trackAppEvent('sign_up_started', { method: 'email' })
   turnstileToken.value = ''
   restoreCooldown()
@@ -446,6 +554,90 @@ onUnmounted(() => {
       </div>
 
       <div class="register-box-content">
+        <div
+          v-if="hasRegistrationChoice"
+          class="registration-picker"
+          role="radiogroup"
+          :aria-label="t('register.accountType')"
+          aria-describedby="registration-description"
+        >
+          <button
+            type="button"
+            class="registration-option"
+            :class="{ 'is-selected': registrationMode === 'personal' }"
+            data-mode="personal"
+            role="radio"
+            :aria-checked="registrationMode === 'personal'"
+            :tabindex="registrationMode === 'personal' ? 0 : -1"
+            @click="selectRegistrationMode('personal')"
+            @keydown="handleRegistrationModeKeydown"
+          >
+            <UserRound
+              :size="16"
+              aria-hidden="true"
+            />
+            {{ t('register.personal') }}
+          </button>
+          <button
+            type="button"
+            class="registration-option"
+            :class="{ 'is-selected': registrationMode === 'enterprise' }"
+            data-mode="enterprise"
+            role="radio"
+            :aria-checked="registrationMode === 'enterprise'"
+            :tabindex="registrationMode === 'enterprise' ? 0 : -1"
+            @click="selectRegistrationMode('enterprise')"
+            @keydown="handleRegistrationModeKeydown"
+          >
+            <Building2
+              :size="16"
+              aria-hidden="true"
+            />
+            {{ t('register.enterprise') }}
+          </button>
+        </div>
+
+        <p
+          v-if="hasRegistrationChoice"
+          id="registration-description"
+          class="registration-description"
+          aria-live="polite"
+        >
+          {{ t(registrationMode === 'personal'
+            ? 'register.personalDescription'
+            : 'register.enterpriseDescription') }}
+        </p>
+
+        <div
+          v-if="registrationMode === 'enterprise'"
+          class="input-wrapper"
+          :class="{ 'has-error': organizationNameError }"
+        >
+          <div class="input-row">
+            <Building2
+              class="input-icon"
+              :size="18"
+              aria-hidden="true"
+            />
+            <input
+              v-model="organizationName"
+              type="text"
+              :placeholder="t('register.organizationPh')"
+              :aria-label="t('register.organizationPh')"
+              :aria-invalid="Boolean(organizationNameError)"
+              maxlength="200"
+              autocomplete="organization"
+              @input="organizationNameError = ''"
+            >
+          </div>
+          <p
+            v-if="organizationNameError"
+            class="error-msg"
+          >
+            {{ organizationNameError }}
+          </p>
+        </div>
+
         <!-- Email -->
         <div
           class="input-wrapper"
@@ -455,12 +647,15 @@ onUnmounted(() => {
             <Mail
               class="input-icon"
               :size="18"
+              aria-hidden="true"
             />
             <input
               v-model="formItems.email.value"
-              type="text"
+              type="email"
               :placeholder="t('register.emailPh')"
-              tabindex="1"
+              :aria-label="t('register.emailPh')"
+              :aria-invalid="formItems.email.showError"
+              autocomplete="email"
               @blur="validateEmailOnInput"
               @input="validateEmailOnInput"
             >
@@ -499,21 +694,23 @@ onUnmounted(() => {
           class="input-wrapper"
           :class="{ 'has-error': formItems.code.showError }"
         >
-          <div class="captcha-row">
-            <div class="input-row captcha-input">
-              <Key
-                class="input-icon"
-                :size="18"
-              />
-              <input
-                v-model="formItems.code.value"
-                type="text"
-                :placeholder="t('register.codePlaceholder')"
-                maxlength="6"
-                tabindex="3"
-                @input="clearCodeError"
-              >
-            </div>
+          <div class="input-row captcha-row">
+            <Key
+              class="input-icon"
+              :size="18"
+              aria-hidden="true"
+            />
+            <input
+              v-model="formItems.code.value"
+              type="text"
+              :placeholder="t('register.codePlaceholder')"
+              :aria-label="t('register.codePlaceholder')"
+              :aria-invalid="formItems.code.showError"
+              maxlength="6"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              @input="clearCodeError"
+            >
             <button
               type="button"
               class="send-code-btn"
@@ -548,12 +745,14 @@ onUnmounted(() => {
             <Lock
               class="input-icon"
               :size="18"
+              aria-hidden="true"
             />
             <input
               v-model="formItems.password.value"
               :type="showPassword ? 'text' : 'password'"
               :placeholder="t('register.passwordPh')"
-              tabindex="4"
+              :aria-label="t('register.passwordPh')"
+              :aria-invalid="formItems.password.showError"
               autocomplete="new-password"
               @blur="validatePasswordOnInput"
               @input="validatePasswordOnInput"
@@ -569,12 +768,14 @@ onUnmounted(() => {
               <EyeOff
                 v-if="showPassword"
                 class="eye-icon"
-                :size="16"
+                :size="17"
+                aria-hidden="true"
               />
               <Eye
                 v-else
                 class="eye-icon"
-                :size="16"
+                :size="17"
+                aria-hidden="true"
               />
             </button>
           </div>
@@ -632,7 +833,13 @@ onUnmounted(() => {
           :loading="submitLoading"
           @click="handleSubmit"
         >
-          {{ submitLoading ? t('register.btnSubmitLoading') : t('register.registerBtn') }}
+          {{
+            submitLoading
+              ? t('register.btnSubmitLoading')
+              : registrationMode === 'personal'
+                ? t('register.createPersonalAccount')
+                : t('register.createOrganization')
+          }}
         </ElButton>
 
         <!-- Register Footer -->
@@ -698,22 +905,24 @@ onUnmounted(() => {
 
 <style scoped>
 .register-container {
-  user-select: none;
+  box-sizing: border-box;
   width: 100%;
   min-height: var(--app-viewport-height);
+  padding: 64px max(48px, calc((100vw - 1440px) / 2));
   background-color: #08090C;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(420px, 2fr);
   align-items: center;
-  justify-content: center;
   overflow-x: hidden;
   overflow-y: auto;
   position: relative;
 }
 
 .left-logo {
-  width: 680px;
-  margin-right: clamp(64px, 7vw, 112px);
-  min-width: 680px;
+  width: min(540px, 100%);
+  min-width: 0;
+  margin: 0;
+  justify-self: center;
   z-index: 10;
   display: flex;
   align-items: center;
@@ -721,13 +930,17 @@ onUnmounted(() => {
 
 .register-form-box {
   box-sizing: border-box;
-  min-width: 440px;
-  width: 440px;
-  padding: 48px 40px 40px;
-  background-color: hsla(0, 0%, 100%, .1);
-  border-radius: var(--radius-card);
-  box-shadow: 0px 4px 4px 0px rgba(0, 0, 0, .25);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  min-width: 420px;
+  width: 420px;
+  justify-self: center;
+  padding: 30px;
+  background: linear-gradient(180deg, rgba(30, 26, 40, 0.92), rgba(20, 17, 28, 0.94));
+  border-radius: 18px;
+  box-shadow:
+    0 28px 70px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(20px);
   z-index: 10;
 }
 
@@ -736,66 +949,136 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  font-weight: 600;
+  font-weight: 700;
   color: #FFF;
-  margin-top: 4px;
 }
 
 .register-box-title__copy {
   min-width: 0;
-  font-size: 18px;
+  font-size: 17.5px;
   line-height: 1.35;
   overflow-wrap: normal;
 }
 
 .register-box-content {
-  margin-top: 24px;
+  margin-top: 22px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
+}
+
+.registration-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 4px;
+}
+
+.registration-option {
+  position: relative;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: rgba(228, 223, 242, 0.58);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  transition: color 150ms ease-out;
+}
+
+.registration-option::after {
+  position: absolute;
+  right: 20px;
+  bottom: -1px;
+  left: 20px;
+  height: 2px;
+  content: '';
+  background: var(--color-brand-violet-soft);
+  border-radius: 999px;
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 150ms ease-out;
+}
+
+.registration-option:hover {
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.registration-option.is-selected {
+  color: #fff;
+  font-weight: 600;
+}
+
+.registration-option.is-selected::after {
+  transform: scaleX(1);
+}
+
+.registration-option:focus-visible {
+  outline: 2px solid var(--color-brand-violet-soft);
+  outline-offset: 2px;
+}
+
+.registration-description {
+  margin: 0 0 4px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .input-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 7px;
 }
 
 .input-row {
   display: flex;
   align-items: center;
-  background-color: #313131;
-  border: 1px solid #3A3B40;
-  border-radius: var(--radius-card);
-  height: 42px;
-  padding: 0 14px;
-  transition: border-color 0.2s;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  height: 46px;
+  padding: 0 13px;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    box-shadow 150ms ease-out;
   min-width: 0;
 }
 
 .input-row:focus-within {
-  border-color: var(--color-primary);
+  background: rgba(109, 94, 246, 0.08);
+  border-color: rgba(139, 120, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(109, 94, 246, 0.22);
 }
 
 .input-icon {
-  color: #888A8F;
+  color: #a19aad;
   flex-shrink: 0;
-  margin-right: 12px;
+  margin-right: 10px;
 }
 
 .input-row input {
-  height: 38px;
+  height: 42px;
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
   font-size: 14px;
-  color: #fff;
+  font-weight: 500;
+  color: #f0eefa;
   min-width: 0;
 }
 
 .input-row input::placeholder {
-  color: #6A6C71;
+  color: #938c9e;
 }
 
 .eye-btn {
@@ -806,11 +1089,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #888A8F;
-  border-radius: 4px;
-  width: 24px;
-  height: 24px;
+  margin-left: 8px;
+  color: #a19aad;
+  border-radius: 7px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
+  transition: color 0.2s, background-color 0.2s;
 }
 
 .eye-btn:hover {
@@ -818,29 +1103,31 @@ onUnmounted(() => {
   background-color: rgba(255, 255, 255, 0.1);
 }
 
+.eye-btn:focus-visible,
+.send-code-btn:focus-visible,
+.footer-link:focus-visible {
+  outline: 2px solid var(--color-brand-violet-soft);
+  outline-offset: 2px;
+}
+
 .captcha-row {
-  display: flex;
-  gap: 12px;
   width: 100%;
 }
 
-.captcha-input {
-  flex: 1;
-}
-
 .send-code-btn {
-  flex-shrink: 0;
-  min-width: 100px;
+  flex: 0 0 auto;
+  min-width: 96px;
+  min-height: 42px;
   height: 42px;
-  padding: 0 12px;
+  padding: 0 8px 0 12px;
   background: transparent;
-  border: 1px solid rgba(139, 92, 246, 0.4);
-  border-radius: 21px;
-  color: rgba(196, 181, 253, 0.85);
-  font-size: 13px;
-  font-weight: 400;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  color: var(--color-brand-violet-soft);
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, color 0.2s;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
@@ -865,9 +1152,11 @@ onUnmounted(() => {
 }
 
 .send-code-btn:hover:not(:disabled) {
-  background: rgba(139, 92, 246, 0.08);
-  border-color: rgba(139, 92, 246, 0.6);
-  color: #ddd6fe;
+  color: #fff;
+}
+
+.send-code-btn:active:not(:disabled) {
+  background: rgba(109, 40, 217, 0.14);
 }
 
 .send-code-btn:disabled {
@@ -876,12 +1165,16 @@ onUnmounted(() => {
 }
 
 .input-wrapper.has-error .input-row {
-  border-color: #f85149;
+  background: rgba(255, 90, 90, 0.07);
+  border-color: rgba(255, 110, 110, 0.62);
 }
 
 .error-msg {
+  margin: 0;
   font-size: 12px;
-  color: #f85149;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #ff8f8f;
   padding-left: 2px;
 }
 
@@ -954,12 +1247,14 @@ onUnmounted(() => {
 .footer-row {
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
 .footer-text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(255, 255, 255, 0.62);
 }
 
 .footer-link {
@@ -998,9 +1293,10 @@ onUnmounted(() => {
 
 .submit-btn {
   width: 100%;
-  height: 42px !important;
-  border-radius: 21px;
-  font-size: 15px;
+  min-height: 46px;
+  height: 46px !important;
+  border-radius: 10px;
+  font-size: 14px;
   font-weight: 600;
 }
 
@@ -1120,9 +1416,10 @@ onUnmounted(() => {
   .register-container {
     min-height: var(--app-viewport-height);
     height: auto;
+    display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    gap: 20px;
+    gap: 18px;
     box-sizing: border-box;
     padding: calc(24px + var(--app-safe-top)) max(20px, var(--app-safe-right)) calc(24px + var(--app-safe-bottom)) max(20px, var(--app-safe-left));
   }
@@ -1134,7 +1431,7 @@ onUnmounted(() => {
   }
 
   .register-form-box {
-    width: min(440px, 100%);
+    width: min(420px, 100%);
     min-width: 0;
     padding: 32px 28px;
   }
@@ -1147,7 +1444,7 @@ onUnmounted(() => {
   }
 
   .register-form-box {
-    padding: 24px 16px;
+    padding: 24px 18px;
   }
 
   .register-box-title__copy {
@@ -1155,17 +1452,15 @@ onUnmounted(() => {
   }
 
   .register-box-content {
-    gap: 16px;
     margin-top: 20px;
   }
 
   .captcha-row {
-    flex-direction: column;
-    gap: 8px;
+    width: 100%;
   }
 
   .send-code-btn {
-    width: 100%;
+    min-width: 104px;
   }
 
   .input-row,
@@ -1176,8 +1471,8 @@ onUnmounted(() => {
   }
 
   .eye-btn {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: 40px;
+    min-height: 44px;
   }
 
   .register-success-overlay {
@@ -1189,6 +1484,28 @@ onUnmounted(() => {
   .register-success-card {
     box-sizing: border-box;
     padding: 28px 18px 22px;
+  }
+}
+
+@media (max-height: 720px) and (min-width: 1280px) {
+  .register-container {
+    align-items: flex-start;
+    padding-top: 40px;
+    padding-bottom: 40px;
+  }
+}
+
+@media (max-width: 479.98px) and (min-height: 720px) {
+  .register-container {
+    padding-top: calc(clamp(32px, 6dvh, 48px) + var(--app-safe-top));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .registration-option,
+  .registration-option::after,
+  .input-row {
+    transition: none;
   }
 }
 </style>

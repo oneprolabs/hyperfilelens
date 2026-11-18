@@ -39,6 +39,7 @@ class DeployProfileView(APIView):
             email_code_login_enabled,
             email_delivery_configured,
             email_signup_enabled,
+            password_login_enabled,
             password_reset_available,
             platform_ops_enabled,
         )
@@ -49,6 +50,7 @@ class DeployProfileView(APIView):
             "product_version": product_version(),
             "edition": product_edition(),
             "email_signup_enabled": email_signup_enabled() if site_role == "tenant" else False,
+            "password_login_enabled": password_login_enabled(),
             "platform_ops_enabled": platform_ops_enabled(),
             # Tenant-only self-serve reset (EE + SMTP); ops stays password-only.
             "password_reset_available": (
@@ -120,3 +122,40 @@ class DeployProfileView(APIView):
             payload["support_org_key"] = None
 
         return Response(payload)
+
+
+class RegistrationOptionsView(APIView):
+    """Return anonymous-safe registration capabilities for the public form."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = [OptionalJWTAuthenticationFromCookies]
+
+    def get(self, request):
+        from apps.configuration.services.runtime_settings import (
+            email_delivery_configured,
+            enterprise_registration_enabled,
+            personal_registration_enabled,
+        )
+        from common.extension_spi import get_registration_provider
+
+        tenant_site = resolve_site_role(request) == "tenant"
+        email_ready = email_delivery_configured()
+        enterprise_enabled = bool(
+            tenant_site and enterprise_registration_enabled() and email_ready
+        )
+        personal_enabled = bool(
+            tenant_site and personal_registration_enabled() and email_ready
+        )
+        personal = {
+            "enabled": personal_enabled,
+            "available": False,
+            "reason": "enterprise_extension_required",
+        }
+        provider = get_registration_provider()
+        if personal_enabled and provider is not None:
+            personal = {"enabled": True, **provider.registration_options()}
+        return Response({
+            "enabled": enterprise_enabled or personal_enabled,
+            "personal": personal,
+            "enterprise": {"enabled": enterprise_enabled},
+        })

@@ -12,6 +12,8 @@ from apps.configuration.models import PlatformRuntimeSetting
 from apps.configuration.services.runtime_settings import (
     KEY_EMAIL_HOST,
     KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+    KEY_IDENTITY_PERSONAL_REGISTRATION,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
     KEY_IDENTITY_GOOGLE_OAUTH,
     KEY_IDENTITY_TURNSTILE_SITE,
@@ -24,6 +26,8 @@ from apps.configuration.services.runtime_settings import (
     google_client_secret,
     google_oauth_enabled,
     invalidate_runtime_settings_cache,
+    enterprise_registration_enabled,
+    personal_registration_enabled,
     turnstile_secret_key,
     turnstile_site_key,
 )
@@ -211,6 +215,56 @@ class EnsureDeploymentIdentitySettingsCommandTests(TestCase):
             return_value=True,
         ):
             self.assertTrue(google_oauth_enabled())
+
+    def test_explicit_registration_mode_flags_override_legacy_flag(self):
+        self.run_command(
+            self.complete_env(
+                HFL_EMAIL_SIGNUP_ENABLED="true",
+                HFL_ENTERPRISE_REGISTRATION_ENABLED="false",
+                HFL_PERSONAL_REGISTRATION_ENABLED="true",
+            )
+        )
+
+        self.assertEqual(
+            PlatformRuntimeSetting.objects.get(
+                key=KEY_IDENTITY_ENTERPRISE_REGISTRATION
+            ).value_text,
+            "false",
+        )
+        self.assertEqual(
+            PlatformRuntimeSetting.objects.get(
+                key=KEY_IDENTITY_PERSONAL_REGISTRATION
+            ).value_text,
+            "true",
+        )
+        with patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        ):
+            self.assertFalse(enterprise_registration_enabled())
+            self.assertTrue(personal_registration_enabled())
+
+    @patch.dict(
+        "os.environ",
+        {
+            "HFL_ENTERPRISE_REGISTRATION_ENABLED": "",
+            "HFL_PERSONAL_REGISTRATION_ENABLED": "",
+        },
+    )
+    def test_blank_enterprise_flag_preserves_legacy_signup_fallback(self):
+        self.run_command(self.complete_env(
+            HFL_ENTERPRISE_REGISTRATION_ENABLED="",
+            HFL_PERSONAL_REGISTRATION_ENABLED="",
+        ))
+
+        self.assertFalse(PlatformRuntimeSetting.objects.filter(
+            key=KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+        ).exists())
+        with patch(
+            "apps.configuration.services.runtime_settings.enterprise_identity_enabled",
+            return_value=True,
+        ):
+            self.assertTrue(enterprise_registration_enabled())
 
     def test_invalid_turnstile_preserves_existing_credentials_without_failing(self):
         existing = self.complete_env(

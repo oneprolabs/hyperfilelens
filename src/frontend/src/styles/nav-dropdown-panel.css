@@ -360,3 +360,43 @@
   background: var(--color-primary-light);
   border-color: var(--color-primary-border);
 }
+
+/* Authentication pages use the dark glass surface used by the login and
+   registration cards. The navigation language menu intentionally remains
+   light and is styled above. */
+.hfl-language-switcher-popper--auth.el-popper {
+  width: 120px !important;
+  min-width: 120px !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: linear-gradient(
+    180deg,
+    rgba(30, 26, 40, 0.98),
+    rgba(20, 17, 28, 0.98)
+  ) !important;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+}
+
+.hfl-language-switcher-popper--auth .el-dropdown-menu__item {
+  color: rgba(228, 223, 242, 0.72) !important;
+}
+
+.hfl-language-switcher-popper--auth .el-dropdown-menu__item:not(.is-selected):hover,
+.hfl-language-switcher-popper--auth .el-dropdown-menu__item:not(.is-selected):focus {
+  color: #fff !important;
+  background: rgba(109, 94, 246, 0.14) !important;
+}
+
+.hfl-language-switcher-popper--auth .el-dropdown-menu__item.is-selected,
+.hfl-language-switcher-popper--auth .el-dropdown-menu__item.is-selected:hover,
+.hfl-language-switcher-popper--auth .el-dropdown-menu__item.is-selected:focus {
+  color: #c5b8ff !important;
+  font-weight: 600;
+  background: rgba(109, 94, 246, 0.2) !important;
+}
+
+.hfl-language-switcher-popper--auth.el-popper .el-popper__arrow::before {
+  background: rgba(30, 26, 40, 0.98) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}

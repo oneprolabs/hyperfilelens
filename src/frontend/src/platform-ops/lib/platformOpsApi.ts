@@ -32,7 +32,11 @@ export interface PlatformEmailSettings {
 export interface PlatformIdentitySettings {
   /** False on Community empty socket; EE identity controls stay off. */
   enterprise_identity_enabled: boolean
+  /** Legacy aggregate retained for deploy-profile and older clients. */
   email_signup_enabled: boolean
+  enterprise_registration_enabled: boolean
+  personal_registration_enabled: boolean
+  password_login_enabled: boolean
   email_code_login_enabled: boolean
   platform_ops_enabled: boolean
   platform_ops_allowed_cidrs: string[]

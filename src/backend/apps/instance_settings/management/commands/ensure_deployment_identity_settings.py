@@ -19,6 +19,8 @@ from apps.configuration.services.runtime_settings import (
     KEY_EMAIL_USE_SSL,
     KEY_EMAIL_USE_TLS,
     KEY_IDENTITY_EMAIL_SIGNUP,
+    KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+    KEY_IDENTITY_PERSONAL_REGISTRATION,
     KEY_IDENTITY_GOOGLE_CLIENT_ID,
     KEY_IDENTITY_GOOGLE_OAUTH,
     KEY_IDENTITY_TURNSTILE_SITE,
@@ -55,7 +57,13 @@ class Command(BaseCommand):
     )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        signup_enabled = _parse_bool("HFL_EMAIL_SIGNUP_ENABLED")
+        legacy_signup_enabled = _parse_bool("HFL_EMAIL_SIGNUP_ENABLED")
+        enterprise_registration_enabled = _parse_bool(
+            "HFL_ENTERPRISE_REGISTRATION_ENABLED"
+        )
+        personal_registration_enabled = _parse_bool(
+            "HFL_PERSONAL_REGISTRATION_ENABLED"
+        )
         google_enabled = _parse_bool("HFL_GOOGLE_OAUTH_ENABLED")
         google_client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
@@ -63,13 +71,47 @@ class Command(BaseCommand):
         warnings: list[str] = []
         removed_google_duplicates = 0
 
+        if (
+            enterprise_registration_enabled is None
+            and os.getenv("HFL_ENTERPRISE_REGISTRATION_ENABLED", "").strip()
+        ):
+            warnings.append(
+                "Invalid Enterprise registration flag; preserved the installed "
+                "runtime setting."
+            )
+        if (
+            personal_registration_enabled is None
+            and os.getenv("HFL_PERSONAL_REGISTRATION_ENABLED", "").strip()
+        ):
+            warnings.append(
+                "Invalid Personal registration flag; preserved the installed "
+                "runtime setting."
+            )
+
         with transaction.atomic():
-            if signup_enabled is None:
+            if legacy_signup_enabled is None:
                 warnings.append(
                     "Invalid email sign-up flag; preserved the installed runtime setting."
                 )
             else:
-                set_bool(KEY_IDENTITY_EMAIL_SIGNUP, signup_enabled)
+                set_bool(KEY_IDENTITY_EMAIL_SIGNUP, legacy_signup_enabled)
+
+            if enterprise_registration_enabled is None:
+                # The legacy deployment flag is the compatibility source for
+                # Enterprise registration until a new flag is supplied. Do
+                # not materialize a second row for legacy-only deployments.
+                pass
+            else:
+                set_bool(
+                    KEY_IDENTITY_ENTERPRISE_REGISTRATION,
+                    enterprise_registration_enabled,
+                )
+
+            if personal_registration_enabled is not None:
+                set_bool(
+                    KEY_IDENTITY_PERSONAL_REGISTRATION,
+                    personal_registration_enabled,
+                )
 
             if google_enabled is None:
                 warnings.append(
@@ -117,9 +159,34 @@ class Command(BaseCommand):
             self.stderr.write(self.style.WARNING(warning))
         self.stdout.write(
             "Email sign-up: "
-            + ("enabled" if signup_enabled else "disabled")
-            if signup_enabled is not None
+            + ("enabled" if legacy_signup_enabled else "disabled")
+            if legacy_signup_enabled is not None
             else "Email sign-up: preserved"
+        )
+        self.stdout.write(
+            "Enterprise registration: "
+            + (
+                "enabled"
+                if (
+                    enterprise_registration_enabled
+                    if enterprise_registration_enabled is not None
+                    else legacy_signup_enabled
+                )
+                else "disabled"
+            )
+            if (
+                enterprise_registration_enabled is not None
+                or legacy_signup_enabled is not None
+            )
+            else "preserved"
+        )
+        self.stdout.write(
+            "Personal registration: "
+            + (
+                "enabled" if personal_registration_enabled else "disabled"
+            )
+            if personal_registration_enabled is not None
+            else "preserved"
         )
         self.stdout.write(
             "Google OAuth: "

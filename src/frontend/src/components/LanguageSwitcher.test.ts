@@ -29,6 +29,9 @@ describe('LanguageSwitcher', () => {
     expect(source).toMatch(/\.hfl-language-switcher-popper \.el-dropdown-menu__item:not\(\.is-selected\):hover[\s\S]*?var\(--color-primary-light/)
     expect(source).toMatch(/\.hfl-language-switcher-popper \.el-dropdown-menu__item\.is-selected\s*,[\s\S]*?font-weight:\s*600/)
     expect(source).toMatch(/:root\[data-theme="dark"\][\s\S]*?\.hfl-language-switcher-popper[\s\S]*?background:\s*var\(--color-primary-light/)
+    expect(source).toMatch(/\.hfl-language-switcher-popper--auth\.el-popper[\s\S]*?background:\s*linear-gradient/)
+    expect(source).toMatch(/\.hfl-language-switcher-popper--auth \.el-dropdown-menu__item:not\(\.is-selected\):hover[\s\S]*?background:\s*rgba\(109, 94, 246, 0\.14\)/)
+    expect(source).toMatch(/\.hfl-language-switcher-popper--auth \.el-dropdown-menu__item\.is-selected[\s\S]*?background:\s*rgba\(109, 94, 246, 0\.2\)/)
   })
 
   it('shows user-facing language names and selects a language directly', async () => {
