@@ -46,6 +46,8 @@ function taskDiagnosticDisplay(details: string, t: Translate) {
 }
 
 const taskAlertTitlePattern = /^Task alert: (task_failed|task_timeout|retry_exceeded|partial_success)$/
+const taskAlertSubjectPattern = /^(Task failed|Task timed out): (.+)$/
+const taskAlertSubjects = { task_failed: 'Task failed', task_timeout: 'Task timed out' } as const
 
 export function operationalSearchAliases(search: string, t: Translate, kind: 'event' | 'alert'): string[] {
   const query = search.trim().toLowerCase()
@@ -61,6 +63,9 @@ export function operationalSearchAliases(search: string, t: Translate, kind: 'ev
     for (const event of ['task_failed', 'task_timeout', 'retry_exceeded', 'partial_success']) {
       const title = `Task alert: ${event}`
       add(t('ops.events.taskAlert', { event: t(`ops.alertsCenter.taskEvents.${event}`) }), title)
+    }
+    for (const [event, label] of Object.entries(taskAlertSubjects)) {
+      add(`${t(`ops.alertsCenter.taskEvents.${event}`)}: `, `${label}: `)
     }
     for (const status of ['failed', 'timeout']) add(t(`ops.task.status.${status}`), `status=${status}`)
   } else {
@@ -85,10 +90,12 @@ export function taskAlertDisplay(alert: { type?: string; title?: string; message
   const message = alert.message || ''
   if (alert.type !== 'task') return { title, message }
   const event = taskAlertTitlePattern.exec(title)
+  const subject = taskAlertSubjectPattern.exec(title)
+  const subjectEvent = subject?.[1] === taskAlertSubjects.task_failed ? 'task_failed' : 'task_timeout'
   return {
     title: event
       ? t('ops.events.taskAlert', { event: t(`ops.alertsCenter.taskEvents.${event[1]}`) })
-      : title,
+      : subject ? `${t(`ops.alertsCenter.taskEvents.${subjectEvent}`)}: ${subject[2]}` : title,
     message: taskDiagnosticDisplay(message, t),
   }
 }
@@ -99,7 +106,7 @@ export function taskAlertNotificationDisplay(notification: { kind: string; title
   if (notification.kind !== 'alert') return { title, summary }
   const resolved = title.startsWith('Resolved: ')
   const alertTitle = resolved ? title.slice('Resolved: '.length) : title
-  if (!taskAlertTitlePattern.test(alertTitle)) return { title, summary }
+  if (!taskAlertTitlePattern.test(alertTitle) && !taskAlertSubjectPattern.test(alertTitle)) return { title, summary }
   const display = taskAlertDisplay({ type: 'task', title: alertTitle, message: summary }, t)
   return {
     title: resolved ? t('ops.events.resolvedTaskAlert', { title: display.title }) : display.title,

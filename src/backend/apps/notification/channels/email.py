@@ -4,6 +4,7 @@ import json
 
 from django.core.mail import EmailMessage, get_connection
 
+from apps.notification.channels.alert_title import task_alert_title
 from apps.notification.channels.base import BaseChannel
 from apps.notification.exceptions import ChannelConfigError
 from apps.notification.models import NotificationChannel, NotificationDelivery
@@ -35,9 +36,13 @@ class EmailChannel(BaseChannel):
         if not isinstance(to, list) or not to:
             raise ChannelConfigError("email channel missing config.to recipients")
 
-        subject = str(
-            cfg.get("email_subject") or cfg.get("subject") or f"[HyperFileLens] {delivery.event_type}"
-        ).strip()
+        configured_subject = str(cfg.get("email_subject") or cfg.get("subject") or "").strip()
+        title = task_alert_title(delivery)
+        if title:
+            prefix = " ".join(configured_subject.split()) or "[HyperFileLens]"
+            subject = f"{prefix} {title}"
+        else:
+            subject = configured_subject or f"[HyperFileLens] {delivery.event_type}"
         body = cfg.get("body")
         if not body:
             body = json.dumps(

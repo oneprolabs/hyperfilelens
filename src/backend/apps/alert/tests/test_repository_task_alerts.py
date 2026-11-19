@@ -83,8 +83,8 @@ class RepositoryTaskAlertTests(TestCase):
             organization_id=org.id,
             task_type=Task.Type.BACKUP,
             status=Task.Status.FAILED,
-            display_name="backup failed",
-            error_message="backup failed",
+            display_name="Backup aimychats.com",
+            error_message="Agent source is offline.",
         )
         platform_policy = AlertPolicy.objects.create(
             organization=None,
@@ -107,3 +107,6 @@ class RepositoryTaskAlertTests(TestCase):
         self.assertEqual(alert.owner_scope, ResourceScope.PLATFORM)
         self.assertIsNone(alert.organization_id)
         self.assertEqual(alert.metadata["task_type"], Task.Type.BACKUP)
+        self.assertEqual(alert.title, "Task failed: Backup aimychats.com")
+        self.assertEqual(alert.resource_name, "Backup aimychats.com")
+        self.assertEqual(alert.message, "Agent source is offline.")
