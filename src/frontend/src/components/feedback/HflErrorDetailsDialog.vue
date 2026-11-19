@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { AlertTriangle, Check, ChevronDown, Copy, X, Folder, Database, Monitor, ListTodo, ExternalLink } from 'lucide-vue-next'
+import { AlertTriangle, Check, ChevronDown, Copy, Folder, Database, Monitor, ListTodo, ExternalLink } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { copyTextToClipboard } from '../../lib/clipboard'
+import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import {
   closeErrorDetails,
   replaceErrorDetails,
@@ -18,6 +19,7 @@ import type { ErrorEntity } from '../../lib/errors/details'
 
 const { t } = useI18n()
 const router = useRouter()
+const { drawerSize } = useResponsiveDrawerWidth()
 const copied = ref(false)
 const refreshing = ref(false)
 const details = computed(() => errorDetailsState.current)
@@ -89,21 +91,20 @@ function entityIcon(type: ErrorEntity['type']) {
 </script>
 
 <template>
-  <ElDialog
+  <ElDrawer
     :model-value="Boolean(details)"
-    width="min(600px, calc(100vw - 32px))"
-    class="hfl-error-details"
+    direction="rtl"
+    :size="drawerSize"
+    class="hfl-detail-drawer hfl-error-details"
     :class="{ 'hfl-error-details--warning': isWarning }"
     modal-class="hfl-error-details-overlay"
-    body-class="scrollbar"
     append-to-body
     destroy-on-close
-    :show-close="false"
     @update:model-value="(open: boolean) => { if (!open) closeErrorDetails() }"
   >
     <template
       v-if="details"
-      #header
+      #header="{ titleId }"
     >
       <div class="hfl-error-details__header">
         <span
@@ -113,7 +114,9 @@ function entityIcon(type: ErrorEntity['type']) {
         ><AlertTriangle :size="24" /></span>
         <div class="hfl-error-details__heading">
           <div class="hfl-error-details__title-line">
-            <h2>{{ details.title }}</h2>
+            <h2 :id="titleId" class="hfl-detail-drawer__title m-0">
+              {{ details.title }}
+            </h2>
             <span
               v-if="details.errorCode"
               class="hfl-error-details__code"
@@ -122,226 +125,220 @@ function entityIcon(type: ErrorEntity['type']) {
           </div>
           <p>{{ details.summary }}</p>
         </div>
-        <button
-          type="button"
-          class="hfl-error-details__close"
-          :aria-label="t('common.close')"
-          @click="closeErrorDetails"
-        >
-          <X :size="17" />
-        </button>
       </div>
     </template>
 
-    <p
-      v-if="refreshing"
-      role="status"
-    >
-      {{ t('common.loading') }}
-    </p>
-    <template v-if="details && !refreshing">
+    <div class="hfl-detail-drawer__body scrollbar">
       <p
-        v-if="details.lifecycleMessage"
+        v-if="refreshing"
         role="status"
       >
-        {{ details.lifecycleMessage }}
+        {{ t('common.loading') }}
       </p>
-      <section
-        v-if="details.issue"
-        class="hfl-error-details__section"
-      >
-        <h3>{{ t('feedback.errorDetails.issue') }}</h3>
-        <div class="hfl-error-details__issue">
-          {{ details.issue }}
-        </div>
-      </section>
-
-      <section
-        v-if="displayReasons.length"
-        class="hfl-error-details__section"
-      >
-        <h3>{{ t('feedback.errorDetails.reasons') }}</h3>
-        <ol class="hfl-error-details__list">
-          <li
-            v-for="reason in displayReasons"
-            :key="reason"
-          >
-            {{ reason }}
-          </li>
-        </ol>
-      </section>
-
-      <section
-        v-if="details.resolutions?.length"
-        class="hfl-error-details__section"
-      >
-        <h3>{{ t(isUnregisterWarning ? 'protection.backupsPage.unregisterSuggestedActions' : 'feedback.errorDetails.resolutions') }}</h3>
-        <ul class="hfl-error-details__list hfl-error-details__list--resolve">
-          <li
-            v-for="resolution in details.resolutions"
-            :key="resolution"
-          >
-            {{ resolution }}
-          </li>
-        </ul>
-      </section>
-
-      <section
-        v-if="hasEntities"
-        class="hfl-error-details__section"
-      >
-        <h3>{{ t('feedback.errorDetails.affectedEntities') }}</h3>
-        <ul
-          class="hfl-error-details__entities scrollbar"
-          tabindex="0"
-          :aria-label="t('feedback.errorDetails.affectedEntities')"
+      <template v-if="details && !refreshing">
+        <p
+          v-if="details.lifecycleMessage"
+          role="status"
         >
-          <li
-            v-for="entity in details.entities"
-            :key="`${entity.type}:${entity.id}`"
-            class="hfl-error-details__entity"
+          {{ details.lifecycleMessage }}
+        </p>
+        <section
+          v-if="details.issue"
+          class="hfl-error-details__section"
+        >
+          <h3>{{ t('feedback.errorDetails.issue') }}</h3>
+          <div class="hfl-error-details__issue">
+            {{ details.issue }}
+          </div>
+        </section>
+
+        <section
+          v-if="displayReasons.length"
+          class="hfl-error-details__section"
+        >
+          <h3>{{ t('feedback.errorDetails.reasons') }}</h3>
+          <ol class="hfl-error-details__list">
+            <li
+              v-for="reason in displayReasons"
+              :key="reason"
+            >
+              {{ reason }}
+            </li>
+          </ol>
+        </section>
+
+        <section
+          v-if="details.resolutions?.length"
+          class="hfl-error-details__section"
+        >
+          <h3>{{ t(isUnregisterWarning ? 'protection.backupsPage.unregisterSuggestedActions' : 'feedback.errorDetails.resolutions') }}</h3>
+          <ul class="hfl-error-details__list hfl-error-details__list--resolve">
+            <li
+              v-for="resolution in details.resolutions"
+              :key="resolution"
+            >
+              {{ resolution }}
+            </li>
+          </ul>
+        </section>
+
+        <section
+          v-if="hasEntities"
+          class="hfl-error-details__section"
+        >
+          <h3>{{ t('feedback.errorDetails.affectedEntities') }}</h3>
+          <ul
+            class="hfl-error-details__entities scrollbar"
+            tabindex="0"
+            :aria-label="t('feedback.errorDetails.affectedEntities')"
           >
-            <span
-              class="hfl-error-details__entity-icon"
-              aria-hidden="true"
-            ><component
-              :is="entityIcon(entity.type)"
-              :size="16"
-            /></span>
-            <div class="hfl-error-details__entity-body">
+            <li
+              v-for="entity in details.entities"
+              :key="`${entity.type}:${entity.id}`"
+              class="hfl-error-details__entity"
+            >
+              <span
+                class="hfl-error-details__entity-icon"
+                aria-hidden="true"
+              ><component
+                :is="entityIcon(entity.type)"
+                :size="16"
+              /></span>
+              <div class="hfl-error-details__entity-body">
+                <a
+                  v-if="details.errorCode === 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE' && entity.type === 'repository' && Number.isSafeInteger(Number(entity.id)) && Number(entity.id) > 0"
+                  class="hfl-error-details__entity-name hfl-error-details__entity-link"
+                  :href="router.resolve({ path: '/node/repositories', query: { focus: String(entity.id) } }).href"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  :aria-label="t('repositoriesPage.quotaUsageOpenRepository', { name: entity.name })"
+                >
+                  {{ entity.name }}
+                  <ExternalLink
+                    :size="14"
+                    aria-hidden="true"
+                  />
+                </a>
+                <span
+                  v-else
+                  class="hfl-error-details__entity-name"
+                >{{ entity.name }}</span>
+                <span
+                  v-if="entity.error"
+                  class="hfl-error-details__entity-error"
+                >{{ entity.error }}</span>
+              </div>
+            </li>
+          </ul>
+        </section>
+
+        <section
+          v-if="details.cleanupResidue?.skippedItems?.length"
+          class="hfl-error-details__section hfl-error-details__skipped"
+        >
+          <h3>{{ t('ops.task.failureDetails.skippedItems') }}</h3>
+          <ul class="hfl-error-details__list">
+            <li
+              v-for="item in details.cleanupResidue.skippedItems"
+              :key="`skipped:${item}`"
+            >
+              {{ item }}
+            </li>
+          </ul>
+        </section>
+
+        <section
+          v-if="cleanupFailures.length || details.cleanupResidue?.retainedResources?.length"
+          class="hfl-error-details__section"
+        >
+          <h3>{{ t(isUnregister ? 'protection.backupsPage.unregisterPendingResources' : 'feedback.errorDetails.cleanup') }}</h3>
+          <ul class="hfl-error-details__list">
+            <li
+              v-for="item in cleanupFailures"
+              :key="`failure:${item}`"
+            >
+              {{ item }}
+            </li>
+            <li
+              v-for="item in details.cleanupResidue.retainedResources"
+              :key="`retained:${item}`"
+            >
+              {{ unregisterRetainedResourceLabel(item, t) }}
+              <p v-if="isUnregisterWarning && item === 'agent_installation'">
+                {{ t('protection.backupsPage.unregisterAgentInstallationNote') }}
+              </p>
+            </li>
+          </ul>
+        </section>
+
+        <section
+          v-if="taskLinks.length > 1"
+          class="hfl-error-details__section"
+        >
+          <h3>{{ t('feedback.errorDetails.relatedTasks') }}</h3>
+          <ul class="hfl-error-details__tasks">
+            <li
+              v-for="task in taskLinks"
+              :key="task.taskUuid"
+            >
               <a
-                v-if="details.errorCode === 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE' && entity.type === 'repository' && Number.isSafeInteger(Number(entity.id)) && Number(entity.id) > 0"
-                class="hfl-error-details__entity-name hfl-error-details__entity-link"
-                :href="router.resolve({ path: '/node/repositories', query: { focus: String(entity.id) } }).href"
+                class="hfl-error-details__task-row"
+                :href="taskHref(task.taskUuid)"
                 target="_blank"
                 rel="noopener noreferrer"
-                :aria-label="t('repositoriesPage.quotaUsageOpenRepository', { name: entity.name })"
+                :aria-label="t('feedback.errorDetails.openTaskNewTab', { taskUuid: task.taskUuid })"
               >
-                {{ entity.name }}
-                <ExternalLink
-                  :size="14"
+                <ListTodo
+                  :size="18"
+                  class="hfl-error-details__task-icon"
                   aria-hidden="true"
                 />
+                <code class="hfl-error-details__task-id">{{ task.taskUuid }}</code>
+                <span class="hfl-error-details__task-action">
+                  {{ t('feedback.errorDetails.openTask') }}
+                  <ExternalLink
+                    :size="14"
+                    aria-hidden="true"
+                  />
+                </span>
               </a>
-              <span
-                v-else
-                class="hfl-error-details__entity-name"
-              >{{ entity.name }}</span>
-              <span
-                v-if="entity.error"
-                class="hfl-error-details__entity-error"
-              >{{ entity.error }}</span>
-            </div>
-          </li>
-        </ul>
-      </section>
+            </li>
+          </ul>
+        </section>
 
-      <section
-        v-if="details.cleanupResidue?.skippedItems?.length"
-        class="hfl-error-details__section hfl-error-details__skipped"
-      >
-        <h3>{{ t('ops.task.failureDetails.skippedItems') }}</h3>
-        <ul class="hfl-error-details__list">
-          <li
-            v-for="item in details.cleanupResidue.skippedItems"
-            :key="`skipped:${item}`"
-          >
-            {{ item }}
-          </li>
-        </ul>
-      </section>
-
-      <section
-        v-if="cleanupFailures.length || details.cleanupResidue?.retainedResources?.length"
-        class="hfl-error-details__section"
-      >
-        <h3>{{ t(isUnregister ? 'protection.backupsPage.unregisterPendingResources' : 'feedback.errorDetails.cleanup') }}</h3>
-        <ul class="hfl-error-details__list">
-          <li
-            v-for="item in cleanupFailures"
-            :key="`failure:${item}`"
-          >
-            {{ item }}
-          </li>
-          <li
-            v-for="item in details.cleanupResidue.retainedResources"
-            :key="`retained:${item}`"
-          >
-            {{ unregisterRetainedResourceLabel(item, t) }}
-            <p v-if="isUnregisterWarning && item === 'agent_installation'">
-              {{ t('protection.backupsPage.unregisterAgentInstallationNote') }}
-            </p>
-          </li>
-        </ul>
-      </section>
-
-      <section
-        v-if="taskLinks.length > 1"
-        class="hfl-error-details__section"
-      >
-        <h3>{{ t('feedback.errorDetails.relatedTasks') }}</h3>
-        <ul class="hfl-error-details__tasks">
-          <li
-            v-for="task in taskLinks"
-            :key="task.taskUuid"
-          >
-            <a
-              class="hfl-error-details__task-row"
-              :href="taskHref(task.taskUuid)"
-              target="_blank"
-              rel="noopener noreferrer"
-              :aria-label="t('feedback.errorDetails.openTaskNewTab', { taskUuid: task.taskUuid })"
+        <details
+          v-if="details.traceId || rawText"
+          class="hfl-error-details__section hfl-error-details__technical-disclosure"
+        >
+          <summary class="hfl-error-details__technical-summary">
+            <span>{{ t('feedback.errorDetails.technical') }}</span>
+            <ChevronDown
+              :size="17"
+              aria-hidden="true"
+            />
+          </summary>
+          <div class="hfl-error-details__technical-content">
+            <div
+              v-if="details.traceId"
+              class="hfl-error-details__trace"
             >
-              <ListTodo
-                :size="18"
-                class="hfl-error-details__task-icon"
-                aria-hidden="true"
-              />
-              <code class="hfl-error-details__task-id">{{ task.taskUuid }}</code>
-              <span class="hfl-error-details__task-action">
-                {{ t('feedback.errorDetails.openTask') }}
-                <ExternalLink
-                  :size="14"
-                  aria-hidden="true"
-                />
-              </span>
-            </a>
-          </li>
-        </ul>
-      </section>
-
-      <details
-        v-if="details.traceId || rawText"
-        class="hfl-error-details__section hfl-error-details__technical-disclosure"
-      >
-        <summary class="hfl-error-details__technical-summary">
-          <span>{{ t('feedback.errorDetails.technical') }}</span>
-          <ChevronDown
-            :size="17"
-            aria-hidden="true"
-          />
-        </summary>
-        <div class="hfl-error-details__technical-content">
-          <div
-            v-if="details.traceId"
-            class="hfl-error-details__trace"
-          >
-            <span>{{ t('errors.generic.traceId') }}</span>
-            <code>{{ details.traceId }}</code>
+              <span>{{ t('errors.generic.traceId') }}</span>
+              <code>{{ details.traceId }}</code>
+            </div>
+            <pre
+              v-if="rawText"
+              class="hfl-error-details__raw"
+            >{{ rawText }}</pre>
           </div>
-          <pre
-            v-if="rawText"
-            class="hfl-error-details__raw"
-          >{{ rawText }}</pre>
-        </div>
-      </details>
-    </template>
+        </details>
+      </template>
+    </div>
 
     <template
       v-if="details"
       #footer
     >
-      <div class="hfl-error-details__footer">
+      <div class="el-drawer__footer-main flex-wrap">
         <button
           type="button"
           class="hfl-error-details__copy"
@@ -357,86 +354,50 @@ function entityIcon(type: ErrorEntity['type']) {
           />
           {{ copied ? t('feedback.toast.copied') : t('feedback.errorDetails.copy') }}
         </button>
-        <a
-          v-if="taskLinks.length === 1"
-          class="hfl-error-details__task-link"
-          :href="taskHref(taskLinks[0].taskUuid)"
-          target="_blank"
-          rel="noopener noreferrer"
-          :aria-label="t('feedback.errorDetails.openTaskNewTab', { taskUuid: taskLinks[0].taskUuid })"
-        >
-          {{ t('feedback.errorDetails.openTask') }}
-          <ExternalLink
-            :size="14"
-            aria-hidden="true"
-          />
-        </a>
-        <ElButton
-          type="primary"
-          @click="closeErrorDetails"
-        >
-          {{ t('common.confirm') }}
-        </ElButton>
+        <div class="el-drawer__footer-actions ml-auto flex-wrap justify-end">
+          <a
+            v-if="taskLinks.length === 1"
+            class="hfl-error-details__task-link"
+            :href="taskHref(taskLinks[0].taskUuid)"
+            target="_blank"
+            rel="noopener noreferrer"
+            :aria-label="t('feedback.errorDetails.openTaskNewTab', { taskUuid: taskLinks[0].taskUuid })"
+          >
+            {{ t('feedback.errorDetails.openTask') }}
+            <ExternalLink
+              :size="14"
+              aria-hidden="true"
+            />
+          </a>
+          <ElButton
+            type="primary"
+            @click="closeErrorDetails"
+          >
+            {{ t('common.confirm') }}
+          </ElButton>
+        </div>
       </div>
     </template>
-  </ElDialog>
+  </ElDrawer>
 </template>
 
 <style>
-.hfl-error-details-overlay .el-overlay-dialog {
-  display: flex;
-  box-sizing: border-box;
-  align-items: center;
-  justify-content: center;
-  padding: calc(16px + var(--app-safe-top)) calc(16px + var(--app-safe-right)) calc(16px + var(--app-safe-bottom)) calc(16px + var(--app-safe-left));
-  overflow: hidden;
-}
-.hfl-error-details.el-dialog {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 32px);
-  padding: 0;
-  margin: 0;
-  overflow: hidden;
-  border-radius: 18px;
-}
-.hfl-error-details .el-dialog__header {
-  flex: 0 0 auto;
-  padding: 0;
-  margin: 0;
-}
-.hfl-error-details .el-dialog__body {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: min(62vh, 640px);
-  padding: 2px 26px 10px;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-.hfl-error-details .el-dialog__footer {
-  flex: 0 0 auto;
-  display: block;
-  width: 100%;
-  padding: 0;
-  margin: 0;
-}
 .hfl-error-details__header {
-  position: relative;
   display: flex;
-  gap: 15px;
-  padding: 24px 54px 18px 26px;
+  min-width: 0;
+  gap: 12px;
+  overflow-wrap: anywhere;
 }
 .hfl-error-details__icon {
   display: inline-flex;
   flex: 0 0 auto;
-  width: 46px;
-  height: 46px;
+  width: 36px;
+  height: 36px;
   align-items: center;
   justify-content: center;
   color: var(--color-error);
   background: var(--color-error-light);
-  border-radius: 13px;
+  border-radius: 10px;
 }
 .hfl-error-details__icon--warning {
   color: var(--color-warning-text);
@@ -451,13 +412,6 @@ function entityIcon(type: ErrorEntity['type']) {
   flex-wrap: wrap;
   gap: 9px;
   align-items: center;
-}
-.hfl-error-details__title-line h2 {
-  margin: 0;
-  color: var(--color-text-title);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 25px;
 }
 .hfl-error-details__heading p {
   margin: 4px 0 0;
@@ -482,26 +436,6 @@ function entityIcon(type: ErrorEntity['type']) {
   color: var(--color-warning-text);
   background: color-mix(in srgb, var(--color-warning-light) 45%, transparent);
   border-color: color-mix(in srgb, var(--color-warning-text) 20%, transparent);
-}
-.hfl-error-details__close {
-  position: absolute;
-  top: 18px;
-  right: 18px;
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-tertiary);
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.hfl-error-details__close:hover {
-  color: var(--color-text-primary);
-  background: var(--color-grey-2);
 }
 .hfl-error-details__section + .hfl-error-details__section {
   margin-top: 20px;
@@ -663,18 +597,6 @@ function entityIcon(type: ErrorEntity['type']) {
   outline-offset: 3px;
 }
 
-.hfl-error-details__footer {
-  display: flex;
-  width: 100%;
-  box-sizing: border-box;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 14px 26px;
-  background: var(--color-grey-1);
-  border-top: 1px solid var(--color-border-light);
-}
 .hfl-error-details__copy {
   display: inline-flex;
   gap: 7px;
@@ -821,62 +743,8 @@ function entityIcon(type: ErrorEntity['type']) {
     min-height: 44px;
   }
 
-  .hfl-error-details-overlay .el-overlay-dialog {
-    display: flex;
-    align-items: flex-end;
-    padding-top: calc(var(--app-safe-top) + 8px);
-  }
-
-  .hfl-error-details.el-dialog {
-    display: flex;
-    width: 100% !important;
-    max-width: none;
-    max-height: calc(var(--app-viewport-height) - var(--app-safe-top) - var(--app-safe-bottom) - 8px);
-    margin: 0;
-    flex-direction: column;
-    border-radius: 18px 18px 0 0;
-  }
-
-  .hfl-error-details .el-dialog__header {
-    flex: 0 0 auto;
-  }
-
-  .hfl-error-details .el-dialog__body {
-    min-height: 0;
-    max-height: none;
-    padding: 2px 16px 12px;
-    flex: 1 1 auto;
-  }
-
-  .hfl-error-details .el-dialog__footer {
-    flex: 0 0 auto;
-  }
-
-  .hfl-error-details__header {
-    gap: 12px;
-    padding: 16px 52px 14px 16px;
-  }
-
-  .hfl-error-details__icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-  }
-
-  .hfl-error-details__title-line h2 {
-    font-size: 16px;
-    line-height: 22px;
-  }
-
   .hfl-error-details__heading p {
     margin-top: 2px;
-  }
-
-  .hfl-error-details__close {
-    top: 8px;
-    right: 8px;
-    width: 44px;
-    height: 44px;
   }
 
   .hfl-error-details__section + .hfl-error-details__section {
@@ -887,12 +755,7 @@ function entityIcon(type: ErrorEntity['type']) {
     display: block;
   }
 
-  .hfl-error-details__footer {
-    padding: 10px 16px calc(10px + var(--app-safe-bottom));
-  }
-
-  .hfl-error-details__copy,
-  .hfl-error-details__footer .el-button {
+  .hfl-error-details__copy {
     min-height: 44px;
   }
 }

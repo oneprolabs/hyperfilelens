@@ -4,6 +4,7 @@ import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { en } from '../../locales/en'
+import { computeResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
 import { closeErrorDetails, errorDetailsState, openErrorDetails } from '../../lib/errors/details'
 import type { ErrorDetailsPayload } from '../../lib/errors/details'
 import HflErrorDetailsDialog from './HflErrorDetailsDialog.vue'
@@ -30,12 +31,30 @@ function mountDialog() {
     global: {
       plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })],
       stubs: {
-        ElDialog: { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+        ElDrawer: { template: '<div><slot name="header" title-id="error-details-title" /><slot /><slot name="footer" /></div>' },
         ElButton: { template: '<button><slot /></button>' },
       },
     },
   })
 }
+
+it('uses the primary detail drawer width on desktop and after resizing to mobile', async () => {
+  const viewport = vi.spyOn(document.documentElement, 'clientWidth', 'get')
+  viewport.mockReturnValue(1440)
+  const wrapper = mountDialog()
+  try {
+    const drawer = wrapper.get('.hfl-detail-drawer')
+    expect(drawer.attributes('size')).toBe(`${computeResponsiveDrawerWidth(1, 1440)}px`)
+
+    viewport.mockReturnValue(390)
+    window.dispatchEvent(new Event('resize'))
+    await nextTick()
+    expect(drawer.attributes('size')).toBe(`${computeResponsiveDrawerWidth(1, 390)}px`)
+  } finally {
+    wrapper.unmount()
+    viewport.mockRestore()
+  }
+})
 
 describe('notification rejection presentation', () => {
   afterEach(() => closeErrorDetails())
