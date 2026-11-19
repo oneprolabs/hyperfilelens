@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { backupFailureMetadata } from '../../../lib/backupFailureDisplay'
+import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
 import { computed, nextTick, onUnmounted, reactive, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -1540,7 +1541,8 @@ function eventErrorText(event: TaskEventRow) {
   const code = taskEventMetadataText(event, ['error_code'])
   // The shared error card renders deregistration reasons and keeps raw evidence.
   if (activeTask.value?.task_type === 'source_unregister' || code.startsWith('SOURCE_UNREGISTER_')) return ''
-  return code ? `[${code}] ${message}` : message
+  const display = nasRepositoryFailureMessage(code, message, t)
+  return code && display === message ? `[${code}] ${display}` : display
 }
 
 function eventObjectText(event: TaskEventRow) {

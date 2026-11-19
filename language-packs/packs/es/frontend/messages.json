@@ -7205,6 +7205,7 @@
         "lateBackupResultIgnored": "Resultado de copia de seguridad tardío ignorado porque una tarea de copia de seguridad más nueva es activa",
         "lateBackupResultAdopted": "Resultado de copia de seguridad tardío adoptado",
         "directoryBackupFailed": "La copia de seguridad del directorio falló",
+        "directoryPolicyPreparationFailed": "No se pudo preparar la política de copia de seguridad para este directorio",
         "directoryBackupCancelled": "Copia de seguridad del directorio cancelado",
         "resumingDirectoryBackup": "Resumir la tarea de copia de seguridad del directorio Agent",
         "proxyRepositoryServerStarted": "El servidor de repositorio Proxy comenzó a funcionar",
@@ -7391,7 +7392,9 @@
           "nas_umount_failed": "La limpieza del montaje NAS falló.",
           "empty_ids": "No se proporcionaron identificadores de origen.",
           "invalid_id": "El identificador de origen no es válido.",
-          "cleanup_failed": "La operación de limpieza falló."
+          "cleanup_failed": "La operación de limpieza falló.",
+          "repositoryBucketMissing": "El bucket de S3 configurado no existe. Comprueba el endpoint del repositorio, el nombre del bucket y las credenciales y vuelve a intentar la copia de seguridad.",
+          "repositoryOwnershipMarkerReadFailed": "No se pudo leer el marcador de propiedad del repositorio. Comprueba que la ubicación de almacenamiento configurada exista y sea accesible y vuelve a intentar la copia de seguridad."
         },
         "suggestion": {
           "restore_backup_source_path": "Si todavía necesita este directorio, compruebe su ruta real en el equipo de origen. Restaure el directorio o corrija su ruta en la configuración de la copia.",

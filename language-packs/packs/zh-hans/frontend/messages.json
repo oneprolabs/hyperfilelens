@@ -7205,6 +7205,7 @@
         "lateBackupResultIgnored": "因已有更新的备份任务，已忽略延迟返回的备份结果",
         "lateBackupResultAdopted": "已采用延迟返回的备份结果",
         "directoryBackupFailed": "目录备份失败",
+        "directoryPolicyPreparationFailed": "目录备份策略准备失败",
         "directoryBackupCancelled": "目录备份已取消",
         "resumingDirectoryBackup": "正在恢复 Agent 目录备份任务",
         "proxyRepositoryServerStarted": "代理节点仓库服务已启动",
@@ -7391,7 +7392,9 @@
           "nas_umount_failed": "NAS 挂载清理失败。",
           "empty_ids": "未提供源标识。",
           "invalid_id": "源标识无效。",
-          "cleanup_failed": "清理操作失败。"
+          "cleanup_failed": "清理操作失败。",
+          "repositoryBucketMissing": "配置的 S3 存储桶不存在。请检查仓库端点、存储桶名称和凭据，然后重试备份。",
+          "repositoryOwnershipMarkerReadFailed": "无法读取仓库所有权标记。请检查配置的存储位置是否存在且可访问，然后重试备份。"
         },
         "suggestion": {
           "restore_backup_source_path": "如果仍需备份该目录，请在源主机上确认实际路径，恢复目录或将备份配置修改为正确路径。",

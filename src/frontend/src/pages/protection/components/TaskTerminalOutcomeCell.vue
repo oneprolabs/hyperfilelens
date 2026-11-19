@@ -4,6 +4,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { formatAppDateTime } from '../../../lib/dateTime'
+import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
 import { normalizeTaskStatus, taskStatusTone } from '../../../lib/taskStatusDisplay'
 
 type TaskOutcomeSource = {
@@ -83,6 +84,7 @@ const outcome = computed(() => {
   const missingSource = (source.error_details || diagnosticFallback?.error_details)?.error_code === 'SOURCE_PATH_NOT_FOUND'
   const code = missingSource ? 'SOURCE_PATH_NOT_FOUND' : String(source.error_code || diagnosticFallback?.error_code || '').trim()
   const reason = String(source.error_message || diagnosticFallback?.error_message || '').trim()
+  const localizedReason = nasRepositoryFailureMessage(code, reason, t)
   const details = structuredFailureDetails(source) || structuredFailureDetails(diagnosticFallback)
   const detailCount = Number(details?.total_count ?? details?.count)
   const detailCategory = String(details?.category || '').trim()
@@ -101,10 +103,12 @@ const outcome = computed(() => {
     : friendly?.reason
   const displayReason = missingSource
     ? t('ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND')
+    : localizedReason !== reason ? localizedReason
     : friendlyReason || structuredReason || (/agent|source_ref_id|^\s*(?:\[|\{)/i.test(reason) ? 'The task failed. Open task details for troubleshooting.' : reason)
+  const displayCode = friendly || localizedReason !== reason ? '' : code
   const showDiagnostic = diagnosticStatuses.has(status) && Boolean(code || displayReason)
   const diagnostic = showDiagnostic
-    ? [code && !friendly ? `[${code}]` : '', displayReason].filter(Boolean).join(' ')
+    ? [displayCode ? `[${displayCode}]` : '', displayReason].filter(Boolean).join(' ')
     : ''
   const rawTimestamp = source.finished_at
     || source.started_at
@@ -120,7 +124,7 @@ const outcome = computed(() => {
     tone: taskStatusTone(status),
     label: t(`ops.task.status.${status}`),
     timestamp,
-    code: friendly ? '' : code,
+    code: displayCode,
     reason: displayReason,
     diagnostic,
     showDiagnostic,

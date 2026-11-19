@@ -7,6 +7,7 @@ import { createI18n } from 'vue-i18n'
 import { describe, expect, it } from 'vitest'
 
 import TaskTerminalOutcomeCell from './TaskTerminalOutcomeCell.vue'
+import zh from '../../../../../../language-packs/packs/zh-hans/frontend/messages.json'
 
 const i18n = createI18n({
   legacy: false,
@@ -44,6 +45,19 @@ function mountCell(task: Record<string, unknown>, fallback?: Record<string, unkn
 }
 
 describe('TaskTerminalOutcomeCell', () => {
+  it('localizes the missing bucket in the backup wizard tooltip', () => {
+    const wrapper = mount(TaskTerminalOutcomeCell, {
+      props: { task: {
+        status: 'failed', error_code: 'POLICY_APPLY_FAILED',
+        error_message: 'unable to read repository ownership marker: api error NoSuchBucket',
+      } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'zh', messages: { zh } })] },
+    })
+    const diagnostic = wrapper.get('.task-terminal-outcome__diagnostic')
+    expect(diagnostic.text()).toBe(zh.ops.task.failureDetails.reason.repositoryBucketMissing)
+    expect(diagnostic.attributes('data-table-overflow-title')).toBe(diagnostic.text())
+    wrapper.unmount()
+  })
   it.each(['finished_at', 'started_at', 'created_at'])('renders UTC %s in browser time', (field) => {
     // In Asia/Shanghai this is the issue's 07:51Z -> 15:51 case.
     const timestamp = new Date(2026, 9, 16, 15, 51, 0).toISOString()

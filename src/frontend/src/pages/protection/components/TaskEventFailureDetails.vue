@@ -12,6 +12,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { AlertTriangle, ChevronRight, Copy, Lightbulb, LockKeyhole } from 'lucide-vue-next'
 import { copyTextToClipboard } from '../../../lib/clipboard'
+import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
 import { unregisterEventFailure, type UnregisterTaskReason } from '../../../lib/unregisterTaskFailureDisplay'
 
 const props = withDefaults(defineProps<{
@@ -85,6 +86,15 @@ const terminalContext = computed(() => {
     ? value as Record<string, unknown>
     : {} as Record<string, unknown>
 })
+const rawTerminalMessage = computed(() => String(terminalContext.value.message || '').trim())
+const localizedRepositoryFailure = computed(() => {
+  const code = String(terminalContext.value.error_code || errorCode.value)
+  for (const raw of [originalError.value, rawTerminalMessage.value]) {
+    const summary = nasRepositoryFailureMessage(code, raw, t)
+    if (summary !== raw) return { summary, raw }
+  }
+  return null
+})
 const exactSourceBusy = computed(() =>
   props.showTerminalFailure
   && terminalContext.value.side === 'source'
@@ -99,11 +109,8 @@ const terminalFailure = computed(() => {
     return t('ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND')
   }
   if (exactSourceBusy.value) return t('ops.task.failureDetails.sourceBusyTitle')
-  const terminal = metadataRecord.value.terminal_failure
-  if (terminal && typeof terminal === 'object' && !Array.isArray(terminal)) {
-    const message = String((terminal as Record<string, unknown>).message || '').trim()
-    if (message) return message
-  }
+  if (localizedRepositoryFailure.value) return localizedRepositoryFailure.value.summary
+  if (rawTerminalMessage.value) return rawTerminalMessage.value
   if (repositoryTimeout.value) return t('ops.task.failureDetails.reason.REPOSITORY_OPERATION_TIMEOUT')
   if (repositoryAgentUnreachable.value) {
     return props.repositoryConnectionReason || t('ops.task.failureDetails.reason.repository_host_unreachable')
@@ -161,6 +168,7 @@ const skippedReportedCount = computed(() => Math.min(MAX_SKIPPED_ITEMS, structur
 const hasSkippedDetails = computed(() => props.showSkippedDetails && skippedCount.value > 0)
 const technicalDetail = computed(() => {
   const detail = String(props.technicalDetail || '').trim()
+    || errorDiagnostic.value || localizedRepositoryFailure.value?.raw || ''
   return detail === terminalFailure.value || (repositoryTimeout.value && detail === originalError.value)
     ? ''
     : detail

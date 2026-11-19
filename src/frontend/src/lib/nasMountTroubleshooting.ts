@@ -34,10 +34,21 @@ export function nasRepositoryFailureMessage(
   fallback: string | null | undefined,
   t: (key: string) => string,
 ): string {
-  if (String(errorCode || '').trim() === NAS_REPOSITORY_WRITE_DENIED) {
+  const code = String(errorCode || '').trim()
+  const message = String(fallback || '').trim()
+  if (code === NAS_REPOSITORY_WRITE_DENIED) {
     return t('repositoriesPage.nasRepositoryWriteDenied')
   }
-  return String(fallback || '').trim()
+  if (
+    code === 'POLICY_APPLY_FAILED'
+    && /\bNoSuchBucket\b|specified bucket does not exist/i.test(message)
+  ) {
+    return t('ops.task.failureDetails.reason.repositoryBucketMissing')
+  }
+  if (/unable to read repository ownership marker/i.test(message)) {
+    return t('ops.task.failureDetails.reason.repositoryOwnershipMarkerReadFailed')
+  }
+  return message
 }
 
 export function buildNasRepairMountOptionsPath(repositoryId: number): string {

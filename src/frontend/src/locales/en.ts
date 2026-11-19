@@ -4905,6 +4905,7 @@ export const en = {
         lateBackupResultIgnored: 'Late backup result ignored because a newer backup task is active',
         lateBackupResultAdopted: 'Late backup result adopted',
         directoryBackupFailed: 'Directory backup failed',
+        directoryPolicyPreparationFailed: 'Could not prepare the backup policy for this directory',
         directoryBackupCancelled: 'Directory backup cancelled',
         resumingDirectoryBackup: 'Resuming Agent directory backup task',
         proxyRepositoryServerStarted: 'Proxy repository server started',
@@ -5092,6 +5093,8 @@ export const en = {
           empty_ids: 'No source identifiers were provided.',
           invalid_id: 'The source identifier is invalid.',
           cleanup_failed: 'The cleanup operation failed.',
+          repositoryBucketMissing: 'The configured S3 bucket does not exist. Check the repository endpoint, bucket name, and credentials, then retry the backup.',
+          repositoryOwnershipMarkerReadFailed: 'The repository ownership marker could not be read. Check that the configured storage location exists and is accessible, then retry the backup.',
         },
         suggestion: {
           restore_backup_source_path: 'If this directory is still needed, check its actual path on the source host. Restore the directory or correct its path in the backup configuration.',
