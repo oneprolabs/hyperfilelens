@@ -12,23 +12,13 @@ function rule(selector: string) {
 }
 
 describe('error details scroll ownership', () => {
-  it('constrains the dialog rather than allowing the overlay to scroll', () => {
-    expect(rule('.hfl-error-details-overlay .el-overlay-dialog')).toContain('overflow: hidden;')
-    const dialog = rule('.hfl-error-details.el-dialog')
-    expect(dialog).toContain('display: flex;')
-    expect(dialog).toContain('flex-direction: column;')
-    expect(dialog).toContain('max-height: calc(var(--app-viewport-height)')
-    expect(dialog).toContain('margin: 0;')
-  })
-
-  it('keeps header and footer fixed while the body shrinks and scrolls', () => {
-    expect(rule('.hfl-error-details .el-dialog__header')).toContain('flex: 0 0 auto;')
-    expect(rule('.hfl-error-details .el-dialog__footer')).toContain('flex: 0 0 auto;')
-    const body = rule('.hfl-error-details .el-dialog__body')
-    expect(body).toContain('min-height: 0;')
-    expect(body).toContain('flex: 1 1 auto;')
-    expect(body).toContain('overflow-y: auto;')
-    expect(component).toContain('body-class="scrollbar"')
+  it('uses the shared non-tabbed detail body and keeps actions in the drawer footer', () => {
+    expect(component).toContain('class="hfl-detail-drawer hfl-error-details"')
+    expect(component).toContain('class="hfl-detail-drawer__body scrollbar"')
+    expect(component).toContain('#footer')
+    expect(component).toContain('class="el-drawer__footer-main ')
+    expect(component).toContain('class="el-drawer__footer-actions ')
+    expect(styles).not.toMatch(/\.hfl-error-details\s+\.el-drawer__(header|body|footer)\b/)
   })
 
   it('removes nested entity scrolling on narrow or short viewports', () => {

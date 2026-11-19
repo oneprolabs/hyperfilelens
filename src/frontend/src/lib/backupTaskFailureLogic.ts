@@ -255,7 +255,7 @@ function severityFromTask(task: TaskRow): 'error' | 'warning' {
 
 /**
  * Build a unified ErrorDetailsPayload from a TaskRow and optional event
- * metadata, suitable for opening in HflErrorDetailsDialog.
+ * metadata, suitable for opening in the shared error details drawer.
  */
 export function buildTaskFailureErrorDetails(params: {
   task: TaskRow
