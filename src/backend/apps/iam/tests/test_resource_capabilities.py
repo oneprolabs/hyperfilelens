@@ -3,6 +3,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from apps.alert.models import AlertPolicy
 from apps.iam.models import Membership, Organization
 from apps.node.models import Node
 from apps.storage.repositories.models import Repository, RepositoryLocationClaim
@@ -43,6 +44,26 @@ class CommunityResourceCapabilitiesTests(APITestCase):
             "resources": [{"resource_type": "node", "resource_id": str(2**63)}],
         }, format="json", **self.headers)
         self.assertEqual(response.status_code, 400)
+
+    def test_community_capabilities_accept_org_alert_rule_uuids(self):
+        local = AlertPolicy.objects.create(organization=self.org, name="Local Rule")
+        other = Organization.objects.create(key="other-alert-rules", name="Other")
+        foreign = AlertPolicy.objects.create(organization=other, name="Foreign Rule")
+
+        response = self.client.post("/api/v1/iam/resource-capabilities/", {
+            "resources": [
+                {"resource_type": "alert_policy", "resource_id": str(rule.pk)}
+                for rule in (local, foreign)
+            ],
+        }, format="json", **self.headers)
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.data["create"]["alert_policy"])
+        local_capability, foreign_capability = response.data["resources"]
+        self.assertTrue(local_capability["view"])
+        self.assertTrue(local_capability["manage"])
+        self.assertFalse(foreign_capability["view"])
+        self.assertFalse(foreign_capability["manage"])
 
     def test_only_local_residual_tombstones_keep_repository_capabilities(self):
         foreign_org = Organization.objects.create(key="foreign-residue", name="Foreign")

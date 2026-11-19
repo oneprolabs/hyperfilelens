@@ -159,7 +159,7 @@ class ResourceCapabilitiesView(APIView):
         canonical = {
             key: (
                 key[0],
-                resolve_resource_reference(
+                key[1] if provider is None else resolve_resource_reference(
                     organization_id=org.pk,
                     resource_type=key[0],
                     source_id=key[1],
