@@ -838,6 +838,16 @@ def _reserve_capacity_and_start_restore(*, ks: LensKnowledgeSource, token: str) 
             enforce_license_quota(
                 org, "max_public_gateway_capacity_bytes", additional=delta
             )
+            if provider is not None:
+                from apps.subscription.services.interface import enforce_user_quota
+
+                owners = list(LensSessionLink.objects.filter(
+                    organization=org, knowledge_source=locked,
+                ).values_list("hfl_user_id", flat=True).distinct()[:2])
+                enforce_user_quota(
+                    org, owners[0] if len(owners) == 1 else None,
+                    "max_public_gateway_capacity_bytes", additional=delta,
+                )
     binding.capacity_accounted_bytes = projected
     binding.capacity_accounting_status = (
         LensWorkspaceBinding.CapacityAccountingStatus.UNKNOWN

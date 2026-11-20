@@ -2243,6 +2243,12 @@ def _reserve_chat_capacity(
                 "max_public_gateway_capacity_bytes",
                 additional=total_bytes,
             )
+            from apps.subscription.services.interface import enforce_user_quota
+
+            enforce_user_quota(
+                locked.organization, locked.hfl_user_id,
+                "max_public_gateway_capacity_bytes", additional=total_bytes,
+            )
 
     now = timezone.now()
     locked.provision_phase = LensSessionLink.ProvisionPhase.RESERVING_CAPACITY
@@ -4402,6 +4408,12 @@ def _assert_retry_public_gateway_capacity(*, session: LensSessionLink) -> None:
         session.organization,
         "max_public_gateway_capacity_bytes",
         additional=requested_bytes,
+    )
+    from apps.subscription.services.interface import enforce_user_quota
+
+    enforce_user_quota(
+        session.organization, session.hfl_user_id,
+        "max_public_gateway_capacity_bytes", additional=requested_bytes,
     )
 
 

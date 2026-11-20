@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   UserRound,
   Building2,
+  Info,
 } from 'lucide-vue-next'
 import { api } from '../../lib/api'
 import { unwrapApiPayload } from '../../lib/parse'
@@ -79,6 +80,7 @@ const registrationOptions = ref<{
   personal: { enabled: boolean; available: boolean; reason?: string | null }
   enterprise: { enabled: boolean }
 } | null>(null)
+const registrationState = ref<'loading' | 'ready' | 'unavailable' | 'closed'>('loading')
 const enterpriseRegistrationEnabled = computed(
   () => registrationOptions.value?.enterprise.enabled === true,
 )
@@ -493,43 +495,55 @@ function goLogin() {
   router.push(email ? { path: '/login', query: { email } } : '/login')
 }
 
-onMounted(async () => {
-  const profile = await fetchDeployProfile()
-  if (!profile?.email_signup_enabled) {
-    await router.replace({ name: LOGIN_ROUTE_NAME })
-    return
-  }
-  if (profile.email_signup_enabled) {
-    try {
-      const options = unwrapApiPayload<{
-        personal: { enabled: boolean; available: boolean; reason?: string | null }
-        enterprise: { enabled: boolean }
-      }>(await api<unknown>('/api/v1/meta/registration-options'))
-      registrationOptions.value = options
-      if (options.personal.enabled && options.personal.available) {
-        registrationMode.value = 'personal'
-      } else if (options.enterprise.enabled) {
-        registrationMode.value = 'enterprise'
-      } else {
-        await router.replace({ name: LOGIN_ROUTE_NAME })
-        return
-      }
-    } catch {
-      registrationOptions.value = {
-        personal: { enabled: false, available: false, reason: 'unavailable' },
-        enterprise: { enabled: false },
-      }
+let registrationDisposed = false
+
+async function loadRegistration() {
+  registrationState.value = 'loading'
+  try {
+    const profile = await fetchDeployProfile(true)
+    if (registrationDisposed) return
+    if (!profile) {
+      registrationState.value = 'unavailable'
+      return
+    }
+    if (!profile.email_signup_enabled) {
+      registrationState.value = 'closed'
       await router.replace({ name: LOGIN_ROUTE_NAME })
       return
     }
+    const options = unwrapApiPayload<{
+      personal: { enabled: boolean; available: boolean; reason?: string | null }
+      enterprise: { enabled: boolean }
+    }>(await api<unknown>('/api/v1/meta/registration-options'))
+    if (registrationDisposed) return
+    registrationOptions.value = options
+    if (options.personal.enabled && options.personal.available) {
+      registrationMode.value = 'personal'
+    } else if (options.enterprise.enabled) {
+      registrationMode.value = 'enterprise'
+    } else if (options.personal.enabled) {
+      registrationState.value = 'unavailable'
+      return
+    } else {
+      registrationState.value = 'closed'
+      await router.replace({ name: LOGIN_ROUTE_NAME })
+      return
+    }
+  } catch {
+    registrationState.value = 'unavailable'
+    return
   }
+  registrationState.value = 'ready'
   trackAppEvent('sign_up_started', { method: 'email' })
   turnstileToken.value = ''
   restoreCooldown()
   await loadTurnstileConfig()
-})
+}
+
+onMounted(loadRegistration)
 
 onUnmounted(() => {
+  registrationDisposed = true
   stopCooldownTimer()
 })
 </script>
@@ -553,7 +567,47 @@ onUnmounted(() => {
         <LanguageSwitcher variant="auth" />
       </div>
 
-      <div class="register-box-content">
+      <p
+        v-if="registrationState === 'loading'"
+        class="register-box-content registration-status"
+        role="status"
+      >
+        {{ t('common.loading') }}
+      </p>
+      <section
+        v-else-if="registrationState === 'unavailable'"
+        class="register-box-content registration-unavailable"
+        role="status"
+        aria-labelledby="registration-unavailable-title"
+      >
+        <Info
+          :size="28"
+          class="registration-unavailable__icon"
+          aria-hidden="true"
+        />
+        <h2 id="registration-unavailable-title">
+          {{ t('register.unavailableTitle') }}
+        </h2>
+        <p>{{ t('register.unavailableDescription') }}</p>
+        <ElButton
+          type="primary"
+          class="submit-btn"
+          @click="loadRegistration"
+        >
+          {{ t('common.retry') }}
+        </ElButton>
+        <a
+          href="/login"
+          class="footer-link"
+          @click.prevent="goLogin"
+        >
+          {{ t('register.backToSignIn') }}
+        </a>
+      </section>
+      <div
+        v-else-if="registrationState === 'ready'"
+        class="register-box-content"
+      >
         <div
           v-if="hasRegistrationChoice"
           class="registration-picker"
@@ -965,6 +1019,42 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.registration-status,
+.registration-unavailable > p {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.registration-unavailable > p {
+  margin: 0;
+}
+
+.registration-unavailable {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding-top: 6px;
+  text-align: center;
+}
+
+.registration-unavailable__icon {
+  color: var(--color-brand-violet-soft);
+}
+
+.registration-unavailable h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.registration-unavailable > .footer-link {
+  padding: 6px;
 }
 
 .registration-picker {

@@ -11,6 +11,7 @@ import Register from './Register.vue'
 const mocks = vi.hoisted(() => ({
   api: vi.fn(),
   replace: vi.fn(),
+  push: vi.fn(),
   fetchDeployProfile: vi.fn(),
   loadTurnstileConfig: vi.fn(),
 }))
@@ -26,7 +27,7 @@ vi.mock('../../composables/useDeployProfile', () => ({
 }))
 vi.mock('vue-router', () => ({
   useRoute: () => ({ query: {} }),
-  useRouter: () => ({ replace: mocks.replace, push: vi.fn() }),
+  useRouter: () => ({ replace: mocks.replace, push: mocks.push }),
 }))
 vi.mock('../../composables/useTurnstileConfig', () => ({
   useTurnstileConfig: () => ({
@@ -176,10 +177,87 @@ describe('registration options response', () => {
     const wrapper = mountRegister()
     try {
       await flushPromises()
+      expect(mocks.replace).not.toHaveBeenCalled()
+      expect(mocks.loadTurnstileConfig).toHaveBeenCalledOnce()
       expect(wrapper.find('[role="radio"]').exists()).toBe(false)
       expect(wrapper.find('.registration-single-label').exists()).toBe(false)
       expect(wrapper.find('.registration-description').exists()).toBe(false)
       expect(wrapper.find('input[autocomplete="organization"]').exists()).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('does not show a registration form while availability is loading', async () => {
+    mocks.api.mockImplementation(() => new Promise(() => {}))
+    const wrapper = mountRegister()
+    try {
+      await flushPromises()
+      expect(wrapper.get('[role="status"]').text()).toBe(en.common.loading)
+      expect(wrapper.find('input').exists()).toBe(false)
+      expect(wrapper.find('button.submit-btn').exists()).toBe(false)
+      expect(mocks.loadTurnstileConfig).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('shows a safe unavailable state instead of bouncing Personal-only users to Sign In', async () => {
+    mocks.api.mockResolvedValue({
+      personal: { enabled: true, available: false, reason: 'managed_storage_unavailable' },
+      enterprise: { enabled: false },
+    })
+    const wrapper = mountRegister()
+    try {
+      await flushPromises()
+      expect(mocks.replace).not.toHaveBeenCalled()
+      expect(wrapper.get('[role="status"]').text()).toContain(en.register.unavailableTitle)
+      expect(wrapper.text()).toContain(en.register.unavailableDescription)
+      expect(wrapper.text()).not.toContain('managed_storage')
+      expect(wrapper.find('input').exists()).toBe(false)
+      expect(wrapper.find('.send-code-btn').exists()).toBe(false)
+      expect(wrapper.get('button.submit-btn').text()).toBe(en.common.retry)
+      expect(mocks.loadTurnstileConfig).not.toHaveBeenCalled()
+      await wrapper.get('a[href="/login"]').trigger('click')
+      expect(mocks.push).toHaveBeenCalledWith('/login')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('rechecks readiness on Retry and opens Personal registration once storage is configured', async () => {
+    mocks.api.mockResolvedValueOnce({
+      personal: { enabled: true, available: false }, enterprise: { enabled: false },
+    }).mockResolvedValueOnce({
+      personal: { enabled: true, available: true }, enterprise: { enabled: false },
+    })
+    const wrapper = mountRegister()
+    try {
+      await flushPromises()
+      await wrapper.get('button.submit-btn').trigger('click')
+      await flushPromises()
+      expect(mocks.replace).not.toHaveBeenCalled()
+      expect(mocks.api).toHaveBeenCalledTimes(2)
+      expect(mocks.loadTurnstileConfig).toHaveBeenCalledOnce()
+      expect(wrapper.find('.registration-unavailable').exists()).toBe(false)
+      expect(wrapper.get('button.submit-btn').text()).toBe(en.register.createPersonalAccount)
+      expect(wrapper.find('input[autocomplete="email"]').exists()).toBe(true)
+      expect(wrapper.find('[role="radio"]').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('handles availability API failures without exposing errors or enabling the form', async () => {
+    mocks.api.mockRejectedValue(new Error('internal storage configuration detail'))
+    const wrapper = mountRegister()
+    try {
+      await flushPromises()
+      expect(mocks.replace).not.toHaveBeenCalled()
+      expect(wrapper.get('[role="status"]').text()).toContain(en.register.unavailableTitle)
+      expect(wrapper.text()).not.toContain('internal storage')
+      expect(wrapper.find('input').exists()).toBe(false)
+      expect(mocks.loadTurnstileConfig).not.toHaveBeenCalled()
     } finally {
       wrapper.unmount()
     }

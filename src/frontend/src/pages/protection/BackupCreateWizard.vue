@@ -173,6 +173,7 @@ import type { ApiNode } from '../../types/node'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { buildNasRepairMountOptionsPath, isSmbMountNegotiationError } from '../../lib/nasMountTroubleshooting'
 import TargetRepositoryPicker from './components/TargetRepositoryPicker.vue'
+import PersonalStorageReadiness from './components/PersonalStorageReadiness.vue'
 import TargetRepositoryDetailCard from './components/TargetRepositoryDetailCard.vue'
 import CompressionLevelSelector from './components/CompressionLevelSelector.vue'
 import HostAddForm from './components/HostAddForm.vue'
@@ -343,6 +344,8 @@ const realTargets = ref<WizardTarget[]>([])
 const policiesRefreshing = ref(false)
 const filtersRefreshing = ref(false)
 const targetsRefreshing = ref(false)
+let targetsGeneration = 0
+onUnmounted(() => { targetsGeneration++ })
 
 function isBackupSelectableSourceId(id: string) {
   return /^agent:\d+$/.test(id) || /^nas:\d+$/.test(id)
@@ -366,6 +369,8 @@ function mapSelectableSource(item: BackupSelectableSource): RealSourceRow {
 }
 
 function mapRepository(repo: StorageRepository): WizardTarget {
+  const unavailable = ['create_failed', 'removing', 'remove_failed', 'removed'].includes(repo.status)
+    || Boolean(repo.config?.credential_mode && repo.status !== 'created')
   const bucket = repo.repo_type === 's3'
     ? repo.s3_bucket
     : String(repo.config?.bucket || repo.config?.s3_bucket || repo.config?.share_path || repo.config?.proxy_node_dir || '')
@@ -376,7 +381,7 @@ function mapRepository(repo: StorageRepository): WizardTarget {
     location: location || bucket || repo.bind_node_display_name || repo.repo_type,
     repoType: String(repo.repo_type || '').toUpperCase(),
     status: repo.health === 'offline' || repo.status === 'create_failed' ? 'offline' : repo.health === 'online' ? 'online' : 'warning',
-    health: repo.health,
+    health: unavailable ? 'offline' : repo.health,
     nasProtocol: (repo.nas_protocol ?? null) as WizardTarget['nasProtocol'],
     bindNodeType: (repo.bind_node_type ?? null) as WizardTarget['bindNodeType'],
     bindNodeId: (repo.bind_node_id ?? null) as WizardTarget['bindNodeId'],
@@ -3131,14 +3136,19 @@ async function refreshWizardTargets() {
     'protection.target_nas_repositories.view',
     'protection.local_disk_repositories.view',
   ].some((key) => hasTenantPermission(key))) return
+  const org = getEffectiveOrgKey()
+  const token = ++targetsGeneration
   targetsRefreshing.value = true
   try {
     const repos = await listAllStorageRepositories({ page_size: 10 })
+    if (token !== targetsGeneration || org !== getEffectiveOrgKey()) return
     realTargets.value = repos.map(mapRepository)
   } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
+    if (token === targetsGeneration && org === getEffectiveOrgKey()) {
+      ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
+    }
   } finally {
-    targetsRefreshing.value = false
+    if (token === targetsGeneration) targetsRefreshing.value = false
   }
 }
 
@@ -7937,6 +7947,12 @@ function preserveShallowestPathOrder(paths: string[]) {
                   : t('protection.backupsPage.targetValidationFailedStatus', targetValidationCounts) }}
               </span>
             </div>
+
+            <PersonalStorageReadiness
+              :has-available-target="selectableTargets.length > 0"
+              :targets-loading="targetsRefreshing"
+              @ready="refreshWizardTargets"
+            />
 
             <el-dialog
               v-model="targetAssignDialogOpen"

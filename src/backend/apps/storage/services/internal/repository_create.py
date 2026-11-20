@@ -66,6 +66,7 @@ from apps.storage.services.internal.repository_initializer import (
     initialize_s3_repository,
 )
 from apps.storage.services.internal.repository_location import (
+    mark_repository_location_initialization_failed,
     mark_repository_location_initializing,
     mark_repository_location_owned,
     mark_repository_location_ownership_verified,
@@ -1414,10 +1415,15 @@ def _build_create_failure_result_payload(
     error_code: str,
     error_message: str,
 ) -> dict[str, Any]:
-    resolution = _create_failure_resolution(error_code)
     repository = (
         Repository.objects.filter(pk=repository_task.repository_id).first()
     )
+    from apps.storage.services.internal.repository_provider import MANAGED_CREDENTIAL_MODE
+    # This flag only selects explanatory copy; it grants no storage authority.
+    managed = repository is not None and (
+        repository.config or {}
+    ).get("credential_mode") == MANAGED_CREDENTIAL_MODE
+    resolution = _create_failure_resolution(error_code, managed=managed)
     technical_detail: dict[str, Any] = {}
     if repository is not None:
         technical_detail["repo_type"] = repository.repo_type
@@ -1449,7 +1455,21 @@ def _build_create_failure_result_payload(
     }
 
 
-def _create_failure_resolution(error_code: str) -> str:
+def _create_failure_resolution(error_code: str, *, managed: bool = False) -> str:
+    if managed:
+        if error_code == REPOSITORY_ALREADY_EXISTS_CODE:
+            return (
+                "Storage ownership could not be verified. Do not delete or adopt "
+                "unknown data. Review the repository location before retrying."
+            )
+        if error_code == "STORAGE.INITIALIZATION_DISPATCH_FAILED":
+            return "Check the background task service, then retry initialization in Managed Storage."
+        return (
+            "Check the associated Object Storage connection, cloud permissions and "
+            "bucket access, then retry initialization in Managed Storage. Changing "
+            "the default connection does not move this repository. Storage locations "
+            "and delegation targets on connections in use cannot be changed."
+        )
     if error_code == CAPABILITIES_NOT_READY:
         return (
             "Check Proxy connectivity and control-plane capability synchronization, "
@@ -1489,6 +1509,27 @@ def _create_failure_resolution(error_code: str) -> str:
 def _fail_create_already_exists(
     repository_task: RepositoryTask, *, message: str
 ) -> None:
+    from apps.storage.services.internal.repository_provider import managed_repository_provider
+    repository = repository_task.repository
+    if managed_repository_provider(repository) is not None:
+        # Unknown data must neither be adopted nor trigger the ordinary
+        # failed-row deletion path (the managed provenance is PROTECT'ed).
+        with transaction.atomic():
+            repository = Repository.objects.select_for_update().get(pk=repository.pk)
+            _fail_create_keep_row(
+                repository_task, error_code=REPOSITORY_ALREADY_EXISTS_CODE,
+                message=message, physical_initialize_done=False,
+                result_payload=_build_create_failure_result_payload(
+                    repository_task=repository_task, error_code=REPOSITORY_ALREADY_EXISTS_CODE,
+                    error_message=message,
+                ),
+            )
+            repository.refresh_from_db()
+            if repository.status == Repository.Status.CREATE_FAILED:
+                mark_repository_location_initialization_failed(
+                    repository, **_repository_claim_locator(repository),
+                )
+        return
     task = repository_task.task
     with transaction.atomic():
         repository = Repository.objects.select_for_update().get(
@@ -1776,9 +1817,32 @@ def _set_create_step(task: Task, step_name: str, status: str, progress: int) -> 
 def _dispatch_create_task(repository_task_id: int) -> None:
     from apps.storage.tasks import execute_repository_operation
 
-    execute_repository_operation.apply_async(
-        kwargs={"repository_task_id": repository_task_id}
-    )
+    try:
+        execute_repository_operation.apply_async(
+            kwargs={"repository_task_id": repository_task_id}
+        )
+    except Exception:
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
+        item = RepositoryTask.objects.select_related("repository", "task").get(pk=repository_task_id)
+        if managed_repository_provider(item.repository) is None:
+            raise
+        # The registration transaction has already committed. Preserve the
+        # account and expose a retryable failure instead of returning a false
+        # registration error after successfully creating the user.
+        logger.warning("Managed initialization dispatch failed repository_task_id=%s", repository_task_id)
+        with transaction.atomic():
+            Repository.objects.select_for_update().get(pk=item.repository_id)
+            task = Task.objects.select_for_update().get(pk=item.task_id)
+            if task.status != Task.Status.PENDING:
+                return  # A lost broker ACK cannot undo execution already accepted.
+            _fail_create_keep_row(
+                item, error_code="STORAGE.INITIALIZATION_DISPATCH_FAILED",
+                message="Repository initialization could not be scheduled. Contact your organization administrator.",
+                result_payload=_build_create_failure_result_payload(
+                    repository_task=item, error_code="STORAGE.INITIALIZATION_DISPATCH_FAILED",
+                    error_message="Repository initialization could not be scheduled.",
+                ),
+            )
 
 
 def _exception_message(exc: Exception) -> str:

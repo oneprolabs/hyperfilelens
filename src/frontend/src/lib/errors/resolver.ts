@@ -30,6 +30,15 @@ function resolveSubscriptionQuotaMessage(
   const meter = resolveQuotaMeterLabel(meta?.quota_type, t)
   const hasMeter = Boolean(quotaTypeMeterLabel(meta?.quota_type))
 
+  if (scope === 'organization_user') {
+    return t
+      ? interpolate(t('personalUserLimits.exceeded', { meter }), { meter })
+      : interpolate(
+          'Your {meter} limit has been reached. Open Resource Usage for details or contact your administrator.',
+          { meter },
+        )
+  }
+
   if (scope === 'gateway') {
     return t
       ? t('errors.codes.subscriptionQuotaExceededGateway')

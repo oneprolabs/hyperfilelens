@@ -138,6 +138,10 @@ def register_usage_run(
         row = LensUsageLedger.objects.select_for_update().get(pk=row.pk)
         if row.organization_id != link.organization_id:
             raise ValueError("SourceLens run UUID belongs to another organization")
+        if row.billing_user_id not in (None, link.hfl_user_id) or (
+            row.hfl_user_id is not None and row.hfl_user_id != link.hfl_user_id
+        ):
+            raise ValueError("SourceLens run UUID belongs to another user")
         row.hfl_user = link.hfl_user
         row.sl_user_id = sl_user.sl_user_id
         if not row.question and question.strip():

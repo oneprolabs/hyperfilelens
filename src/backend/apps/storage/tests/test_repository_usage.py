@@ -38,6 +38,25 @@ from apps.storage.services.internal.repository_usage import (
 
 
 class RepositoryUsageTests(TestCase):
+    def test_host_only_usage_does_not_select_retired_ordinary_repositories(self):
+        from apps.storage.services.internal.repository_usage import (
+            _repository_usage_queryset, repository_usage_scope,
+        )
+
+        org = Organization.objects.create(key="host-only-usage", name="Host usage")
+        ready = Repository.objects.create(
+            organization_id=org.pk, name="Ready", repo_type="s3", status="created",
+        )
+        Repository.objects.create(
+            organization_id=org.pk, name="Retired", repo_type="s3", status="removed",
+            cleanup_result="force_skipped",
+        )
+        with mock.patch("common.extension_spi.get_repository_provider", return_value=None):
+            periodic = repository_usage_scope(Repository.objects.all(), periodic=True)
+            self.assertEqual(list(periodic.values_list("pk", flat=True)), [ready.pk])
+            manual = _repository_usage_queryset(force=True)
+            self.assertEqual(list(manual.values_list("pk", flat=True)), [ready.pk])
+
     def test_explicit_empty_selection_does_not_expand_to_all(self):
         org = Organization.objects.create(key="empty-usage-scope", name="Empty usage scope")
         Repository.objects.create(organization_id=org.pk, name="must-not-refresh", repo_type="s3")

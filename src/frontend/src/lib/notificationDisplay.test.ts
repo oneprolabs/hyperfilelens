@@ -25,6 +25,26 @@ const notification = (title: string, summary: string): UserNotification => ({
 })
 
 describe('notification display', () => {
+  for (const locale of ['en', 'zh-hans', 'es']) {
+    it(`formats private managed storage events in ${locale}`, () => {
+      i18n.global.locale.value = locale
+      const owner = {
+        ...notification('Backup Storage Preparation Failed', 'Your backup storage could not be prepared. Contact your organization administrator.'),
+        kind: 'managed_storage_owner',
+      }
+      expect(notificationDisplay(owner, t)).toEqual({
+        title: t('managedStorage.readiness.failedTitle'), summary: t('managedStorage.readiness.failed'),
+      })
+      const admin = {
+        ...notification('Backup Storage Ready', 'Review backup repository "User A · Backup Repository" in Managed Storage.'),
+        kind: 'managed_storage_admin',
+      }
+      expect(notificationDisplay(admin, t)).toEqual({
+        title: t('managedStorage.readiness.readyTitle'),
+        summary: t('managedStorage.readiness.adminSummary', { name: 'User A · Backup Repository' }),
+      })
+    })
+  }
   for (const locale of ['zh-hans', 'es']) {
     it(`resolves notification copy from unambiguous nested keys in ${locale}`, () => {
       i18n.global.locale.value = locale

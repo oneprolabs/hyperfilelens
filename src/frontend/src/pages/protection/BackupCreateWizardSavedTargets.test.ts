@@ -21,6 +21,46 @@ function body(start: string, end: string) {
   expect(to).toBeGreaterThan(from)
   return transpile(editor.slice(from, to))
 }
+
+it('never offers failed or unfinished managed repositories even with stale online health', () => {
+  const mapRepository = new Function('storageRepositoryLocation',
+    body('function mapRepository(', 'function mapPolicy(') + '\nreturn mapRepository;',
+  )(() => 'private-location')
+  for (const status of ['creating', 'create_failed', 'removing', 'remove_failed', 'removed']) {
+    const target = mapRepository({
+      id: 1, name: 'Managed', repo_type: 's3', status, health: 'online',
+      config: { credential_mode: 'repository_temporary_identity_v1' },
+    })
+    expect(target.health).toBe('offline')
+  }
+  const unboundNas = mapRepository({ id: 2, repo_type: 'nas', status: 'creating', health: 'unverified', config: {} })
+  expect(unboundNas.health).toBe('unverified')
+})
+
+it('does not let an older empty selector response overwrite newly ready storage', async () => {
+  let oldResult!: (rows: unknown[]) => void
+  let newResult!: (rows: unknown[]) => void
+  const list = vi.fn().mockImplementationOnce(() => new Promise(resolve => { oldResult = resolve }))
+    .mockImplementationOnce(() => new Promise(resolve => { newResult = resolve }))
+  const targets = ref<unknown[]>([])
+  const refreshing = ref(false)
+  const refresh = new Function(
+    'hasTenantPermission', 'getEffectiveOrgKey', 'targetsRefreshing', 'listAllStorageRepositories',
+    'realTargets', 'mapRepository', 'ElMessage', 'apiErrorMessage', 'editorFailureText',
+    'let targetsGeneration = 0;\n'
+    + body('async function refreshWizardTargets()', 'async function refreshWizardPolicies()')
+    + '\nreturn refreshWizardTargets;',
+  )(() => true, () => 'personal', refreshing, list, targets, (row: unknown) => row,
+    { error: vi.fn() }, () => '', ref(''))
+  const oldRequest = refresh()
+  const newRequest = refresh()
+  newResult([{ id: 17, status: 'created' }])
+  await newRequest
+  oldResult([])
+  await oldRequest
+  expect(targets.value).toEqual([{ id: 17, status: 'created' }])
+  expect(refreshing.value).toBe(false)
+})
 const source: BackupSelectableSource = {
   id: 'agent:101', kind: 'agent', ref_id: 101, type: 'host', name: 'Original source',
   hostname: 'source101', node_name: 'source101', node_ip: '192.0.2.101',

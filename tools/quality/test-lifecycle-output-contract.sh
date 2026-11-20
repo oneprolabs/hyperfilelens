@@ -163,16 +163,19 @@ fi
 
 # Online child output keeps framework startup noise in the durable log while
 # presenting only the meaningful deployment result in the terminal.
-identity_raw=$'[2026-08-23T04:53:45.921Z] [INFO] [test:1] [-] [-/-] [server-python(apps.py:23)] - Django Admin: auto-registered 51 project model(s)\nEmail sign-up: disabled\nGoogle OAuth: disabled\nDeployment-managed SMTP is unavailable; preserved the installed email settings.\nHFL_IDENTITY_STATUS=warning'
+identity_raw=$'[2026-08-23T04:53:45.921Z] [INFO] [test:1] [-] [-/-] [server-python(apps.py:23)] - Django Admin: auto-registered 51 project model(s)\nEmail sign-up: enabled (effective registration modes)\nEnterprise registration: enabled (deployment)\nPersonal registration: enabled (runtime)\nGoogle OAuth: disabled (runtime)\nTurnstile: disabled (default)\nSMTP: unavailable (deployment)\nWARNING: SMTP configuration is unavailable or invalid; runtime overrides were not changed.\nHFL_IDENTITY_STATUS=warning'
 touch "${LOG_FILE}"
 identity_output="$({
 	HFL_ONLINE_CHILD=1
 	render_deployment_command_output "${identity_raw}"
 } 2>&1)"
-grep -F '[INFO ] Email sign-up disabled.' <<<"${identity_output}" >/dev/null
-grep -F '[INFO ] Google OAuth disabled.' <<<"${identity_output}" >/dev/null
-grep -F '[SKIP] SMTP synchronization skipped because SMTP is not configured.' \
-	<<<"${identity_output}" >/dev/null
+grep -F '[INFO ] Email sign-up enabled (effective registration modes).' <<<"${identity_output}" >/dev/null
+grep -F '[INFO ] Enterprise registration enabled (deployment).' <<<"${identity_output}" >/dev/null
+grep -F '[INFO ] Personal registration enabled (runtime).' <<<"${identity_output}" >/dev/null
+grep -F '[INFO ] Google OAuth disabled (runtime).' <<<"${identity_output}" >/dev/null
+grep -F '[INFO ] Turnstile disabled (default).' <<<"${identity_output}" >/dev/null
+grep -F '[INFO ] SMTP unavailable (deployment).' <<<"${identity_output}" >/dev/null
+grep -F 'SMTP configuration is unavailable or invalid' <<<"${identity_output}" >/dev/null
 if grep -F 'auto-registered' <<<"${identity_output}" >/dev/null \
 	|| grep -F 'HFL_IDENTITY_STATUS=' <<<"${identity_output}" >/dev/null; then
 	echo 'Online identity output leaked framework or machine-readable noise' >&2
@@ -512,6 +515,24 @@ dev_insight_output="$({
 grep -F 'admin@example.com' <<<"${dev_insight_output}" >/dev/null
 if grep -F 'Username' <<<"${dev_insight_output}" >/dev/null; then
 	echo 'Dev summary advertised username-based SourceLens login' >&2
+	exit 1
+fi
+
+# Development deployments must also show the effective values and sources.
+dev_identity_output="$({
+	source "${ROOT_REPO}/dev/stack.sh"
+	ROOT="${dev_fixture}"
+	LOG_FILE="${dev_fixture}/dev-identity.log"
+	VERBOSE=0
+	render_backend_result identity "${identity_raw}"
+} 2>&1)"
+grep -F 'Personal registration enabled (runtime)' <<<"${dev_identity_output}" >/dev/null
+grep -F 'Enterprise registration enabled (deployment)' <<<"${dev_identity_output}" >/dev/null
+grep -F 'SMTP unavailable (deployment)' <<<"${dev_identity_output}" >/dev/null
+grep -F 'Google OAuth disabled (runtime)' <<<"${dev_identity_output}" >/dev/null
+if grep -F 'auto-registered' <<<"${dev_identity_output}" >/dev/null \
+	|| grep -F 'HFL_IDENTITY_STATUS=' <<<"${dev_identity_output}" >/dev/null; then
+	echo 'Dev identity output leaked framework or machine-readable noise' >&2
 	exit 1
 fi
 

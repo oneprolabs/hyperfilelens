@@ -5,7 +5,7 @@ from django.db.models.functions import Cast
 
 from apps.iam.activity_access import filter_activity_queryset
 from apps.iam.resource_access import filter_resource_queryset
-from common.extension_spi import get_authz_provider
+from common.extension_spi import get_authz_provider, get_repository_provider
 
 
 def notification_source_ids(request, source_type):
@@ -25,6 +25,14 @@ def notification_source_ids(request, source_type):
 
 
 def filter_user_notification_queryset(request, queryset):
+    # Custom repository notifications require live extension authorization,
+    # even if EE was removed after the notification was created.
+    provider = get_repository_provider()
+    hook = getattr(provider, "filter_initialization_notifications", None)
+    if callable(hook):
+        queryset = hook(request, queryset)
+    else:
+        queryset = queryset.exclude(source_type__in=("managed_storage_owner", "managed_storage_admin"))
     if get_authz_provider() is None:
         return queryset
     condition = ~Q(source_type__in=("alert", "node"))

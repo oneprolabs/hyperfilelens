@@ -63,6 +63,7 @@ from apps.storage.services.internal.s3_validation_errors import (
 )
 from apps.storage.services.internal.repository_usage import (
     enqueue_repository_usage_refresh,
+    repository_usage_scope,
     sync_all_repositories,
     sync_organization_repositories,
 )
@@ -220,8 +221,8 @@ def reconcile_storage_repositories(
     if periodic:
         queued = 0
         # A due-check only enqueues bounded individual scopes; it never opens Kopia.
-        for repository in Repository.objects.filter(
-            status=Repository.Status.CREATED,
+        for repository in repository_usage_scope(
+            Repository.objects.all(), periodic=True,
         ).order_by("usage_last_success_at", "id").iterator(chunk_size=200):
             if queued >= limit:
                 break

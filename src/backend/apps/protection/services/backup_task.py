@@ -1038,6 +1038,9 @@ def start_backup_tasks(
                             organization_id=organization_id,
                             id=locked_config.repository_id,
                         )
+                        from apps.subscription.services.interface import enforce_repository_user_quota
+
+                        enforce_repository_user_quota(locked_repository)
                         assert_repository_quota_available(locked_repository)
                         lock_repositories_for_workload(
                             organization_id=organization_id,
@@ -2348,6 +2351,13 @@ def classify_kopia_execution_failure(
 ) -> tuple[str, str]:
     """Classify a failed Kopia execution from its most specific evidence."""
     result = result if isinstance(result, dict) else {}
+    if result.get("error_code") == "USER_BACKUP_STORAGE_LIMIT_REACHED":
+        return (
+            "USER_BACKUP_STORAGE_LIMIT_REACHED",
+            "The repository owner's Backup Storage limit has been reached. "
+            "Review Resource Usage or contact your administrator before retrying. "
+            "Restore and cleanup remain available.",
+        )
     message = extract_kopia_failure_message(result, last_error=last_error)
     if not message:
         message = str(last_error or "Agent backup command failed.").strip()

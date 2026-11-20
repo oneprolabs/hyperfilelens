@@ -208,6 +208,8 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         return "KOPIA_PROGRESS_STALL", last_error
     if node_task.status == NodeTask.Status.FAILED:
         structured_error = str(result.get("error_code") or "")
+        if structured_error == "USER_BACKUP_STORAGE_LIMIT_REACHED":
+            return bt.classify_kopia_execution_failure(result, last_error=last_error)
         repository_server_code = repository_server_diagnostic_code(result, last_error)
         if repository_server_code:
             return (

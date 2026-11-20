@@ -57,6 +57,58 @@ class RegistrationApiTests(APITestCase):
         self.assertFalse(user.is_active)
         self.assertEqual(EmailVerificationCode.objects.filter(user=user, is_used=False).count(), 1)
 
+    @patch("common.extension_spi.get_registration_provider")
+    def test_enterprise_code_sending_does_not_require_personal_storage(self, get_provider):
+        response = self.client.post(
+            reverse("email_register_send_code"),
+            {"email": "enterprise-no-storage@example.com", "registration_mode": "enterprise"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        get_provider.assert_not_called()
+        self.assertEqual(len(mail.outbox), 1)
+
+    @patch("apps.iam.auth.views.registration.personal_registration_enabled", return_value=True)
+    @patch("common.extension_spi.get_registration_provider")
+    def test_personal_code_sending_requires_an_available_provider(self, get_provider, _enabled):
+        from unittest.mock import Mock
+
+        for provider in (None, Mock()):
+            if provider is not None:
+                provider.registration_options.return_value = {
+                    "available": False, "reason": "managed_storage_unavailable",
+                }
+            get_provider.return_value = provider
+            with self.subTest(provider=provider):
+                response = self.client.post(
+                    reverse("email_register_send_code"),
+                    {"email": "unavailable-personal@example.com", "registration_mode": "personal"},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertEqual(
+                    response.data["error"]["error_code"],
+                    "PERSONAL_REGISTRATION_UNAVAILABLE",
+                )
+                self.assertNotIn("managed_storage", str(response.data))
+                self.assertFalse(User.objects.filter(email="unavailable-personal@example.com").exists())
+                self.assertFalse(EmailVerificationCode.objects.exists())
+                self.assertEqual(len(mail.outbox), 0)
+
+    @patch("apps.iam.auth.views.registration.personal_registration_enabled", return_value=True)
+    @patch("common.extension_spi.get_registration_provider")
+    def test_available_personal_registration_sends_code(self, get_provider, _enabled):
+        get_provider.return_value.registration_options.return_value = {"available": True}
+        response = self.client.post(
+            reverse("email_register_send_code"),
+            {"email": "available-personal@example.com", "registration_mode": "personal"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(User.objects.get(email="available-personal@example.com").is_active)
+        self.assertEqual(len(mail.outbox), 1)
+        get_provider.return_value.registration_options.assert_called_once_with()
+
     def test_confirm_registers_user_and_provisions_org(self):
         email = "owner@example.com"
         user = User.objects.create_user(

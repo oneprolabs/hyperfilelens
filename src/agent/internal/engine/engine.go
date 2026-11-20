@@ -112,7 +112,7 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 	} else if ok {
 		leaseCtx, releaseCredentials, leaseErr := e.startRepositoryCredentialLease(ctx, spec.CredentialLease)
 		if leaseErr != nil {
-			return Result{Status: "failed", Error: leaseErr.Error()}
+			return repositoryCredentialFailure(leaseErr, nil)
 		}
 		ctx = leaseCtx
 		defer releaseCredentials()
@@ -321,6 +321,10 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		}
 	}
 
+	if cause := context.Cause(ctx); errors.Is(cause, errRepositoryCredentialAuthorization) ||
+		errors.Is(cause, errRepositoryCredentialRefresh) || errors.Is(cause, errRepositoryUserStorageLimit) {
+		return repositoryCredentialFailure(cause, result)
+	}
 	if ctx.Err() != nil && status != "success" {
 		slog.WarnContext(ctx, "engine task canceled", "node_id", nodeID, "task_id", cmd.ID, "kind", kind)
 		return Result{Status: "failed", Result: result, Error: "canceled"}

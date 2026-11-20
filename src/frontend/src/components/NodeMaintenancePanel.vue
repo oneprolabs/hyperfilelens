@@ -1,4 +1,8 @@
 <script setup lang="ts">
+/* Match Source Hosts / deploy maintenance chrome when opened from list drawers. */
+import '../styles/fullscreen-form-styles'
+import '../styles/source-deploy-ui.css'
+import '../styles/agent-install-wizard.css'
 import { computed } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -9,8 +13,6 @@ import { copyTextToClipboard } from '../lib/clipboard'
 import { formatNodeDate, nodeEnrollmentOs } from '../lib/nodeInventoryDisplay'
 import type { ApiNode } from '../types/node'
 import { ElMessage } from 'element-plus'
-/* Match Source Hosts / deploy maintenance chrome when opened from list drawers. */
-import '../styles/fullscreen-form-styles'
 
 const props = withDefaults(
   defineProps<{
@@ -153,6 +155,3 @@ async function copyCommand(command: string) {
   }
 }
 </style>
-
-<style src="../styles/source-deploy-ui.css"></style>
-<style src="../styles/agent-install-wizard.css"></style>

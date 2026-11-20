@@ -8693,7 +8693,7 @@
     "enterprise": "企业版",
     "enterpriseDescription": "适用于团队。创建组织并管理成员、存储和 AI 设置。",
     "enterpriseUnavailable": "企业版注册暂时不可用，请稍后重试。",
-    "personalUnavailable": "个人版注册暂不可用。请选择企业版，或稍后再试。",
+    "personalUnavailable": "个人版注册暂时不可用，请稍后重试。",
     "organizationPh": "组织名称",
     "organizationRequired": "组织名称为必填项",
     "createPersonalAccount": "创建个人账号",
@@ -8730,7 +8730,10 @@
     "registerSuccessTip2": " 已注册成功，请登录。",
     "okGotIt": "我知道了",
     "registerFailed": "注册失败",
-    "personalDescription": "适用于个人用户。使用托管存储保存您的备份。"
+    "personalDescription": "适用于个人用户。使用托管存储保存您的备份。",
+    "unavailableTitle": "注册暂时不可用",
+    "unavailableDescription": "请稍后重试。",
+    "backToSignIn": "返回登录"
   },
   "platformOps": {
     "roles": {
@@ -10670,6 +10673,84 @@
     "deleteRepositoryNotice": "此操作将永久删除该备份仓库及其数据，不会删除其他仓库或共享存储桶。",
     "iamEndpointHint": "请使用对应华为云站点的 IAM 地址，该地址与 OBS 区域相互独立。",
     "iamMainlandChina": "中国大陆",
-    "iamEurope": "欧洲"
+    "iamEurope": "欧洲",
+    "provision": {
+      "title": "补建缺失仓库",
+      "confirm": "补建",
+      "description": "为尚未拥有托管仓库的有效个人版成员创建备份仓库。",
+      "defaultConnection": "默认对象存储",
+      "defaultRequired": "请先配置已启用的默认对象存储连接。",
+      "skipNotice": "不包含 Owner。不会重建已有、失败或已删除的仓库。每次最多补建 1,000 个缺失仓库；如有剩余，可再次执行。",
+      "initializationNotice": "创建的仓库将在后台初始化，请在备份仓库列表查看状态。补建期间可以关闭此弹窗。",
+      "failedNotice": "部分成员补建失败。请查看审计日志，解决问题后刷新预览，重新补建仍缺失的仓库。",
+      "counts": {
+        "eligible": "符合条件的成员",
+        "existing": "已有仓库",
+        "initializing": "正在初始化",
+        "initialization_failed": "初始化失败",
+        "cleanup": "需要处理清理",
+        "removed": "此前已删除",
+        "missing": "缺失仓库",
+        "selected": "本次补建"
+      },
+      "states": {
+        "queued": "已排队",
+        "running": "正在补建",
+        "completed": "补建完成",
+        "failed": "补建已停止"
+      },
+      "results": {
+        "created": "已创建",
+        "skipped": "已跳过",
+        "failed": "失败"
+      },
+      "errors": {
+        "authorization_changed": "管理员权限已变更，请检查权限并刷新预览。",
+        "default_changed": "默认对象存储已变更，请检查连接并刷新预览。",
+        "dispatch_failed": "后台请求未能入队，请刷新预览后重试。",
+        "worker_failed": "补建已停止，已完成的操作会保留。请刷新预览，继续补建剩余成员的仓库。"
+      },
+      "lastResult": "上次请求：已创建 {created} 个，已跳过 {skipped} 个，失败 {failed} 个。"
+    },
+    "readiness": {
+      "preparing": "正在准备您的备份存储，请稍后重试。",
+      "failed": "未能准备您的备份存储，请联系组织管理员协助处理。",
+      "missing": "没有可用的备份存储，请联系组织管理员协助处理。",
+      "unavailable": "您的备份存储当前不可用，请联系组织管理员协助处理。",
+      "ready": "您的备份存储已就绪，请刷新仓库列表后继续。",
+      "loadFailed": "无法查询备份存储状态，请重试。",
+      "failedTitle": "备份存储准备失败",
+      "readyTitle": "备份存储已就绪",
+      "readySummary": "您的备份存储已可使用。",
+      "adminSummary": "请在托管存储中检查备份仓库“{name}”。"
+    },
+    "initialization": {
+      "title": "初始化",
+      "unknown_data": "无法验证存储归属。请勿删除或接管未知数据，重试前请检查仓库位置。",
+      "connection": "请检查关联对象存储的凭证、云端权限和存储桶访问后重试初始化。更改默认连接不会迁移此仓库。",
+      "scheduling": "无法调度初始化，请检查后台任务服务后重试。",
+      "initialization": "请检查最近的初始化任务和关联对象存储连接后重试。使用中的连接不能修改存储位置或委托目标。"
+    }
+  },
+  "managedStorage.addRepositoryDescription": "为用户创建备份仓库。",
+  "managedStorage.selectOwner": "选择用户",
+  "managedStorage.ownersLoadFailed": "无法加载用户，请重试。",
+  "managedStorage.noOwners": "未找到符合条件的用户。",
+  "managedStorage.searchMoreOwners": "按姓名或邮箱搜索更多用户。",
+  "personalUserLimits": {
+    "action": "用户限额",
+    "title": "个人版用户限额",
+    "description": "适用于每个个人版用户的默认限额，不影响其他组织。",
+    "validation": "请为每项填写非负整数，不支持无限制。",
+    "unconfigured": "启用个人版注册前，请配置全部三项限额。",
+    "applies": "修改也适用于现有个人版用户。降低限额不会删除已有数据。",
+    "saved": "个人版用户限额已保存。",
+    "loadFailed": "无法加载用户限额，请重试。",
+    "saveFailed": "无法保存用户限额，请重试。",
+    "unit": "容量单位",
+    "exceeded": "您的{meter}已达到限额。请查看资源用量或联系管理员。",
+    "storageUnavailable": "暂时无法获取您的备份存储用量，请稍后重试或联系管理员。",
+    "backupStopped": "仓库所有者的备份存储用量已达到上限。",
+    "backupResolution": "请查看仓库所有者的资源用量或联系管理员。恢复和清理仍可使用。计量用量降至上限以下或管理员提高额度后，可重试备份。"
   }
 }

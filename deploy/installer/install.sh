@@ -6095,13 +6095,8 @@ render_deployment_command_output() {
 			# not results of the deployment operation itself.
 			continue
 			;;
-		Email\ sign-up:*)
-			value="${line#Email sign-up: }"
-			log "Email sign-up ${value}"
-			;;
-		Google\ OAuth:*)
-			value="${line#Google OAuth: }"
-			log "Google OAuth ${value}"
+		Email\ sign-up:*|Enterprise\ registration:*|Personal\ registration:*|Google\ OAuth:*|Turnstile:*|SMTP:*)
+			log "${line/:/}"
 			;;
 		Deployment-managed\ SMTP\ is\ unavailable\;*)
 			skip "SMTP synchronization skipped because SMTP is not configured"
@@ -6122,7 +6117,7 @@ render_deployment_command_output() {
 }
 
 sync_optional_identity_settings() {
-	step "Synchronizing optional identity and email settings"
+	step "Checking effective identity and email settings"
 	local output command_status
 	set +e
 	output="$(
@@ -6139,21 +6134,21 @@ sync_optional_identity_settings() {
 		fi
 	fi
 	if [[ "${command_status}" -ne 0 ]]; then
-		warn "Optional identity or email settings could not be synchronized; core services remain available"
+		warn "Optional identity or email checks could not be completed; core services remain available"
 		return 0
 	fi
 	if grep -F 'HFL_IDENTITY_STATUS=warning' <<<"${output}" >/dev/null; then
 		if [[ "${HFL_ONLINE_CHILD:-0}" == "1" ]]; then
 			if [[ "${RENDERED_DEPLOYMENT_WARNINGS:-0}" -eq 0 ]]; then
-				ok "Optional identity and email settings synchronized"
+				ok "Effective identity and email settings checked"
 			else
-				log "Optional identity and email synchronization completed with warnings"
+				log "Effective identity and email checks completed with warnings"
 			fi
 		else
-			warn "Invalid optional identity or email settings were preserved"
+			warn "Effective identity or email configuration needs attention; runtime overrides were not changed"
 		fi
 	else
-		ok "Optional identity and email settings synchronized"
+		ok "Effective identity and email settings checked"
 	fi
 
 	set +e

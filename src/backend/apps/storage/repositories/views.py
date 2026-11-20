@@ -870,6 +870,13 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="retry-initialization")
     def retry_initialization(self, request, pk=None):
         repository = self.get_object()
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
+        provider = managed_repository_provider(repository)
+        if provider is not None:
+            authorize = getattr(provider, "authorize_initialization_retry", None)
+            if not callable(authorize):
+                raise PermissionDenied("Managed Storage administration access is required.")
+            authorize(request, repository)
         try:
             repository_task = retry_repository_create(
                 repository=repository,

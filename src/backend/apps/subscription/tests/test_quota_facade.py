@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
 from apps.iam.models import Membership, Organization
 from apps.subscription.services.interface import (
     enforce_license_quota,
+    enforce_user_quota,
+    enforce_repository_user_quota,
     enforce_node_role_quota,
     enforce_repository_type_quota,
 )
@@ -79,6 +84,29 @@ class HostQuotaFacadeTests(TestCase):
         self.assertIsNone(enforce_license_quota(self.org, "max_users", additional=1))
         self.assertIsNone(enforce_node_role_quota(organization=self.org, role="agent"))
         self.assertIsNone(enforce_repository_type_quota(organization=self.org, repo_type="s3"))
+        self.assertIsNone(enforce_user_quota(self.org, self.user.pk, "ai_tokens"))
+        self.assertIsNone(enforce_repository_user_quota(SimpleNamespace(organization_id=self.org.pk)))
+
+    def test_user_admission_delegates_without_importing_enterprise_models(self):
+        provider = Mock()
+        register_quota_provider(provider)
+        repository = SimpleNamespace(organization_id=self.org.pk, pk=25)
+        enforce_user_quota(self.org, self.user.pk, "max_public_gateway_capacity_bytes", additional=100)
+        enforce_repository_user_quota(repository)
+        provider.check_user_quota.assert_called_once_with(
+            self.org, self.user.pk, "max_public_gateway_capacity_bytes", 100,
+        )
+        provider.check_repository_user_quota.assert_called_once_with(repository)
+
+    def test_legacy_provider_cannot_silently_skip_user_enforcement(self):
+        from common.errors import AppError
+
+        register_quota_provider(_BlockingProvider())
+        with self.assertRaises(AppError) as caught:
+            enforce_user_quota(self.org, self.user.pk, "ai_tokens")
+        self.assertEqual(caught.exception.meta["scope"], "organization_user")
+        with self.assertRaises(AppError):
+            enforce_repository_user_quota(SimpleNamespace(organization_id=self.org.pk))
 
     @override_settings(HFL_QUOTA_ENFORCEMENT_ENABLED=True)
     def test_community_enforces_finite_builtin_limits(self):
