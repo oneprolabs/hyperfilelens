@@ -1,6 +1,7 @@
 import type { StartBackupTaskResultItem } from './protectionBackupTaskApi'
 import type { StorageRepository } from './storageRepositoryApi'
 import type { ErrorDetailsPayload } from './errors/details'
+import { resolveErrorMessageI18n } from './errors/resolver'
 
 type Translate = (key: string) => string
 
@@ -18,9 +19,14 @@ const validationErrorLocaleKeys: Record<string, string> = {
 }
 
 export function backupStartResultMessage(
-  result: Pick<StartBackupTaskResultItem, 'error_code' | 'message'>,
+  result: Pick<StartBackupTaskResultItem, 'error_code' | 'message' | 'error_meta'>,
   t: Translate,
 ) {
+  if (result.error_code === 'SUBSCRIPTION.QUOTA_EXCEEDED') {
+    return resolveErrorMessageI18n({
+      status: 403, errorCode: result.error_code, meta: result.error_meta,
+    }, t)
+  }
   const key = validationErrorLocaleKeys[String(result.error_code || '').trim()]
   return key ? t(key) : result.message
 }
@@ -30,6 +36,15 @@ export function backupQuotaUsageDetails(
   repositories: StorageRepository[],
   t: Translate,
 ): ErrorDetailsPayload {
+  if (result.error_meta?.scope === 'organization_user') {
+    const summary = t('personalUserLimits.storageUnavailable')
+    return {
+      title: summary, summary, severity: 'warning',
+      errorCode: 'SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE',
+      reasons: [], resolutions: [t('repositoriesPage.quotaUsageContactAdmin')],
+      entities: [],
+    }
+  }
   const instance = result.error_meta?.scope === 'instance'
   const organization = result.error_meta?.scope === 'organization'
   const ids = new Set(result.error_meta?.blocking_repository_ids || [])

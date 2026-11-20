@@ -46,6 +46,51 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('organization-user resource usage', () => {
+  it('renders finite limits, clamps overage progress, and keeps other meters Unlimited', async () => {
+    const data = payload()
+    Object.assign(data.items.find(i => i.key === 'ai_tokens')!, {
+      used: 1500, known_used: 1500, limit: 1000, limit_source: 'personal_default',
+    })
+    mocks.api.mockResolvedValue(data)
+    const wrapper = render()
+    await flushPromises()
+    const card = wrapper.get('[data-meter="ai_tokens"]')
+    expect(card.get('.user-resource-usage__limit').text()).toBe('1,000')
+    expect(card.get('[role="progressbar"]').attributes('aria-valuemax')).toBe('1000')
+    expect(card.get('.user-resource-usage__fill').attributes('style')).toContain('width: 100%')
+    expect(card.find('.is-exceeded').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Unlimited')
+  })
+
+  it('distinguishes zero allowance and unknown consumption from Unlimited', async () => {
+    const data = payload()
+    Object.assign(data.items.find(i => i.key === 'ai_tokens')!, {
+      used: 0, known_used: 0, limit: 0, limit_source: 'personal_default',
+    })
+    Object.assign(data.items.find(i => i.key === 'max_storage_bytes')!, {
+      used: null, known_used: 0, status: 'unknown', limit: 1024,
+      limit_source: 'personal_default', reason: 'storage_attribution',
+    })
+    mocks.api.mockResolvedValue(data)
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get('[data-meter="ai_tokens"] .user-resource-usage__limit').text()).toBe('0')
+    expect(wrapper.get('[data-meter="ai_tokens"] .user-resource-usage__fill').attributes('style')).toContain('width: 0%')
+    expect(wrapper.find('[data-meter="max_storage_bytes"] [role="progressbar"]').exists()).toBe(false)
+    expect(wrapper.get('[data-meter="max_storage_bytes"] .user-resource-usage__value').text()).toBe('—')
+  })
+
+  it('rejects invalid allowance values and mismatched policy sources', () => {
+    for (const limit of [-1, -2, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const data = payload()
+      Object.assign(data.items.find(i => i.key === 'ai_tokens')!, { limit, limit_source: 'personal_default' })
+      expect(validUserUsage(data, 'org-a', 7)).toBe(false)
+    }
+    const data = payload()
+    data.items[0]!.limit = 100
+    expect(validUserUsage(data, 'org-a', 7)).toBe(false)
+  })
+
   it('loads self without a subscription permission and shows Unlimited without percentages', async () => {
     const wrapper = render()
     await flushPromises()

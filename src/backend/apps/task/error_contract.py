@@ -135,6 +135,8 @@ def _repository_connection_role(task) -> str:
 def _default_suggestion_code(task) -> str:
     task_type = str(getattr(task, "task_type", "") or "")
     error_code = str(getattr(task, "error_code", "") or "")
+    if task_type == "backup" and error_code == "USER_BACKUP_STORAGE_LIMIT_REACHED":
+        return "review_user_resource_usage"
     if task_type == "source_unregister" and any(
         isinstance(reason, dict) and reason.get("code") == "snapshot_in_use"
         for reason in _list(_record(task.result_payload).get("reasons"))
@@ -241,6 +243,15 @@ def task_error_contract(task, resources=()):
         suggestions.append({"code": "review_cleanup", "detail": "Review retained resources and complete any remaining cleanup before retrying."})
     if not suggestions:
         suggestions.append({"code": default_suggestion_code, "detail": default_suggestion_code})
+    if default_suggestion_code == "review_user_resource_usage":
+        suggestions = [{
+            "code": "review_user_resource_usage",
+            "detail": (
+                "Review the repository owner's Resource Usage or contact your administrator. "
+                "Restore and cleanup remain available. Retry after measured usage falls "
+                "below the limit or the administrator raises it."
+            ),
+        }] + [item for item in suggestions if item["code"] != default_suggestion_code]
     if missing_source:
         suggestions = [
             {"code": "restore_backup_source_path", "detail": "If this directory is still needed, restore it or correct its path in the backup configuration."},

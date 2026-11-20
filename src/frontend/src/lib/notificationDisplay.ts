@@ -15,6 +15,20 @@ const quotaOutcomes: Record<string, Outcome> = {
 /** Format known generated text; preserve unfamiliar messages and administrator notes. */
 export function notificationDisplay(notification: UserNotification, t: Translate) {
   const fallback = taskAlertNotificationDisplay(notification, t)
+  if (['managed_storage_owner', 'managed_storage_admin'].includes(notification.kind)) {
+    const key = notification.title === 'Backup Storage Preparation Failed' ? 'failed'
+      : notification.title === 'Backup Storage Ready' ? 'ready' : undefined
+    if (!key) return fallback
+    const admin = /^Review backup repository "([\s\S]*)" in Managed Storage\.$/.exec(notification.summary || '')
+    return {
+      title: t(`managedStorage.readiness.${key}Title`),
+      summary: admin
+        ? t('managedStorage.readiness.adminSummary', { name: admin[1] })
+        : notification.kind === 'managed_storage_owner'
+          ? t(`managedStorage.readiness.${key === 'ready' ? 'readySummary' : 'failed'}`)
+          : notification.summary || '',
+    }
+  }
   if (notification.kind !== 'quota_increase_request') return fallback
   const outcome = quotaOutcomes[notification.title]
   if (!outcome) return fallback

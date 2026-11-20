@@ -191,6 +191,16 @@ class QuotaProvider(Protocol):
         """Deny new consumption; positive checks run inside the consuming transaction."""
         ...
 
+    def check_user_quota(
+        self, organization: Any, user_id: int | None, resource_type: str, additional: int = 0,
+    ) -> Any:
+        """User growth admission inside the consuming transaction."""
+        ...
+
+    def check_repository_user_quota(self, repository: Any) -> Any:
+        """Charge target storage ownership, not the caller's administrator role."""
+        ...
+
     def get_limits(self, organization: Any) -> dict[str, int]:
         """Authoritative org limits map for UI / gateway select caps."""
         ...
@@ -230,6 +240,18 @@ class RepositoryProvider(Protocol):
     """Optional credential/lifecycle adapter; never changes ordinary repositories."""
 
     def manages(self, repository: Any) -> bool: ...
+
+    def measure_physical_usage(self, repository: Any) -> int:
+        """Measure the managed namespace using Controller-only scoped credentials."""
+        ...
+
+    def retained_usage_repository_ids(self) -> Any:
+        """IDs of retained namespaces requiring read-only capacity measurement."""
+        ...
+
+    def authorize_initialization_retry(self, request: Any, repository: Any) -> None: ...
+
+    def filter_initialization_notifications(self, request: Any, queryset: Any) -> Any: ...
 
     def initialize(self, repository: Any, *, recovery: bool) -> None: ...
 

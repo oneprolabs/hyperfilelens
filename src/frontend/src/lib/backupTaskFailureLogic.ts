@@ -11,6 +11,14 @@ import type { ErrorDetailsPayload } from './errors/details'
 import type { TranslateFn } from './errors/resolver'
 import { snapshotUsageFailureText } from './snapshotUsageFailureDisplay'
 
+function userStorageLimitText(kind: 'reason' | 'suggestion', t?: TranslateFn): string {
+  const key = kind === 'reason' ? 'personalUserLimits.backupStopped' : 'personalUserLimits.backupResolution'
+  if (t) return t(key)
+  return kind === 'reason'
+    ? "The repository owner's Backup Storage limit has been reached."
+    : "Review the repository owner's Resource Usage or contact your administrator. Restore and cleanup remain available. Retry after measured usage falls below the limit or the administrator raises it."
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -267,6 +275,9 @@ export function buildTaskFailureErrorDetails(params: {
   const contract = task.error_details
   if (contract) {
     const connectionText = (item: { code: string; detail: string }, kind: 'reason' | 'suggestion') => {
+      if (item.code === 'USER_BACKUP_STORAGE_LIMIT_REACHED' || item.code === 'review_user_resource_usage') {
+        return userStorageLimitText(kind, t)
+      }
       const knownCode = item.code === 'resolve_snapshot_usage' || ['proxy', 'backup_host', 'host'].some(role =>
         item.code === (kind === 'reason' ? `repository_${role}_unreachable` : `reconnect_repository_${role}`),
       )
@@ -335,7 +346,10 @@ export function buildTaskFailureErrorDetails(params: {
   // Build reasons from structured details
   const reasons: string[] = []
 
-  if (terminalFailure && !extractFailureDetails(meta)) {
+  const userStorageLimit = String(record(meta.terminal_failure).error_code || task.error_code || '') === 'USER_BACKUP_STORAGE_LIMIT_REACHED'
+  if (userStorageLimit) {
+    reasons.push(userStorageLimitText('reason', t))
+  } else if (terminalFailure && !extractFailureDetails(meta)) {
     reasons.push(terminalFailure)
   }
 
@@ -367,7 +381,9 @@ export function buildTaskFailureErrorDetails(params: {
 
   // Resolutions from friendly copy or failure remediation codes
   const resolutions: string[] = []
-  if (friendly) {
+  if (userStorageLimit) {
+    resolutions.push(userStorageLimitText('suggestion', t))
+  } else if (friendly) {
     resolutions.push(...friendly.resolutions)
   } else if (failureDetails.remediation.length && t) {
     resolutions.push(...failureDetails.remediation.map(code => {
@@ -480,7 +496,9 @@ export function buildSnapshotFailureErrorDetails(params: {
       total: failedDirectoryCount + (successfulDirectoryCount ?? 0),
     }))
   }
-  if (errorMessage) reasons.push(errorMessage)
+  const userStorageLimit = (errorCode || task?.error_code) === 'USER_BACKUP_STORAGE_LIMIT_REACHED'
+  if (userStorageLimit) reasons.push(userStorageLimitText('reason', t))
+  else if (errorMessage) reasons.push(errorMessage)
 
   // Use the task's failure details if available
   let resolutions: string[] | undefined
@@ -491,6 +509,7 @@ export function buildSnapshotFailureErrorDetails(params: {
     if (friendly) resolutions = friendly.resolutions
     rawDetail = { ...(rawDetail as Record<string, unknown>), task_uuid: task.task_uuid, task_error_code: task.error_code, task_error_message: task.error_message }
   }
+  if (userStorageLimit) resolutions = [userStorageLimitText('suggestion', t)]
 
   return {
     title,

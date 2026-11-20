@@ -27,8 +27,9 @@ export function resolveProtectionEntry(has: ProtectionPermissionCheck): string {
 }
 
 export function canViewManagedStorage(has: ProtectionPermissionCheck): boolean {
+  // Repository grants let members use their targets in Backup Wizard. They
+  // must not grant access to the organization's storage administration page.
   return has('configuration.managed_storage.view', true, 'managed_storage')
-    || has('protection.object_storage_repositories.view', false, 'managed_storage')
 }
 
 function withOrganization(target: string, location: ProtectionLocation): string {

@@ -2714,8 +2714,9 @@ func TestCleanupStaleSnapshotDownloadDirsRemovesOnlyExpiredDirectories(t *testin
 	now := time.Now()
 	stale := filepath.Join(tempRoot, "hfl-kopia-download-stale")
 	fresh := filepath.Join(tempRoot, "hfl-kopia-download-fresh")
+	active := filepath.Join(tempRoot, "hfl-kopia-download-active")
 	unrelated := filepath.Join(tempRoot, "other-stale")
-	for _, candidate := range []string{stale, fresh, unrelated} {
+	for _, candidate := range []string{stale, fresh, unrelated, active} {
 		if err := os.Mkdir(candidate, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -2727,16 +2728,26 @@ func TestCleanupStaleSnapshotDownloadDirsRemovesOnlyExpiredDirectories(t *testin
 	if err := os.Chtimes(unrelated, old, old); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chtimes(active, old, old); err != nil {
+		t.Fatal(err)
+	}
+	activeSnapshotDownloadDirs.Store(active, struct{}{})
+	defer activeSnapshotDownloadDirs.Delete(active)
 
 	cleanupStaleSnapshotDownloadDirs(tempRoot, now)
 
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("stale snapshot directory was not removed: %v", err)
 	}
-	for _, candidate := range []string{fresh, unrelated} {
+	for _, candidate := range []string{fresh, unrelated, active} {
 		if _, err := os.Stat(candidate); err != nil {
 			t.Fatalf("non-expired candidate was removed: %s: %v", candidate, err)
 		}
+	}
+	activeSnapshotDownloadDirs.Delete(active)
+	cleanupStaleSnapshotDownloadDirs(tempRoot, now)
+	if _, err := os.Stat(active); !os.IsNotExist(err) {
+		t.Fatal("inactive stale download was not reclaimed")
 	}
 }
 

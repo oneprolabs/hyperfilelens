@@ -105,6 +105,7 @@ type repositoryOwnership struct {
 
 var (
 	kopiaS3URLStyleCapabilities sync.Map
+	activeSnapshotDownloadDirs  sync.Map
 	backupOperationIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	snapshotFatalCountPattern   = regexp.MustCompile(`(?i)found\s+(\d+)\s+fatal\s+error`)
 )
@@ -3027,6 +3028,9 @@ func cleanupStaleSnapshotDownloadDirs(tempRoot string, now time.Time) {
 	}
 	cutoff := now.Add(-snapshotDownloadStaleAge)
 	for _, candidate := range matches {
+		if _, active := activeSnapshotDownloadDirs.Load(candidate); active {
+			continue
+		}
 		info, statErr := os.Lstat(candidate)
 		if statErr != nil || !info.IsDir() || info.ModTime().After(cutoff) {
 			continue
@@ -3040,6 +3044,7 @@ func cleanupStaleSnapshotDownloadDirs(tempRoot string, now time.Time) {
 // CleanupStaleSnapshotDownloadArtifacts removes recovery directories left by
 // an interrupted download. Normal task completion removes them immediately;
 // this scan is the 24-hour fallback for process termination and other crashes.
+// A live multi-day download must not be mistaken for crash residue.
 func CleanupStaleSnapshotDownloadArtifacts() {
 	cleanupStaleSnapshotDownloadDirs(os.TempDir(), time.Now())
 }
@@ -3070,7 +3075,11 @@ func (e *Engine) runManagedSnapshotDownload(
 	if mkErr != nil {
 		return "failed", result, mkErr.Error()
 	}
-	defer os.RemoveAll(tempDir)
+	activeSnapshotDownloadDirs.Store(tempDir, struct{}{})
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+		activeSnapshotDownloadDirs.Delete(tempDir)
+	}()
 	restoreRoot := filepath.Join(tempDir, "restore")
 	if err := os.MkdirAll(restoreRoot, 0o700); err != nil {
 		return "failed", result, err.Error()

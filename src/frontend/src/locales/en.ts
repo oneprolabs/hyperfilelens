@@ -3,6 +3,22 @@ import { enProtectionPages } from './enProtectionPages'
 import { enManagedStorage } from './enManagedStorage'
 
 export const en = {
+  personalUserLimits: {
+    backupStopped: "The repository owner's Backup Storage limit has been reached.",
+    backupResolution: "Review the repository owner's Resource Usage or contact your administrator. Restore and cleanup remain available. Retry after measured usage falls below the limit or the administrator raises it.",
+    action: 'User Limits',
+    title: 'Personal Edition User Limits',
+    description: 'Default limits for every Personal Edition user. Other organizations are unchanged.',
+    validation: 'Enter a whole nonnegative value for each limit. Unlimited is not supported.',
+    unconfigured: 'Configure all three limits before enabling Personal Edition registration.',
+    applies: 'Changes also apply to existing Personal Edition users. Lower limits do not delete existing data.',
+    saved: 'Personal Edition user limits saved.',
+    loadFailed: 'Unable to load user limits. Try again.',
+    saveFailed: 'Unable to save user limits. Try again.',
+    unit: 'Capacity Unit',
+    exceeded: 'Your {meter} limit has been reached. Open Resource Usage for details or contact your administrator.',
+    storageUnavailable: 'Your backup storage usage is temporarily unavailable. Try again later or contact your administrator.',
+  },
   managedStorage: enManagedStorage,
   accountUsage: {
     title: 'Resource Usage',
@@ -6395,7 +6411,10 @@ export const en = {
     personalDescription: 'For individuals. Use managed storage for your backups.',
     enterpriseDescription: 'For teams. Create an organization and manage members, storage, and AI settings.',
     enterpriseUnavailable: 'Enterprise registration is temporarily unavailable. Please try again later.',
-    personalUnavailable: 'Personal registration is temporarily unavailable. Please choose Enterprise or try again later.',
+    personalUnavailable: 'Personal registration is temporarily unavailable. Please try again later.',
+    unavailableTitle: 'Registration Is Temporarily Unavailable',
+    unavailableDescription: 'Please try again later.',
+    backToSignIn: 'Back to Sign In',
     organizationPh: 'Organization name',
     organizationRequired: 'Organization name is required',
     emailPh: 'Email address',

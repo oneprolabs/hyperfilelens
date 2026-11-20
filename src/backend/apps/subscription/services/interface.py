@@ -14,6 +14,8 @@ from apps.subscription.services.internal.license_ops import (
 from apps.subscription.services.quota import (
     assert_gateway_select_within_limits,
     enforce_license_quota,
+    enforce_user_quota,
+    enforce_repository_user_quota,
     enterprise_feature_enabled,
     enforce_node_role_quota,
     enforce_repository_type_quota,
@@ -30,6 +32,8 @@ __all__ = [
     "assert_gateway_select_within_limits",
     "build_current_payload",
     "enforce_license_quota",
+    "enforce_user_quota",
+    "enforce_repository_user_quota",
     "enterprise_feature_enabled",
     "enforce_node_role_quota",
     "enforce_repository_type_quota",

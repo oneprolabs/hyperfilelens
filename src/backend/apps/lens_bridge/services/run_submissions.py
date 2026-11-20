@@ -189,11 +189,14 @@ def prepare_submission(
             "This chat has a response submission awaiting recovery."
         )
 
-    from apps.subscription.services.interface import enforce_license_quota
+    from apps.subscription.services.interface import enforce_license_quota, enforce_user_quota
 
-    # Reject new work at the quota boundary; SourceLens remains authoritative
-    # for the final token measurement after the Run completes.
+    # New requests only: accepted submissions (including uncertain POSTs) must
+    # remain recoverable above the limit using the original idempotency key.
+    # This is admission, not a reservation; an accepted Run may finish over cap.
+    # SourceLens remains authoritative for final token measurement.
     enforce_license_quota(link.organization, "ai_tokens", additional=0)
+    enforce_user_quota(link.organization, link.hfl_user_id, "ai_tokens")
     submission = LensRunSubmission.objects.create(
         organization=link.organization,
         hfl_user=link.hfl_user,

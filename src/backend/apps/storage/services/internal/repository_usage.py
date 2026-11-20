@@ -15,6 +15,7 @@ from django.db import transaction
 from django.db.models import F, Q, QuerySet
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
+from billiard.exceptions import SoftTimeLimitExceeded
 
 from apps.storage.repositories.models import (
     Repository,
@@ -24,6 +25,8 @@ from apps.storage.repositories.models import (
 from apps.storage.services.internal.kopia_cli import (
     KopiaCliError,
     KopiaRepositoryBusyError,
+    KopiaExecutionLeaseLost,
+    KopiaCliCancelled,
     ensure_usage_connection,
     content_stats as kopia_content_stats,
     usage_config_file,
@@ -83,6 +86,7 @@ class RepositoryUsageProbeResult:
     storage_used_bytes: int | None = None
     storage_available_bytes: int | None = None
     storage_pool_key: str = ""
+    physical_usage_bytes: int | None = None
 
 
 def repository_observation_revision(repository: Repository) -> str:
@@ -98,6 +102,7 @@ def repository_observation_revision(repository: Repository) -> str:
         "repository_uuid": str(repository.repository_uuid),
         "repo_type": repository.repo_type,
         "status": repository.status,
+        "cleanup_result": repository.cleanup_result,
         "config": repository.config if isinstance(repository.config, dict) else {},
         "credential_id": repository.credential_id,
         "nas_protocol": repository.nas_protocol,
@@ -888,6 +893,29 @@ def collect_usage_candidates(repository: Repository) -> RepositoryUsageProbeResu
     capacity_error = ""
 
     if repository.repo_type == Repository.Type.S3:
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
+
+        provider = managed_repository_provider(repository)
+        if provider is not None:
+            # Never substitute Kopia estimates if the managed physical probe
+            # fails. Projection retains the previous successful observation.
+            try:
+                physical = provider.measure_physical_usage(repository)
+                if type(physical) is not int or physical < 0:
+                    raise ValueError("Invalid managed physical usage.")
+            except (KopiaExecutionLeaseLost, KopiaRepositoryBusyError, KopiaCliCancelled, SoftTimeLimitExceeded):
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Managed repository usage unavailable repository_id=%s error_type=%s",
+                    repository.pk, type(exc).__name__,
+                )
+                return RepositoryUsageProbeResult(
+                    None, None, usage_error="Unable to measure managed repository usage.",
+                )
+            return RepositoryUsageProbeResult(
+                physical, None, physical_usage_bytes=physical,
+            )
         kopia_estimated = kopia_repository_estimated_usage_bytes(repository)
         if kopia_estimated is not None:
             estimated_usage_bytes = max(0, int(kopia_estimated))
@@ -996,6 +1024,12 @@ def apply_repository_usage_probe(
     if usage_changed:
         repository.estimated_usage_bytes = estimated_usage_bytes
     storage_metric_fields: list[str] = []
+    if probe.physical_usage_bytes is not None:
+        if type(probe.physical_usage_bytes) is not int or probe.physical_usage_bytes < 0:
+            raise ValueError("Physical repository usage must be a nonnegative integer.")
+        if repository.physical_usage_bytes != probe.physical_usage_bytes:
+            repository.physical_usage_bytes = probe.physical_usage_bytes
+            storage_metric_fields.append("physical_usage_bytes")
     if fs_capacity is not None and fs_capacity > 0 and repository.storage_total_bytes != fs_capacity:
         repository.storage_total_bytes = fs_capacity
         storage_metric_fields.append("storage_total_bytes")
@@ -1118,6 +1152,18 @@ def _stale_cutoff(*, force: bool, stale_after_seconds: int | None):
     return timezone.now() - timedelta(seconds=seconds)
 
 
+def repository_usage_scope(queryset, *, periodic: bool = False):
+    """Include extension-owned retained namespaces without reviving resources."""
+    from common.extension_spi import get_repository_provider
+
+    scope = Q(status=Repository.Status.CREATED) if periodic else ~Q(status=Repository.Status.REMOVED)
+    provider = get_repository_provider()
+    retained_ids = getattr(provider, "retained_usage_repository_ids", None)
+    if callable(retained_ids):
+        scope |= Q(pk__in=retained_ids())
+    return queryset.filter(scope)
+
+
 def _repository_usage_queryset(
     *,
     organization_id: int | None = None,
@@ -1128,9 +1174,7 @@ def _repository_usage_queryset(
     stale_after_seconds: int | None = None,
     queryset: QuerySet[Repository] | None = None,
 ):
-    qs = (Repository.objects.all() if queryset is None else queryset).exclude(
-        status=Repository.Status.REMOVED,
-    )
+    qs = repository_usage_scope(Repository.objects.all() if queryset is None else queryset)
     if organization_id is not None:
         qs = qs.filter(organization_id=organization_id)
     ids = None if repository_ids is None else _normalize_repository_ids(repository_ids)

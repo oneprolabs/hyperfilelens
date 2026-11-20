@@ -14,6 +14,16 @@ describe('backup quota usage diagnostics', () => {
   }
   const visible = [{ id: 1, name: 'Healthy target' }, { id: 7, name: 'Unmeasured NAS' }] as StorageRepository[]
 
+  it('keeps Personal users out of repository management recovery paths', () => {
+    const details = backupQuotaUsageDetails({
+      ...failed, error_meta: { scope: 'organization_user', blocking_repository_ids: [7] },
+    }, visible, t)
+    expect(details.summary).toBe(t('personalUserLimits.storageUnavailable'))
+    expect(details.entities).toEqual([])
+    expect(details.reasons).toEqual([])
+    expect(details.resolutions).toEqual([t('repositoriesPage.quotaUsageContactAdmin')])
+  })
+
   it('identifies only server-reported blockers visible through the repository API', () => {
     const details = backupQuotaUsageDetails(failed, visible, t)
     expect(details.summary).toBe(t('repositoriesPage.quotaUsageOrganization'))

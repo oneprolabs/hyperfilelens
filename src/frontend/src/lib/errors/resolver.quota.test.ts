@@ -6,6 +6,8 @@ import {
 } from './resolver'
 
 const messages: Record<string, string> = {
+  'personalUserLimits.exceeded':
+    'Your {meter} limit has been reached. Open Resource Usage for details or contact your administrator.',
   'errors.codes.backupRepositoryQuotaExceeded':
     'This repository reached its configured storage quota.',
   'errors.codes.subscriptionQuotaExceeded':
@@ -32,6 +34,16 @@ function t(key: string, params?: Record<string, unknown>) {
 }
 
 describe('subscription quota error messages', () => {
+  it('identifies user limits without offering an organization quota increase', () => {
+    const error = {
+      status: 403, errorCode: 'SUBSCRIPTION.QUOTA_EXCEEDED',
+      meta: { scope: 'organization_user', quota_type: 'max_public_gateway_capacity_bytes' },
+    }
+    expect(resolveErrorMessageI18n(error, t)).toContain('Your Public Gateway Capacity limit')
+    expect(resolveErrorMessage(error)).toContain('Open Resource Usage')
+    expect(resolveQuotaIncreaseRequestPath(error)).toBeNull()
+  })
+
   it('maps repository quota errors through the registry', () => {
     const message = resolveErrorMessageI18n(
       {

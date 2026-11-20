@@ -8693,7 +8693,7 @@
     "enterprise": "Empresa",
     "enterpriseDescription": "Para equipos. Cree una organización y administre miembros, almacenamiento y configuración de IA.",
     "enterpriseUnavailable": "El registro empresarial no está disponible temporalmente. Inténtelo de nuevo más tarde.",
-    "personalUnavailable": "El registro personal no está disponible temporalmente. Elija Empresa o inténtelo de nuevo más tarde.",
+    "personalUnavailable": "El registro personal no está disponible temporalmente. Inténtelo de nuevo más tarde.",
     "organizationPh": "Nombre de la organización",
     "organizationRequired": "El nombre de la organización es obligatorio",
     "createPersonalAccount": "Crear cuenta personal",
@@ -8730,7 +8730,10 @@
     "registerSuccessTip2": " se ha registrado. Inicie sesión.",
     "okGotIt": "Entendido",
     "registerFailed": "El registro falló",
-    "personalDescription": "Para individuos. Usa almacenamiento administrado para tus copias de seguridad."
+    "personalDescription": "Para individuos. Usa almacenamiento administrado para tus copias de seguridad.",
+    "unavailableTitle": "Registro temporalmente no disponible",
+    "unavailableDescription": "Inténtelo de nuevo más tarde.",
+    "backToSignIn": "Volver al inicio de sesión"
   },
   "platformOps": {
     "roles": {
@@ -10670,6 +10673,84 @@
     "deleteRepositoryNotice": "Esta acción elimina permanentemente el repositorio de copias de seguridad y sus datos. No se eliminan otros repositorios ni el bucket compartido.",
     "iamEndpointHint": "Use el endpoint de IAM de su sitio de Huawei Cloud. Es independiente de la región de OBS.",
     "iamMainlandChina": "China continental",
-    "iamEurope": "Europa"
+    "iamEurope": "Europa",
+    "provision": {
+      "title": "Aprovisionar repositorios faltantes",
+      "confirm": "Aprovisionar",
+      "description": "Cree un repositorio de copia de seguridad para cada miembro elegible de la edición Personal que no tenga uno propio.",
+      "defaultConnection": "Almacenamiento de objetos predeterminado",
+      "defaultRequired": "Configure una conexión de almacenamiento de objetos predeterminada y habilitada antes de aprovisionar.",
+      "skipNotice": "Se excluyen los propietarios. No se recrean los repositorios existentes, fallidos ni retirados. Cada solicitud aprovisiona hasta 1.000 repositorios faltantes; repita si quedan más.",
+      "initializationNotice": "Los repositorios creados se inicializan en segundo plano. Consulte su estado en Repositorios de copia de seguridad. Puede cerrar este diálogo mientras continúa el aprovisionamiento.",
+      "failedNotice": "No se pudieron aprovisionar algunos miembros. Revise los registros de auditoría, resuelva la causa y actualice la vista previa para reintentar los repositorios faltantes.",
+      "counts": {
+        "eligible": "Miembros elegibles",
+        "existing": "Ya aprovisionados",
+        "initializing": "Inicialización en curso",
+        "initialization_failed": "Inicialización fallida",
+        "cleanup": "Limpieza pendiente",
+        "removed": "Eliminados anteriormente",
+        "missing": "Repositorios faltantes",
+        "selected": "Por aprovisionar"
+      },
+      "states": {
+        "queued": "En cola",
+        "running": "Aprovisionando",
+        "completed": "Aprovisionamiento completado",
+        "failed": "Aprovisionamiento detenido"
+      },
+      "results": {
+        "created": "Creados",
+        "skipped": "Omitidos",
+        "failed": "Fallidos"
+      },
+      "errors": {
+        "authorization_changed": "El acceso del administrador ha cambiado. Revise los permisos y actualice la vista previa.",
+        "default_changed": "El almacenamiento de objetos predeterminado ha cambiado. Revise la conexión y actualice la vista previa.",
+        "dispatch_failed": "No se pudo encolar la solicitud en segundo plano. Actualice la vista previa e inténtelo de nuevo.",
+        "worker_failed": "El aprovisionamiento se ha detenido. Se conserva el trabajo completado. Actualice la vista previa para aprovisionar los miembros restantes."
+      },
+      "lastResult": "Última solicitud: {created} creados, {skipped} omitidos, {failed} fallidos."
+    },
+    "readiness": {
+      "preparing": "Se está preparando su almacenamiento de copias de seguridad. Inténtelo de nuevo en breve.",
+      "failed": "No se pudo preparar su almacenamiento de copias de seguridad. Póngase en contacto con el administrador de su organización.",
+      "missing": "No hay almacenamiento de copias de seguridad disponible. Póngase en contacto con el administrador de su organización.",
+      "unavailable": "Su almacenamiento de copias de seguridad no está disponible. Póngase en contacto con el administrador de su organización.",
+      "ready": "Su almacenamiento de copias de seguridad está listo. Actualice la lista de repositorios para continuar.",
+      "loadFailed": "No se pudo consultar el estado del almacenamiento. Inténtelo de nuevo.",
+      "failedTitle": "Error al preparar el almacenamiento de copias de seguridad",
+      "readyTitle": "Almacenamiento de copias de seguridad listo",
+      "readySummary": "Su almacenamiento de copias de seguridad está listo para usar.",
+      "adminSummary": "Revise el repositorio de copias de seguridad \"{name}\" en Almacenamiento administrado."
+    },
+    "initialization": {
+      "title": "Inicialización",
+      "unknown_data": "No se pudo verificar la propiedad del almacenamiento. No elimine ni adopte datos desconocidos. Revise la ubicación del repositorio antes de reintentar.",
+      "connection": "Compruebe las credenciales, los permisos de nube y el acceso al bucket del almacenamiento de objetos asociado y reintente. Cambiar la conexión predeterminada no mueve este repositorio.",
+      "scheduling": "No se pudo programar la inicialización. Compruebe el servicio de tareas en segundo plano y reintente.",
+      "initialization": "Revise la última tarea de inicialización y la conexión de almacenamiento de objetos asociada y reintente. No se pueden cambiar las ubicaciones ni los destinos de delegación de las conexiones en uso."
+    }
+  },
+  "managedStorage.addRepositoryDescription": "Cree un repositorio de copias de seguridad para un usuario.",
+  "managedStorage.selectOwner": "Seleccione un usuario",
+  "managedStorage.ownersLoadFailed": "No se pudieron cargar los usuarios. Inténtelo de nuevo.",
+  "managedStorage.noOwners": "No se encontraron usuarios aptos.",
+  "managedStorage.searchMoreOwners": "Busque por nombre o correo electrónico para encontrar más usuarios.",
+  "personalUserLimits": {
+    "action": "Límites de usuario",
+    "title": "Límites de usuario de Personal Edition",
+    "description": "Límites predeterminados para cada usuario de Personal Edition. No afectan a otras organizaciones.",
+    "validation": "Introduzca un entero no negativo para cada límite. No se admite un valor ilimitado.",
+    "unconfigured": "Configure los tres límites antes de habilitar el registro de Personal Edition.",
+    "applies": "Los cambios también se aplican a los usuarios existentes de Personal Edition. Reducir los límites no elimina los datos existentes.",
+    "saved": "Se han guardado los límites de usuario de Personal Edition.",
+    "loadFailed": "No se pudieron cargar los límites de usuario. Inténtelo de nuevo.",
+    "saveFailed": "No se pudieron guardar los límites de usuario. Inténtelo de nuevo.",
+    "unit": "Unidad de capacidad",
+    "exceeded": "Ha alcanzado su límite de {meter}. Consulte Uso de recursos o contacte con su administrador.",
+    "storageUnavailable": "El uso de su almacenamiento de copias de seguridad no está disponible temporalmente. Inténtelo más tarde o contacte con su administrador.",
+    "backupStopped": "Se ha alcanzado el límite de almacenamiento de copias de seguridad del propietario del repositorio.",
+    "backupResolution": "Consulte el uso de recursos del propietario del repositorio o contacte con su administrador. La restauración y la limpieza siguen disponibles. Reintente cuando el uso medido sea inferior al límite o el administrador lo aumente."
   }
 }

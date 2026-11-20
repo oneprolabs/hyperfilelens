@@ -1029,6 +1029,9 @@ class LensRunSubmission(OrganizationScopedModel):
 class LensUsageLedger(OrganizationScopedModel):
     """Authoritative HFL-facing usage record for one SourceLens Q&A run."""
 
+    # Non-FK consumption identity survives account deletion. Never reassign a
+    # Run's usage when its session or administrator changes.
+    billing_user_id = models.PositiveBigIntegerField(null=True, blank=True)
     hfl_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -1076,10 +1079,33 @@ class LensUsageLedger(OrganizationScopedModel):
     reconciliation_next_at = models.DateTimeField(null=True, blank=True, db_index=True)
     reconciliation_error = models.TextField(blank=True, default="")
 
+    def save(self, *args, **kwargs):
+        fields = kwargs.get("update_fields")
+        if fields is not None and not fields:
+            return
+        attribution_fields = {"hfl_user", "hfl_user_id", "billing_user_id"}
+        if not self._state.adding and (fields is None or attribution_fields.intersection(fields)):
+            previous = type(self).objects.using(kwargs.get("using") or self._state.db).filter(pk=self.pk).values_list(
+                "billing_user_id", flat=True,
+            ).first()
+            if previous is not None and self.billing_user_id != previous:
+                raise ValueError("AI consumption ownership cannot be reassigned.")
+        if self.billing_user_id is None and self.hfl_user_id is not None:
+            self.billing_user_id = self.hfl_user_id
+            if fields is not None:
+                kwargs["update_fields"] = set(fields) | {"billing_user_id"}
+        if self.hfl_user_id is not None and self.billing_user_id != self.hfl_user_id:
+            raise ValueError("AI consumption ownership does not match the user.")
+        super().save(*args, **kwargs)
+
     class Meta:
         db_table = "lens_bridge_usage_ledger"
         ordering = ["-occurred_at", "-id"]
         indexes = [
+            models.Index(
+                fields=["organization", "billing_user_id"],
+                name="lens_busg_org_billusr_idx",
+            ),
             models.Index(
                 fields=["organization", "hfl_user", "occurred_at"],
                 name="lens_busg_org_usr_time_idx",

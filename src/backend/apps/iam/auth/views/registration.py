@@ -79,6 +79,13 @@ def _registration_mode_enabled(mode: str) -> bool:
     )
 
 
+def _personal_registration_unavailable_response() -> Response:
+    return _build_error_response(
+        "PERSONAL_REGISTRATION_UNAVAILABLE",
+        _("Personal registration is temporarily unavailable"),
+    )
+
+
 def _reset_rate_error(rate):
     if rate.allowed:
         return None
@@ -336,6 +343,13 @@ class EmailRegisterSendCodeView(AnonymousPublicViewMixin, APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        if registration_mode == "personal":
+            from common.extension_spi import get_registration_provider
+
+            provider = get_registration_provider()
+            if provider is None or not provider.registration_options().get("available", False):
+                return _personal_registration_unavailable_response()
 
         user, error_code, created = _get_or_create_pending_user(email)
         if error_code == "EMAIL_EXISTS":
@@ -633,10 +647,7 @@ class EmailRegisterConfirmView(AnonymousPublicViewMixin, APIView):
                 organization_name=organization_name or None,
             )
         except RegistrationUnavailableError:
-            return _build_error_response(
-                "PERSONAL_REGISTRATION_UNAVAILABLE",
-                _("Personal registration is temporarily unavailable"),
-            )
+            return _personal_registration_unavailable_response()
         if not success:
             if error_reason == "ALREADY_ACTIVE":
                 msg = _("Account is already active")

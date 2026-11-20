@@ -9,6 +9,39 @@ import { buildTaskFailureErrorDetails, extractSkippedDetails, hasFailureDetails,
 const { t } = createI18n({ legacy: false, locale: 'en', messages: { en } }).global
 
 describe('backup task error details', () => {
+  it.each(['en', 'zh-hans', 'es'])('explains user storage limits without cloud-capacity advice in %s', (locale) => {
+    const messages = locale === 'en' ? en : JSON.parse(
+      readFileSync(resolve(process.cwd(), `../../language-packs/packs/${locale}/frontend/messages.json`), 'utf8'),
+    )
+    const { t: translate } = createI18n({
+      legacy: false, locale, messages: { [locale]: messages },
+    }).global
+    const code = 'USER_BACKUP_STORAGE_LIMIT_REACHED'
+    const task = {
+      task_uuid: 'quota-backup', task_type: 'backup', status: 'failed',
+      error_code: code, error_message: 'temporary storage credential authorization failed',
+      result_payload: { terminal_failure: { error_code: code } },
+    } as TaskRow
+    for (const error_details of [undefined, {
+      version: 1, severity: 'error', outcome: 'failed', summary: 'Task failed.',
+      error_code: code,
+      reasons: [{ code, detail: 'untranslated reason' }],
+      suggestions: [{ code: 'review_user_resource_usage', detail: 'untranslated suggestion' }],
+    }]) {
+      const details = buildTaskFailureErrorDetails({ task: { ...task, error_details } as TaskRow, t: translate })
+      expect(details.errorCode).toBe(code)
+      expect(details.reasons?.[0]).toBe(translate('personalUserLimits.backupStopped'))
+      expect(details.resolutions?.[0]).toBe(translate('personalUserLimits.backupResolution'))
+      expect(details.reasons?.join()).not.toContain('credential')
+      expect(details.resolutions?.join()).not.toContain('expand the target')
+    }
+    const snapshot = buildSnapshotFailureErrorDetails({
+      task, snapshotStatus: 'failed', errorCode: code, t: translate,
+    })
+    expect(snapshot?.reasons).toContain(translate('personalUserLimits.backupStopped'))
+    expect(snapshot?.resolutions).toEqual([translate('personalUserLimits.backupResolution')])
+  })
+
   it.each(['en', 'zh-hans', 'es'])('localizes repository host connectivity contracts in %s', (locale) => {
     const messages = locale === 'en' ? en : JSON.parse(
       readFileSync(resolve(process.cwd(), `../../language-packs/packs/${locale}/frontend/messages.json`), 'utf8'),

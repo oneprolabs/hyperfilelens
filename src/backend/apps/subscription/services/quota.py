@@ -96,6 +96,35 @@ def _quota_amount(quota_key: str, value: int | float) -> int | float:
     return float(numeric)
 
 
+def enforce_user_quota(organization, user_id: int | None, resource_type: str, additional: int = 0):
+    """Enterprise user admission; Host-only installations have no user layer."""
+    provider = get_quota_provider()
+    if provider is not None:
+        check = _user_quota_method(provider, "check_user_quota", resource_type)
+        return check(organization, user_id, resource_type, additional)
+
+
+def enforce_repository_user_quota(repository):
+    """Resolve storage consumption through the active Enterprise provider."""
+    provider = get_quota_provider()
+    if provider is not None:
+        check = _user_quota_method(provider, "check_repository_user_quota", "max_storage_bytes")
+        return check(repository)
+
+
+def _user_quota_method(provider, method: str, meter: str):
+    check = getattr(provider, method, None)
+    if not callable(check):
+        # A mismatched Host/EE pair must not silently disable user enforcement.
+        raise AppError(
+            code="SUBSCRIPTION.QUOTA_USAGE_UNAVAILABLE", status=503,
+            title="User quota enforcement is unavailable. Contact your administrator.",
+            diagnostic="The active QuotaProvider does not support user admission.",
+            meta={"scope": "organization_user", "quota_type": meter},
+        )
+    return check
+
+
 def enforce_license_quota(organization, resource_type: str, additional: int | float = 1):
     """Deny new consumption when it exceeds the effective quota.
 

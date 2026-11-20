@@ -1912,13 +1912,8 @@ render_backend_result() {
 				;;
 		esac
 		case "${line}" in
-			Email\ sign-up:*)
-				value="${line#Email sign-up: }"
-				hfl_log_emit_with_component ' OK ' identity "Email sign-up ${value}"
-				;;
-			Google\ OAuth:*)
-				value="${line#Google OAuth: }"
-				hfl_log_emit_with_component ' OK ' identity "Google OAuth ${value}"
+			Email\ sign-up:*|Enterprise\ registration:*|Personal\ registration:*|Google\ OAuth:*|Turnstile:*|SMTP:*)
+				hfl_log_emit_with_component ' OK ' identity "${line/:/}"
 				;;
 			HFL_IDENTITY_STATUS=applied)
 				;;
@@ -1949,21 +1944,21 @@ sync_optional_identity_settings() {
 		return 0
 	fi
 
-	hfl_log_step "Synchronizing deployment identity"
+	hfl_log_step "Checking effective identity and email settings"
 	set +e
 	output="$(compose exec -T api python manage.py ensure_deployment_identity_settings 2>&1)"
 	command_status=$?
 	set -e
 	render_backend_result identity "${output}"
 	if [[ "${command_status}" -ne 0 ]]; then
-		hfl_log_emit_with_component FAIL identity "Deployment identity synchronization failed"
+		hfl_log_emit_with_component FAIL identity "Effective identity configuration check failed"
 		[[ "${VERBOSE}" -eq 1 ]] || printf '%s\n' "${output}" | hfl_log_output_section backend
-		warn "Optional identity or email settings could not be synchronized; the dev stack remains available"
+		warn "Optional identity or email checks could not be completed; the dev stack remains available"
 		return 0
 	elif grep -F 'HFL_IDENTITY_STATUS=warning' <<<"${output}" >/dev/null; then
-		warn "Invalid optional identity or email settings were preserved"
+		warn "Effective identity or email configuration needs attention; runtime overrides were not changed"
 	else
-		hfl_log_ok "Deployment identity synchronized"
+		hfl_log_ok "Effective identity and email settings checked"
 	fi
 
 	set +e
@@ -2038,7 +2033,7 @@ cmd_up() {
 	compose_logged up -d --no-build --pull never "${worktree_recreate_args[@]}" --remove-orphans
 	refresh_website_web_mount
 	hfl_log_ok "Hot-reload HyperFileLens services started"
-	hfl_log_step "[6/8] Applying identity and email configuration"
+	hfl_log_step "[6/8] Checking effective identity and email settings"
 	sync_optional_identity_settings
 	hfl_log_step "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev
@@ -2102,7 +2097,7 @@ cmd_restart() {
 		refresh_website_web_mount
 	fi
 	hfl_log_ok "HyperFileLens development services restarted"
-	hfl_log_step "[6/8] Applying identity and email configuration"
+	hfl_log_step "[6/8] Checking effective identity and email settings"
 	sync_optional_identity_settings
 	hfl_log_step "[7/8] Preparing Platform Data Gateway"
 	ensure_local_platform_gateway_dev

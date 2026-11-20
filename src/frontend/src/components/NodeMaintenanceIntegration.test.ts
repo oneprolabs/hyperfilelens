@@ -34,6 +34,8 @@ describe('node maintenance UI integration', () => {
     expect(panel).toContain("styles/fullscreen-form-styles'")
     expect(panel).toContain('source-deploy-ui.css')
     expect(panel).toContain('agent-install-wizard.css')
+    expect(panel).toContain("import '../styles/agent-install-wizard.css'")
+    expect(panel).not.toContain('<style src="../styles/agent-install-wizard.css"')
     expect(wizard).toContain("if (props.maintenanceOnly) return ['upgrade', 'configure', 'uninstall', 'service']")
     expect(wizard).toContain("'agent-install-wizard--maintenance': maintenanceOnly")
     expect(wizard).toContain('.agent-install-wizard--maintenance .agent-install-wizard__body-grid')

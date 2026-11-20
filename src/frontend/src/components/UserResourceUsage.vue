@@ -27,6 +27,11 @@ function display(item: UserUsageItem, value: number | null = item.used): string 
   return item.unit === 'bytes' ? formatQuotaBytes(value)
     : new Intl.NumberFormat(locale.value).format(value)
 }
+function percentage(item: UserUsageItem): number {
+  if (item.limit < 0 || item.used === null) return 0
+  if (item.limit === 0) return item.used > 0 ? 100 : 0
+  return Math.min(100, Math.max(0, item.used / item.limit * 100))
+}
 function measurementHint(item: UserUsageItem): string {
   if (item.status === 'complete') return ''
   if (item.reason === 'storage_attribution') return ''
@@ -142,9 +147,21 @@ onBeforeUnmount(() => { ++generation; controller?.abort() })
         <div class="user-resource-usage__progress">
           <span
             class="user-resource-usage__track"
-            aria-hidden="true"
-          />
-          <span class="user-resource-usage__limit">{{ t('settings.subscription.unlimited') }}</span>
+            :class="{ 'is-exceeded': item.limit >= 0 && item.used !== null && item.used > item.limit }"
+            :role="item.limit >= 0 && item.used !== null ? 'progressbar' : undefined"
+            :aria-hidden="item.limit < 0 || item.used === null ? true : undefined"
+            :aria-label="item.limit >= 0 && item.used !== null ? t(quotaMeterLabelKey(item.key)) : undefined"
+            :aria-valuemin="item.limit >= 0 && item.used !== null ? 0 : undefined"
+            :aria-valuemax="item.limit >= 0 && item.used !== null ? item.limit : undefined"
+            :aria-valuenow="item.limit >= 0 && item.used !== null ? Math.min(item.used, item.limit) : undefined"
+          >
+            <span
+              v-if="item.limit >= 0 && item.used !== null"
+              class="user-resource-usage__fill"
+              :style="{ width: `${percentage(item)}%` }"
+            />
+          </span>
+          <span class="user-resource-usage__limit">{{ item.limit < 0 ? t('settings.subscription.unlimited') : display(item, item.limit) }}</span>
         </div>
         <p
           v-if="item.status !== 'complete' && measurementHint(item)"
@@ -171,7 +188,9 @@ onBeforeUnmount(() => { ++generation; controller?.abort() })
 .user-resource-usage__label { min-width: 0; overflow: hidden; color: var(--color-text-secondary, #606266); font-size: 12px; line-height: normal; text-overflow: ellipsis; white-space: nowrap; }
 .user-resource-usage__value { color: var(--color-text-primary, #303133); font-size: 12px; line-height: normal; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .user-resource-usage__progress { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) max-content; column-gap: 12px; align-items: center; min-width: 0; }
-.user-resource-usage__track { min-width: 0; height: 5px; border-radius: 3px; background: var(--el-fill-color); }
+.user-resource-usage__track { display: block; overflow: hidden; min-width: 0; height: 5px; border-radius: 3px; background: var(--el-fill-color); }
+.user-resource-usage__fill { display: block; height: 100%; border-radius: inherit; background: var(--el-color-primary); }
+.user-resource-usage__track.is-exceeded .user-resource-usage__fill { background: var(--el-color-danger); }
 .user-resource-usage__limit { color: var(--color-text-secondary, #606266); font-size: 12px; line-height: 1; white-space: nowrap; }
 .user-resource-usage__hint { grid-column: 1 / -1; margin: 0; color: var(--el-text-color-secondary); font-size: 12px; line-height: 20px; }
 .user-resource-usage__message { display: flex; align-items: center; gap: 12px; padding: 24px 0; color: var(--el-text-color-secondary); font-size: 14px; }
