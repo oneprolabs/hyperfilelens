@@ -20,6 +20,21 @@ class RepositoryCleanupAuthorizationLost(RuntimeError):
     """A cleanup executor lost authorization; Force must not bypass its fence."""
 
 
+class ManagedRepositoryAuthorizationLost(RuntimeError):
+    """A verified managed execution can no longer access its repository."""
+
+    error_code = "MANAGED_REPOSITORY_AUTHORIZATION_LOST"
+    public_message = (
+        "Managed repository execution authorization is no longer valid. "
+        "Review the repository configuration and operation permissions before retrying."
+    )
+
+    def __init__(self, reason: str) -> None:
+        # Keep internal context separate from credential-free task presentation.
+        self.reason = reason
+        super().__init__(self.public_message)
+
+
 class RepositoryHealthTransportUnconfirmed(RuntimeError):
     """Raised when an Agent probe has no authoritative repository outcome."""
 

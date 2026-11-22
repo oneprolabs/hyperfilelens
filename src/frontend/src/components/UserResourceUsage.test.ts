@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { en } from '../locales/en'
 import { USER_USAGE_METERS, validUserUsage, type UserUsage } from '../lib/userUsageApi'
 import UserResourceUsage from './UserResourceUsage.vue'
+import { PERSONAL_USER_QUOTA_METERS } from '../lib/personalUserQuota'
 
 const mocks = vi.hoisted(() => ({ api: vi.fn(), auth: { currentUser: null as unknown }, org: vi.fn() }))
 vi.mock('../composables/useAuth', () => ({
@@ -46,6 +47,45 @@ beforeEach(() => {
 afterEach(() => { wrappers.splice(0).forEach(wrapper => wrapper.unmount()) })
 
 describe('organization-user resource usage', () => {
+  it.each([undefined, 19])('shows actual usage with unconfigured limits for self/member %s', async userId => {
+    const data = payload(userId ?? 7)
+    data.items.forEach(item => {
+      if (PERSONAL_USER_QUOTA_METERS.some(key => key === item.key)) {
+        Object.assign(item, { limit: null, limit_source: 'personal_unconfigured' })
+      }
+    })
+    mocks.api.mockResolvedValue(data)
+    const wrapper = render({ userId })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain(en.accountUsage.loadFailed)
+    expect(wrapper.findAll('[data-meter]')).toHaveLength(USER_USAGE_METERS.length)
+    expect(wrapper.text()).not.toContain(en.accountUsage.limitsNotConfigured)
+    expect(wrapper.find('.user-resource-usage__notice').exists()).toBe(false)
+    for (const key of PERSONAL_USER_QUOTA_METERS) {
+      const card = wrapper.get(`[data-meter="${key}"]`)
+      expect(card.get('.user-resource-usage__limit').text()).toBe('Not Configured')
+      expect(card.get('.user-resource-usage__value').text()).not.toBe('—')
+      expect(card.find('[role="progressbar"]').exists()).toBe(false)
+      expect(card.find('.user-resource-usage__fill').exists()).toBe(false)
+    }
+    expect(wrapper.get('[data-meter="max_source_hosts"] .user-resource-usage__limit').text()).toBe('Unlimited')
+  })
+
+  it('rejects unconfigured limits with invalid sources, values, or unrelated meters', () => {
+    for (const [key, limit, source] of [
+      ['max_source_hosts', null, 'personal_unconfigured'],
+      ['ai_tokens', null, 'personal_default'],
+      ['ai_tokens', null, 'default_unlimited'],
+      ['ai_tokens', -1, 'personal_unconfigured'],
+      ['ai_tokens', 0, 'personal_unconfigured'],
+      ['ai_tokens', undefined, 'personal_unconfigured'],
+    ]) {
+      const data = payload()
+      Object.assign(data.items.find(item => item.key === key)!, { limit, limit_source: source })
+      expect(validUserUsage(data, 'org-a', 7)).toBe(false)
+    }
+  })
+
   it('renders finite limits, clamps overage progress, and keeps other meters Unlimited', async () => {
     const data = payload()
     Object.assign(data.items.find(i => i.key === 'ai_tokens')!, {

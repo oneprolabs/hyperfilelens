@@ -56,6 +56,7 @@ from apps.storage.services.internal.repository_health import (
     repository_health_lock_key,
 )
 from apps.storage.services.internal.repository_errors import (
+    ManagedRepositoryAuthorizationLost,
     is_repository_health_transport_unconfirmed,
 )
 from apps.storage.services.internal.s3_validation_errors import (
@@ -1100,6 +1101,19 @@ def _execute_repository_operation(
             "status": cancelled_task.status,
             "repository_task_id": repository_task.id,
         }
+    except ManagedRepositoryAuthorizationLost:
+        # The CLI supervisor has stopped/reaped its child before propagating
+        # this exception. Never leave a known denial RUNNING until watchdog
+        # recovery mislabels it as a Controller restart. Finalization still
+        # fences replacements/cancellation using the exact execution token.
+        failed_task = finalize_repository_operation(
+            repository_task_id=repository_task.id,
+            succeeded=False,
+            error_code=ManagedRepositoryAuthorizationLost.error_code,
+            error_message=ManagedRepositoryAuthorizationLost.public_message,
+            expected_execution_token=execution_token,
+        )
+        return {"status": failed_task.status, "repository_task_id": repository_task.id}
     except KopiaExecutionLeaseLost:
         if background_lease is not None and not background_lease.valid:
             logger.warning(

@@ -12,8 +12,8 @@ export const USER_USAGE_METERS = [
 export interface UserUsageItem {
   key: string
   unit: 'count' | 'bytes' | 'tokens'
-  limit: number
-  limit_source: 'default_unlimited' | 'personal_default'
+  limit: number | null
+  limit_source: 'default_unlimited' | 'personal_default' | 'personal_unconfigured'
   used: number | null
   known_used: number
   status: 'complete' | 'partial' | 'unknown'
@@ -40,8 +40,11 @@ export function validUserUsage(data: UserUsage, orgKey: string, userId: number):
       || !nonnegative(item.known_used)) return false
     const finitePersonalLimit = item.limit_source === 'personal_default'
       && PERSONAL_USER_QUOTA_METERS.some(key => key === item.key)
-      && Number.isSafeInteger(item.limit) && item.limit >= 0
-    if (!(item.limit === -1 && item.limit_source === 'default_unlimited') && !finitePersonalLimit) return false
+      && item.limit !== null && Number.isSafeInteger(item.limit) && item.limit >= 0
+    const unconfiguredPersonalLimit = item.limit === null && item.limit_source === 'personal_unconfigured'
+      && PERSONAL_USER_QUOTA_METERS.some(key => key === item.key)
+    if (!(item.limit === -1 && item.limit_source === 'default_unlimited')
+      && !finitePersonalLimit && !unconfiguredPersonalLimit) return false
     const unit = item.key.endsWith('_bytes') ? 'bytes' : item.key === 'ai_tokens' ? 'tokens' : 'count'
     if (item.unit !== unit) return false
     if (item.status === 'complete') return nonnegative(item.used) && item.used === item.known_used

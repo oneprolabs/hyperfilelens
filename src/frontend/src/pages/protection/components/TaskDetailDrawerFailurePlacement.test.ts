@@ -370,6 +370,42 @@ describe('TaskDetailDrawer failure placement', () => {
     wrapper.unmount()
   })
 
+  it.each(['en', 'zh-hans', 'es'])('shows managed authorization guidance without restart advice in %s', async locale => {
+    i18n.global.locale.value = locale
+    const code = 'MANAGED_REPOSITORY_AUTHORIZATION_LOST'
+    const suggestion = 'review_managed_repository_authorization'
+    vi.mocked(getTask).mockResolvedValue({
+      ...task,
+      task_type: 'repository_operation',
+      status: 'failed',
+      steps: [{ ...steps[0], status: 'failed' }, steps[1]],
+      error_details: {
+        ...task.error_details!,
+        severity: 'error',
+        outcome: 'failed',
+        summary: 'Task failed.',
+        reasons: [{ code, detail: 'Managed repository execution authorization is no longer valid.' }],
+        suggestions: [{ code: suggestion, detail: suggestion }],
+      },
+    })
+    vi.mocked(listTaskEvents).mockResolvedValue({
+      count: 1,
+      results: [{
+        id: 8, step_id: 1, seq: 8, level: 'ERROR',
+        message: 'Task finished with status failed',
+        metadata: { error_code: code, error_message: 'Managed repository execution authorization is no longer valid.' },
+      }],
+    })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.findAll('.task-event-failure__terminal-box')).toHaveLength(1)
+    expect(wrapper.get('.task-event-failure__remediation-list').text())
+      .toContain(i18n.global.t(`ops.task.failureDetails.suggestion.${suggestion}`))
+    expect(wrapper.text()).not.toContain(i18n.global.t('ops.task.failureDetails.suggestion.recover_controller_interruption'))
+    expect(wrapper.text()).not.toContain(suggestion)
+    wrapper.unmount()
+  })
+
   it('keeps the generic fallback when an error message has no standard error code', async () => {
     vi.mocked(getTask).mockResolvedValue({
       ...task,
