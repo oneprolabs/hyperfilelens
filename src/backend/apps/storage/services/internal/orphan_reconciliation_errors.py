@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 
 from apps.storage.services.internal.kopia_cli import KopiaCliError
 from apps.storage.services.internal.repository_ownership import RepositoryOwnershipError
+from apps.storage.services.internal.repository_errors import ManagedRepositoryAuthorizationLost
 
 
 class OrphanReconciliationError(Exception):
@@ -18,6 +19,8 @@ def classify_reconciliation_error(error, stage):
     """Never echo CLI output or arbitrary exceptions that can contain secrets."""
     if isinstance(error, OrphanReconciliationError):
         code, message = error.code, error.message
+    elif isinstance(error, ManagedRepositoryAuthorizationLost):
+        code, message = error.error_code, error.public_message
     elif isinstance(error, RepositoryOwnershipError):
         code = "ORPHAN_OWNERSHIP_UNVERIFIED"
         message = "Verify the physical repository ownership before manually retrying reconciliation."

@@ -163,13 +163,13 @@ describe('Admin Console governance navigation copy', () => {
     }
   })
 
-  it('names platform role and subscription plan catalogs without renaming tenant roles', () => {
+  it('separates organization and personal plan catalogs without renaming tenant roles', () => {
     const nav = en.platformOps.nav
     expect([
       nav.orgs, nav.users, nav.roles, nav.resources,
-      nav.platformQuotaUsage, nav.platformInstanceLicense,
+      nav.platformQuotaUsage, nav.platformPersonalPlans, nav.platformInstanceLicense,
     ]).toEqual([
-      'Organizations', 'Users', 'Platform Roles', 'Resources', 'Subscription Plans', 'License',
+      'Organizations', 'Users', 'Platform Roles', 'Resources', 'Organization Plans', 'Personal Plans', 'License',
     ])
     expect(en.settings.nav.roles).toBe('Roles')
   })

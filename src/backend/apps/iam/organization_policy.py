@@ -15,6 +15,17 @@ SOURCE_PERMISSION_CAPABILITIES = {
     "protection.proxy_hosts": "proxy_hosts",
     "protection.tags": "source_tags",
 }
+# Permission families that represent product capabilities rather than merely
+# organization RBAC.  Keep this mapping next to the organization policy so
+# the backend can enforce Personal Edition boundaries even when a stored Role
+# was created before the capability was introduced.
+PERMISSION_CAPABILITIES = {
+    "configuration.managed_storage": "managed_storage",
+    "protection.object_storage_repositories": "object_storage",
+    "protection.target_nas_repositories": "target_nas",
+    "protection.local_disk_repositories": "local_disks",
+    **SOURCE_PERMISSION_CAPABILITIES,
+}
 
 
 @dataclass(frozen=True)
@@ -42,8 +53,26 @@ class OrganizationPolicy:
 
     def allows_source_permission(self, permission: str) -> bool:
         """Product availability for source operations, independent of RBAC."""
-        capability = SOURCE_PERMISSION_CAPABILITIES.get(permission.rsplit(".", 1)[0])
+        return self.allows_permission(permission)
+
+    def allows_permission(self, permission: str) -> bool:
+        """Return whether a Role permission is supported by this organization.
+
+        Managed repositories intentionally remain available in Personal
+        Edition even though direct, user-configured Object Storage does not:
+        the managed-storage API applies the separate administration boundary.
+        """
+        prefix = str(permission).rsplit(".", 1)[0]
+        capability = PERMISSION_CAPABILITIES.get(prefix)
+        if prefix == "protection.object_storage_repositories" and self.managed_storage:
+            return True
         return capability is None or self.capabilities()[capability]
+
+    def filter_permissions(self, permissions) -> frozenset[str]:
+        """Remove unsupported product capabilities from a stored Role bundle."""
+        return frozenset(
+            permission for permission in permissions if self.allows_permission(permission)
+        )
 
 
 def resolve_organization_policy(

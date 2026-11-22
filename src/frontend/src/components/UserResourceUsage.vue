@@ -5,7 +5,11 @@ import { RefreshCw } from 'lucide-vue-next'
 import { currentUser, getEffectiveOrgKey } from '../composables/useAuth'
 import { isAbortError } from '../lib/api'
 import { formatQuotaBytes, quotaMeterLabelKey } from '../lib/licenseQuotaDisplay'
-import { fetchUserUsage, validUserUsage, type UserUsageItem } from '../lib/userUsageApi'
+import {
+  fetchUserUsage,
+  validUserUsage,
+  type UserUsageItem,
+} from '../lib/userUsageApi'
 
 const props = withDefaults(defineProps<{ userId?: number; active?: boolean; showTitle?: boolean; showRefresh?: boolean }>(), {
   active: true,
@@ -28,7 +32,7 @@ function display(item: UserUsageItem, value: number | null = item.used): string 
     : new Intl.NumberFormat(locale.value).format(value)
 }
 function percentage(item: UserUsageItem): number {
-  if (item.limit < 0 || item.used === null) return 0
+  if (item.limit === null || item.limit < 0 || item.used === null) return 0
   if (item.limit === 0) return item.used > 0 ? 100 : 0
   return Math.min(100, Math.max(0, item.used / item.limit * 100))
 }
@@ -147,21 +151,23 @@ onBeforeUnmount(() => { ++generation; controller?.abort() })
         <div class="user-resource-usage__progress">
           <span
             class="user-resource-usage__track"
-            :class="{ 'is-exceeded': item.limit >= 0 && item.used !== null && item.used > item.limit }"
-            :role="item.limit >= 0 && item.used !== null ? 'progressbar' : undefined"
-            :aria-hidden="item.limit < 0 || item.used === null ? true : undefined"
-            :aria-label="item.limit >= 0 && item.used !== null ? t(quotaMeterLabelKey(item.key)) : undefined"
-            :aria-valuemin="item.limit >= 0 && item.used !== null ? 0 : undefined"
-            :aria-valuemax="item.limit >= 0 && item.used !== null ? item.limit : undefined"
-            :aria-valuenow="item.limit >= 0 && item.used !== null ? Math.min(item.used, item.limit) : undefined"
+            :class="{ 'is-exceeded': item.limit !== null && item.limit >= 0 && item.used !== null && item.used > item.limit }"
+            :role="item.limit !== null && item.limit >= 0 && item.used !== null ? 'progressbar' : undefined"
+            :aria-hidden="item.limit === null || item.limit < 0 || item.used === null ? true : undefined"
+            :aria-label="item.limit !== null && item.limit >= 0 && item.used !== null ? t(quotaMeterLabelKey(item.key)) : undefined"
+            :aria-valuemin="item.limit !== null && item.limit >= 0 && item.used !== null ? 0 : undefined"
+            :aria-valuemax="item.limit !== null && item.limit >= 0 && item.used !== null ? item.limit : undefined"
+            :aria-valuenow="item.limit !== null && item.limit >= 0 && item.used !== null ? Math.min(item.used, item.limit) : undefined"
           >
             <span
-              v-if="item.limit >= 0 && item.used !== null"
+              v-if="item.limit !== null && item.limit >= 0 && item.used !== null"
               class="user-resource-usage__fill"
               :style="{ width: `${percentage(item)}%` }"
             />
           </span>
-          <span class="user-resource-usage__limit">{{ item.limit < 0 ? t('settings.subscription.unlimited') : display(item, item.limit) }}</span>
+          <span class="user-resource-usage__limit">{{ item.limit === null
+            ? t('accountUsage.limitNotConfigured')
+            : item.limit < 0 ? t('settings.subscription.unlimited') : display(item, item.limit) }}</span>
         </div>
         <p
           v-if="item.status !== 'complete' && measurementHint(item)"

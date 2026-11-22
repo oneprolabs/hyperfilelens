@@ -149,6 +149,8 @@ def _default_suggestion_code(task) -> str:
         return "recover_controller_interruption"
     if task_type == "repository_operation" and error_code == "REPOSITORY_OPERATION_TIMEOUT":
         return "investigate_repository_timeout"
+    if task_type == "repository_operation" and error_code == "MANAGED_REPOSITORY_AUTHORIZATION_LOST":
+        return "review_managed_repository_authorization"
     if _repository_agent_unreachable(task):
         return f"reconnect_repository_{_repository_connection_role(task)}"
     return {

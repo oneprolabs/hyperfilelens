@@ -1,5 +1,6 @@
 import signal
 import subprocess
+import sys
 from subprocess import CompletedProcess
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,12 +18,14 @@ from apps.storage.services.internal.kopia_cli import (
     _connection_fingerprint_file,
     _invalidate_changed_s3_connection,
     _run_repository_command_unlocked,
+    _run_repository_process,
     _s3_flags,
     _terminate_process_group,
     create_s3_repository,
     delete_s3_snapshots,
     run_maintenance,
 )
+from apps.storage.services.internal.repository_errors import ManagedRepositoryAuthorizationLost
 
 
 class KopiaS3URLStyleCommandTests(SimpleTestCase):
@@ -213,6 +216,40 @@ class KopiaSnapshotDeleteCommandTests(SimpleTestCase):
 
 
 class KopiaMaintenanceCommandTests(SimpleTestCase):
+    def test_authorization_denial_stops_and_reaps_a_running_child(self):
+        """Use a real harmless child, not Kopia or a cloud repository."""
+        repository = Repository(id=52, repo_type=Repository.Type.S3)
+        real_popen = subprocess.Popen
+        children = []
+
+        def start_child(*args, **kwargs):
+            child = real_popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"], **kwargs,
+            )
+            children.append(child)
+            return child
+
+        def revoke_identity():
+            raise ManagedRepositoryAuthorizationLost("Synthetic revocation.")
+
+        with (
+            TemporaryDirectory() as temporary,
+            patch("apps.storage.services.internal.kopia_cli._environment", return_value={}),
+            patch("apps.storage.services.internal.kopia_cli._invalidate_changed_s3_connection"),
+            patch("apps.storage.services.internal.kopia_cli._kopia_path", return_value=sys.executable),
+            patch("apps.storage.services.internal.kopia_cli.subprocess.Popen", side_effect=start_child),
+            self.assertRaises(ManagedRepositoryAuthorizationLost),
+        ):
+            _run_repository_process(
+                repository, ["maintenance", "run"], timeout_seconds=10,
+                config_file=Path(temporary) / "repository.config",
+                renew_identity=revoke_identity,
+            )
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].returncode)
+        for child in children:
+            child.communicate(timeout=1)
+
     @patch(
         "apps.storage.services.internal.repository_ownership.verify_s3_repository_ownership"
     )

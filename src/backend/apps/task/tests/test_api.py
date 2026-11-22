@@ -214,6 +214,21 @@ class TaskApiTests(TestCase):
             }],
         )
 
+    def test_managed_authorization_denial_does_not_recommend_restart_recovery(self):
+        task = Task.objects.create(
+            organization_id=self.org.id,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Quick maintenance",
+            status=Task.Status.FAILED,
+            error_code="MANAGED_REPOSITORY_AUTHORIZATION_LOST",
+            error_message="Managed repository execution authorization is no longer valid.",
+        )
+        contract = TaskSerializer(task).data["error_details"]
+        self.assertEqual(contract["reasons"][0]["code"], task.error_code)
+        self.assertEqual(
+            contract["suggestions"][0]["code"], "review_managed_repository_authorization",
+        )
+
     def test_repository_timeout_separates_legacy_reason_from_guidance(self):
         legacy_message = (
             "Repository maintenance exceeded its execution time limit. Check "
