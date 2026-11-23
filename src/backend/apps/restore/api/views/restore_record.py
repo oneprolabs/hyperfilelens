@@ -104,6 +104,22 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
         task_status = params.get("status") or None
         if task_status and task_status not in Task.Status.values:
             raise ValidationError({"status": "Unsupported task status."})
+        history_only = params.get("history_only", "false")
+        if history_only not in {"true", "false"}:
+            raise ValidationError({"history_only": "Expected true or false."})
+        running_only = params.get("running_only", "false")
+        if running_only not in {"true", "false"}:
+            raise ValidationError({"running_only": "Expected true or false."})
+        if history_only == running_only == "true":
+            raise ValidationError({"running_only": "Cannot be combined with history_only."})
+        backup_config_ids = None
+        if "backup_config_ids" in params:
+            try:
+                backup_config_ids = [int(value) for value in params["backup_config_ids"].split(",")]
+                if any(not 0 < value < 2**63 for value in backup_config_ids):
+                    raise ValueError
+            except ValueError as exc:
+                raise ValidationError({"backup_config_ids": "Expected comma-separated positive IDs."}) from exc
         source_mode = params.get("source_mode") or None
         if source_mode and source_mode not in RestoreRecord.SourceMode.values:
             raise ValidationError({"source_mode": "Unsupported restore configuration."})
@@ -116,6 +132,9 @@ class RestoreRecordViewSet(viewsets.ModelViewSet):
             search=params.get("search") or None,
             search_fields=_restore_record_search_fields(params.get("search_fields")),
             status=task_status,
+            history_only=history_only == "true",
+            running_only=running_only == "true",
+            backup_config_ids=backup_config_ids,
             source_mode=source_mode,
             created_from=_datetime_query_param(
                 params.get("created_from"), "created_from"

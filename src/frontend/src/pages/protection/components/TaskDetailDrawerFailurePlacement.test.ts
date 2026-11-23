@@ -61,7 +61,7 @@ function mountDrawer() {
       directives: { loading: {}, 'table-column-resize': {}, 'table-overflow-title': {} },
       stubs: {
         ElDrawer: { template: '<div><slot name="header" /><slot /></div>' },
-        ElButton: true,
+        ElButton: { props: ['loading', 'disabled'], template: '<button :disabled="loading || disabled"><slot /></button>' },
         ElTag: true,
         ElTabs: { template: '<div><slot /></div>' },
         ElTabPane: { template: '<div><slot /></div>' },
@@ -85,6 +85,54 @@ beforeEach(() => {
 afterEach(() => {
   i18n.global.locale.value = 'en'
   vi.clearAllMocks()
+})
+
+const eventAt = (seq: number): TaskEventRow => ({ id: seq, seq, step_id: 1, level: 'INFO', message: `Event ${seq}` })
+
+describe('TaskDetailDrawer event pagination', () => {
+  it('keeps the first 300 events and retries a failed next page at the same cursor', async () => {
+    vi.mocked(listTaskEvents)
+      .mockResolvedValueOnce({ count: 301, results: Array.from({ length: 300 }, (_, index) => eventAt(index + 1)) })
+      .mockRejectedValueOnce(new Error('Events unavailable'))
+      .mockResolvedValueOnce({ count: 1, results: [eventAt(301)] })
+    const wrapper = mountDrawer()
+    const footerButton = () => wrapper.get('.hfl-list-footer button')
+    await flushPromises()
+    expect(footerButton().text()).toBe('Load More')
+    expect(wrapper.findAll('.hfl-task-drawer__event-row')).toHaveLength(300)
+    await footerButton().trigger('click')
+    await flushPromises()
+    expect(footerButton().text()).toBe('Retry')
+    expect(wrapper.findAll('.hfl-task-drawer__event-row')).toHaveLength(300)
+    await footerButton().trigger('click')
+    await flushPromises()
+    expect(vi.mocked(listTaskEvents).mock.calls.slice(1).map(([, params]) => params?.after_seq)).toEqual([300, 300])
+    expect(wrapper.findAll('.hfl-task-drawer__event-row')).toHaveLength(301)
+    expect(wrapper.text()).toContain('Event 301')
+    expect(wrapper.find('.hfl-list-footer button').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('ignores a previous task’s in-flight page when switching tasks', async () => {
+    let resolvePrevious!: (result: { count: number; results: TaskEventRow[] }) => void
+    vi.mocked(getTask).mockImplementation(async (uuid) => ({ ...task, task_uuid: uuid }))
+    vi.mocked(listTaskEvents)
+      .mockResolvedValueOnce({ count: 2, results: [eventAt(1)] })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolvePrevious = resolve }))
+      .mockResolvedValueOnce({ count: 1, results: [eventAt(9)] })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get('.hfl-list-footer button').trigger('click')
+    expect(wrapper.get('.hfl-list-footer button').attributes('disabled')).toBeDefined()
+    await wrapper.setProps({ taskUuid: 'other-task' })
+    await flushPromises()
+    resolvePrevious({ count: 1, results: [eventAt(2)] })
+    await flushPromises()
+    expect(vi.mocked(listTaskEvents).mock.calls[1]?.[2]?.signal?.aborted).toBe(true)
+    expect(wrapper.findAll('.hfl-task-drawer__event-row')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Event 9')
+    wrapper.unmount()
+  })
 })
 
 describe('TaskDetailDrawer failure placement', () => {

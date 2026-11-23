@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from django.db.models import Q, QuerySet
+from django.db.models import Exists, OuterRef, Q, QuerySet
 
 from apps.protection.models import BackupSourceSnapshot
-from apps.restore.models import RestorePlan, RestoreRecord
+from apps.restore.models import RestorePlan, RestoreRecord, RestoreRecordItem
 from apps.task.models import Task
 
 
@@ -57,6 +57,9 @@ def filter_restore_records(
     search: str | None = None,
     search_fields: Iterable[str] | None = None,
     status: str | None = None,
+    history_only: bool = False,
+    running_only: bool = False,
+    backup_config_ids: Iterable[int] | None = None,
     source_mode: str | None = None,
     created_from=None,
     created_to=None,
@@ -73,6 +76,33 @@ def filter_restore_records(
             status=status,
         ).values("task_uuid")
         queryset = queryset.filter(task_uuid__in=task_uuids)
+    if backup_config_ids is not None:
+        snapshot_ids = BackupSourceSnapshot.objects.filter(
+            organization_id=organization_id,
+            backup_config_id__in=backup_config_ids,
+        ).values("id")
+        queryset = queryset.filter(
+            Q(backup_config_id__in=backup_config_ids)
+            | Q(backup_config_id__isnull=True, source_snapshot_id__in=snapshot_ids)
+        )
+    if history_only or running_only:
+        terminal_tasks = Task.objects.filter(
+            organization_id=organization_id,
+            task_uuid=OuterRef("task_uuid"),
+            status__in=[Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED, Task.Status.TIMEOUT],
+        )
+        items = RestoreRecordItem.objects.filter(restore_record_id=OuterRef("pk"))
+        item_status = RestoreRecordItem.Status
+        in_history = (
+            Exists(terminal_tasks)
+            | Exists(items.filter(status=item_status.FAILED))
+            | (Exists(items) & ~Exists(items.exclude(status=item_status.SUCCESS)))
+            | (
+                Exists(items.filter(status=item_status.CANCELLED))
+                & ~Exists(items.filter(status__in=[item_status.RUNNING, item_status.PENDING]))
+            )
+        )
+        queryset = queryset.filter(in_history if history_only else ~in_history)
     if source_mode:
         queryset = queryset.filter(source_mode=source_mode)
     if created_from is not None:
