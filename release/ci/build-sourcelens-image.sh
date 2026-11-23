@@ -76,7 +76,7 @@ if [[ "${cache_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
 	docker buildx imagetools create --tag "${target_ref}" "${cache_ref}"
 else
 	SOURCELENS_BUILD_SERVICES="${service}" sourcelens_build_app_images 1 0
-	local_ref="$(sourcelens_upstream_image_ref "${component}")"
+	local_ref="$(sourcelens_build_image_ref "${component}")"
 	docker image inspect "${local_ref}" >/dev/null
 	docker tag "${local_ref}" "${target_ref}"
 	docker tag "${local_ref}" "${cache_ref}"

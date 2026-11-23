@@ -2,6 +2,7 @@ import { reactive, type Reactive } from 'vue'
 import { apiErrorMessage, isAbortError } from '../lib/api'
 import { streamCopilotRun } from '../lib/lensApi'
 import { formatThinkingStepLabel } from '../lib/copilotStreamLabels'
+import { copilotExecutionScope } from '../lib/copilotExecutionScope'
 
 export type ThinkingStep = {
   type?: string
@@ -26,12 +27,15 @@ export type ThinkingStep = {
   payload?: Record<string, unknown>
   assistantName?: string
   delegatedTask?: string
+  delegatedRunUuid?: string
   parentId?: string
   terminationDetail?: Record<string, unknown>
   id?: string
   kind?: string
   stageKind?: string
   structured?: boolean
+  // SourceLens event timestamp, not the time a history snapshot was received.
+  observedAt?: string
 }
 
 export type SessionRunStreamState = {
@@ -166,6 +170,40 @@ class SessionRunStreamController {
     thinking: Array<Record<string, unknown>>,
     elapsedAnchorAt?: string | null,
   ) {
+    const observedPlanEvents = new Map<string, string>()
+    const knownDelegatedRuns = new Map<string, string | null>()
+    const fallbackScope = (item: Record<string, unknown>) =>
+      copilotExecutionScope({ ...item, delegated_run_uuid: undefined, delegatedRunUuid: undefined })
+    const rememberRun = (item: Record<string, unknown>) => {
+      const run = (item.delegated_run_uuid ?? item.delegatedRunUuid) as string | undefined
+      if (!run) return
+      const scope = fallbackScope(item)
+      if (!knownDelegatedRuns.has(scope)) knownDelegatedRuns.set(scope, run)
+      else if (knownDelegatedRuns.get(scope) !== run) knownDelegatedRuns.set(scope, null)
+    }
+    if (this.state.runUuid === runUuid) {
+      for (const step of this.state.thinkingSteps) {
+        if (step.eventType !== 'plan.updated') continue
+        const event = {
+          ...step, event_type: step.eventType, agent_event: step.agentEvent,
+        }
+        rememberRun(event)
+        if (step.observedAt) observedPlanEvents.set(this.thinkingStepDedupeKey(event, step.message), step.observedAt)
+      }
+    }
+    const snapshotPlans = new Map<string, string | undefined>()
+    const ambiguousSources = new Set<string>()
+    for (const item of thinking) {
+      if (item.event_type !== 'plan.updated') continue
+      rememberRun(item)
+      const scope = fallbackScope(item)
+      const key = JSON.stringify([scope, (item.payload as Record<string, unknown> | undefined)?.revision ?? 0])
+      const run = item.delegated_run_uuid as string | undefined
+      // Repeated revision without a common Run ID can belong to different
+      // same-named tasks. Do not infer identity or timestamps for that source.
+      if (snapshotPlans.has(key) && (!run || snapshotPlans.get(key) !== run)) ambiguousSources.add(scope)
+      snapshotPlans.set(key, run)
+    }
     this.state.isSubmitting = false
     this.state.runUuid = runUuid
     this.state.runStatus = status
@@ -186,6 +224,11 @@ class SessionRunStreamController {
             (payload?.description as string) ||
             (item.event_type as string)
           if (!message) return null
+          const scope = fallbackScope(item)
+          const canRestore = item.delegated_run_uuid || !ambiguousSources.has(scope)
+          const delegatedRunUuid = (item.delegated_run_uuid as string)
+            || (item.event_type === 'plan.updated' && canRestore ? knownDelegatedRuns.get(scope) ?? undefined : undefined)
+          const key = this.thinkingStepDedupeKey({ ...item, delegated_run_uuid: delegatedRunUuid }, message)
           const step: ThinkingStep = {
             type: item.type as string,
             visibility: item.visibility as string,
@@ -208,12 +251,15 @@ class SessionRunStreamController {
             payload: item.payload as Record<string, unknown>,
             assistantName: item.assistant_name as string,
             delegatedTask: item.delegated_task as string,
+            delegatedRunUuid,
             parentId: (item.parent_id || item.parentId) as string,
             terminationDetail: item.termination_detail as Record<string, unknown>,
             id: item.id as string,
             kind: item.kind as string,
             stageKind: item.stage_kind as string,
             structured: item.structured as boolean,
+            observedAt: typeof item.ts === 'string' ? item.ts
+              : (canRestore ? observedPlanEvents.get(key) : undefined),
           }
           step.displayMessage = formatThinkingStepLabel(step)
           return step
@@ -251,6 +297,7 @@ class SessionRunStreamController {
       .join(':')
     return [
       eventType,
+      eventType === 'plan.updated' ? copilotExecutionScope(item) : '',
       item.id || payload?.id || '',
       item.agent_event || '',
       message,
@@ -297,7 +344,7 @@ class SessionRunStreamController {
     this.applyRunStatus('running')
   }
 
-  private pushThinkingStep(item: Record<string, unknown>) {
+  private pushThinkingStep(item: Record<string, unknown>, observedAt?: string) {
     const payload = item.payload as Record<string, unknown> | undefined
     const message =
       (item.message as string) ||
@@ -335,18 +382,20 @@ class SessionRunStreamController {
       payload: item.payload as Record<string, unknown>,
       assistantName: item.assistant_name as string,
       delegatedTask: item.delegated_task as string,
+      delegatedRunUuid: item.delegated_run_uuid as string,
       parentId: (item.parent_id || item.parentId) as string,
       terminationDetail: item.termination_detail as Record<string, unknown>,
       id: item.id as string,
       kind: item.kind as string,
       stageKind: item.stage_kind as string,
       structured: item.structured as boolean,
+      observedAt: observedAt || (typeof item.ts === 'string' ? item.ts : undefined),
     }
     step.displayMessage = formatThinkingStepLabel(step)
     this.state.thinkingSteps = [...this.state.thinkingSteps, step]
   }
 
-  private handleStepEvent(event: StreamPayload) {
+  private handleStepEvent(event: StreamPayload, observedAt?: string) {
     if (event.status === 'failed') {
       const detail = event.detail as
         | { events?: Array<{ error?: string; message?: string }> }
@@ -359,15 +408,20 @@ class SessionRunStreamController {
     const events =
       (event.detail as { events?: Array<Record<string, unknown>> } | undefined)?.events || []
     if (!events.length && event.event_type) {
-      this.pushThinkingStep(event)
+      this.pushThinkingStep(event, observedAt)
       return
     }
-    const stepKey = String(event.sequence ?? event.step ?? 'step')
+    const stepKey = JSON.stringify([copilotExecutionScope(event), event.sequence ?? event.step ?? 'step'])
     const seenCount = this.seenStepEventCounts.get(stepKey) || 0
     const newEvents = events.slice(seenCount)
     this.seenStepEventCounts.set(stepKey, events.length)
     for (const item of newEvents) {
-      this.pushThinkingStep(item)
+      this.pushThinkingStep({
+        ...item,
+        delegated_run_uuid: event.delegated_run_uuid ?? item.delegated_run_uuid,
+        assistant_name: item.assistant_name ?? event.assistant_name,
+        delegated_task: item.delegated_task ?? event.delegated_task,
+      }, observedAt)
     }
   }
 
@@ -381,6 +435,9 @@ class SessionRunStreamController {
     }
     if (code === 'MODEL_TIMEOUT') {
       return 'The AI model timed out. Try again or choose a different model.'
+    }
+    if (code === 'MODEL_STREAM_ERROR') {
+      return 'The AI model response was interrupted. Try again or choose a different model.'
     }
     return code || 'Run failed'
   }
@@ -426,7 +483,7 @@ class SessionRunStreamController {
       const position = Number(event.position)
       if (Number.isFinite(position)) this.state.queuePosition = position
     }
-    if (type === 'step') this.handleStepEvent(event)
+    if (type === 'step') this.handleStepEvent(event, typeof event.ts === 'string' ? event.ts : undefined)
     if (type === 'token' && typeof event.content === 'string') {
       this.receivedStreamTokens = true
       this.state.partialAnswer += event.content

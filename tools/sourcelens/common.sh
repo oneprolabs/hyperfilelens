@@ -48,7 +48,7 @@ sourcelens_load_config() {
 	fi
 	BUILD_SOURCELENS="${BUILD_SOURCELENS:-1}"
 	SOURCELENS_GIT_URL="${SOURCELENS_GIT_URL:-https://github.com/oneprolabs/sourcelens.git}"
-	SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.63.4}"
+	SOURCELENS_GIT_REF="${SOURCELENS_GIT_REF:-v0.63.8}"
 	SOURCELENS_BUILD_COMPOSE_FILE="${SOURCELENS_BUILD_COMPOSE_FILE:-docker-compose.standalone.yml}"
 	SOURCELENS_UPSTREAM_IMAGE_PREFIX="${SOURCELENS_UPSTREAM_IMAGE_PREFIX:-oneprolabs}"
 	SOURCELENS_IMAGE_REGISTRY="${SOURCELENS_IMAGE_REGISTRY:-}"
@@ -1191,6 +1191,42 @@ sourcelens_upstream_image_ref() {
 	printf '%s/sourcelens-%s:%s' "${SOURCELENS_UPSTREAM_IMAGE_PREFIX}" "${component}" "${tag}"
 }
 
+# Resolve source-build output separately from official runtime image aliases.
+# Upstream changed its Compose image namespace in v0.63.8. Read only the
+# supported service/image declarations, without loading runtime env_file files
+# or requiring newer Compose config flags than our minimum supported version.
+# Fail closed on a different Compose shape instead of tagging an old image.
+sourcelens_build_image_ref() {
+	local component=$1 service
+	case "${component}" in
+	backend) service=backend-api ;;
+	frontend | lensnode) service="${component}" ;;
+	*) sourcelens_die "unsupported SourceLens build component: ${component}" 2 ;;
+	esac
+	python3 - "${SOURCELENS_BUILD_SOURCE}/${SOURCELENS_BUILD_COMPOSE_FILE}" \
+		"${service}" "${SOURCELENS_VERSION}" <<'PY'
+import pathlib
+import re
+import sys
+
+path, service, version = sys.argv[1:]
+text = pathlib.Path(path).read_text(encoding="utf-8")
+blocks = re.findall(
+    rf"^  {re.escape(service)}:[ \t]*\n(.*?)(?=^  \S|^\S|\Z)",
+    text,
+    re.MULTILINE | re.DOTALL,
+)
+images = re.findall(r"^    image:[ \t]*([^\r\n]+)", blocks[0], re.MULTILINE) if len(blocks) == 1 else []
+if len(images) != 1:
+    raise SystemExit(f"Cannot resolve SourceLens build image for {service} in {path}")
+image = images[0].split(" #", 1)[0].strip().strip("'\"")
+image = re.sub(r"\$\{APP_VERSION(?::-[^}]*)?\}", lambda _: version, image)
+if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._/:-]*", image):
+    raise SystemExit(f"Unsupported SourceLens build image declaration for {service}: {image}")
+print(image)
+PY
+}
+
 sourcelens_backend_image_ref() {
 	sourcelens_distribution_image_ref backend "${1:-${SOURCELENS_DISTRIBUTION_TAG:-${SOURCELENS_VERSION}}}"
 }
@@ -1210,19 +1246,23 @@ sourcelens_app_images_ready() {
 }
 
 sourcelens_upstream_images_ready() {
-	sourcelens_image_exists "$(sourcelens_upstream_image_ref backend)" \
-		&& sourcelens_image_exists "$(sourcelens_upstream_image_ref frontend)" \
-		&& sourcelens_image_exists "$(sourcelens_upstream_image_ref lensnode)"
+	local component image
+	for component in backend frontend lensnode; do
+		image="$(sourcelens_build_image_ref "${component}")" || return 1
+		sourcelens_image_exists "${image}" || return 1
+	done
 }
 
 sourcelens_tag_app_images_latest() {
 	local component upstream_ref distribution_ref latest_ref
 	for component in backend frontend lensnode; do
-		upstream_ref="$(sourcelens_upstream_image_ref "${component}")"
+		upstream_ref="$(sourcelens_build_image_ref "${component}")" || return 1
+		sourcelens_image_exists "${upstream_ref}" \
+			|| sourcelens_die "SourceLens build output is missing: ${upstream_ref}"
 		distribution_ref="$(sourcelens_distribution_image_ref "${component}")"
 		latest_ref="$(sourcelens_distribution_image_ref "${component}" latest)"
-		docker tag "${upstream_ref}" "${distribution_ref}"
-		docker tag "${upstream_ref}" "${latest_ref}"
+		docker tag "${upstream_ref}" "${distribution_ref}" || return 1
+		docker tag "${upstream_ref}" "${latest_ref}" || return 1
 		sourcelens_log "Tagged ${upstream_ref} -> ${distribution_ref} (alias: ${latest_ref})"
 	done
 }
@@ -1348,15 +1388,15 @@ sourcelens_build_app_images() {
 	sourcelens_ensure_compose
 	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 ]] && sourcelens_build_skippable; then
 		sourcelens_log "SourceLens app images already built for source stamp $(sourcelens_read_built_commit); skipping compose build"
-		sourcelens_tag_lensnode_alias
+		sourcelens_tag_lensnode_alias || return 1
 		return 0
 	fi
 	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 \
 		&& "$(sourcelens_read_built_commit)" == "$(sourcelens_current_build_stamp)" ]] \
 		&& sourcelens_upstream_images_ready; then
 		sourcelens_log "SourceLens upstream images match the build stamp; applying normalized distribution tags"
-		sourcelens_tag_app_images_latest
-		sourcelens_tag_lensnode_alias
+		sourcelens_tag_app_images_latest || return 1
+		sourcelens_tag_lensnode_alias || return 1
 		return 0
 	fi
 	if [[ "${full_build}" -eq 1 && "${force}" -eq 0 && "${no_cache}" -eq 0 ]] && sourcelens_app_images_ready; then
@@ -1416,13 +1456,21 @@ sourcelens_build_app_images() {
 			BUILDKIT_PROGRESS="${BUILDKIT_PROGRESS:-auto}" \
 			"${SOURCELENS_COMPOSE[@]}" \
 			-f "${SOURCELENS_BUILD_COMPOSE_FILE}" "${build_args[@]}"
-	)
+	) || return 1
+	local built_service built_component built_ref
+	for built_service in ${requested_services}; do
+		built_component="${built_service}"
+		[[ "${built_service}" != backend-api ]] || built_component=backend
+		built_ref="$(sourcelens_build_image_ref "${built_component}")" || return 1
+		sourcelens_image_exists "${built_ref}" \
+			|| sourcelens_die "SourceLens build output is missing: ${built_ref}"
+	done
 	if [[ "${full_build}" -eq 0 ]]; then
 		sourcelens_log "Built requested SourceLens service(s): ${requested_services}"
 		return 0
 	fi
-	sourcelens_tag_app_images_latest
-	sourcelens_tag_lensnode_alias
+	sourcelens_tag_app_images_latest || return 1
+	sourcelens_tag_lensnode_alias || return 1
 	sourcelens_write_built_commit "$(sourcelens_current_build_stamp)"
 }
 

@@ -479,6 +479,8 @@ export type LensRun = {
 }
 
 export type LensChatThinkingStep = {
+  ts?: string
+  delegated_run_uuid?: string
   id?: string
   type?: string
   kind?: string
