@@ -6,6 +6,8 @@ describe('alert recovery capabilities', () => {
     ['metric', {}, 'numeric'],
     ['task', {}, 'manual'],
     ['event', {}, 'manual'],
+    ['event', { event_category: 'configuration', event_types: ['ai_model_insufficient_credit'] }, 'model_credit'],
+    ['event', { event_category: 'configuration', event_types: ['ai_model_insufficient_credit', 'configuration_changed'] }, 'manual'],
     ['health', { check_type: 'heartbeat' }, 'heartbeat'],
     ['health', { check_type: 'unknown' }, 'manual'],
     ['availability', { check_type: 'heartbeat' }, 'heartbeat'],

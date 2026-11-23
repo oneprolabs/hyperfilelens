@@ -169,9 +169,9 @@ def test_default_rules_are_restored_explicitly_without_touching_custom_rules(org
         **headers,
     )
     assert preview.status_code == 200, preview.content
-    assert preview.data["created"] == 7
+    assert preview.data["created"] == 8
     assert preview.data["restored"] == 0
-    assert len(preview.data["items"]) == 7
+    assert len(preview.data["items"]) == 8
     assert {item["action"] for item in preview.data["items"]} == {"create"}
 
     restore = client.post(
@@ -181,8 +181,8 @@ def test_default_rules_are_restored_explicitly_without_touching_custom_rules(org
         **headers,
     )
     assert restore.status_code == 200, restore.content
-    assert restore.data["created"] == 7
-    assert AlertPolicy.objects.filter(organization=org, default_key__isnull=False).count() == 7
+    assert restore.data["created"] == 8
+    assert AlertPolicy.objects.filter(organization=org, default_key__isnull=False).count() == 8
     assert AlertPolicy.objects.get(pk=custom.pk).enabled is False
 
     default = AlertPolicy.objects.get(
@@ -226,7 +226,7 @@ def test_default_rules_are_restored_explicitly_without_touching_custom_rules(org
     )
     assert preview_clean.status_code == 200, preview_clean.content
     assert preview_clean.data["items"] == []
-    assert preview_clean.data["unchanged"] == 7
+    assert preview_clean.data["unchanged"] == 8
 
 
 @pytest.mark.django_db

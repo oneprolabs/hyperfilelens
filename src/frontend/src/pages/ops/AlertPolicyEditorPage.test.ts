@@ -153,6 +153,18 @@ describe('alert policy recovery editor', () => {
     expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.fieldRecoveryThresholdHint)
   })
 
+  it('explains valid-answer recovery for model credit incidents without numeric inputs', async () => {
+    existing('event', { enabled: true, notify_on_resolved: true }, {
+      event_category: 'configuration', event_types: ['ai_model_insufficient_credit'],
+    })
+    const { wrapper, state } = await render()
+    expect(wrapper.text()).toContain(en.ops.alertsCenter.editor.recoveryModelCredit)
+    expect(wrapper.text()).not.toContain(en.ops.alertsCenter.editor.fieldRecoveryThresholdHint)
+    expect(state.policyPayload().recovery_rule).toEqual({
+      enabled: true, notify_on_resolved: true,
+    })
+  })
+
   it('does not mark empty Event Types invalid until save', async () => {
     const required = en.ops.alertsCenter.editor.validateTriggerRequired.replace(
       '{field}', en.ops.alertsCenter.editor.eventTypes,

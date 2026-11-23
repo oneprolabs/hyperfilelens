@@ -1069,6 +1069,9 @@ class LensUsageLedger(OrganizationScopedModel):
     cost_currency = models.CharField(max_length=10, blank=True, default="USD")
     call_details_json = models.JSONField(default=list, blank=True)
     run_error = models.TextField(blank=True, default="")
+    # Sanitized evidence only; never persist provider responses or credentials here.
+    # Keep a database default for old API writers during blue/green upgrades.
+    provider_error_state_json = models.JSONField(default=dict, db_default={}, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
     occurred_at = models.DateTimeField(db_index=True)
@@ -1117,5 +1120,10 @@ class LensUsageLedger(OrganizationScopedModel):
             models.Index(
                 fields=["run_status", "reconciliation_next_at"],
                 name="lens_busg_st_recon_idx",
+            ),
+            models.Index(
+                fields=["id"],
+                condition=models.Q(provider_error_state_json__status="pending"),
+                name="lens_busg_provider_pending_idx",
             ),
         ]

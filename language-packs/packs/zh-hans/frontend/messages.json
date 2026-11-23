@@ -7677,7 +7677,8 @@
         "task": "任务",
         "system_service": "系统服务",
         "license": "许可证",
-        "user": "用户"
+        "user": "用户",
+        "ai_model": "AI 模型"
       },
       "resourceTypeDescriptions": {
         "system": "HyperFileLens 服务端主机。",
@@ -7690,7 +7691,8 @@
         "task": "备份、恢复和仓库运维作业。",
         "system_service": "平台运行时服务，例如 API、数据库和 Worker。",
         "license": "实例或组织的许可证池。",
-        "user": "用户账号与身份相关目标。"
+        "user": "用户账号与身份相关目标。",
+        "ai_model": "由平台或组织管理的 AI 模型配置。"
       },
       "policies": {
         "title": "告警规则",
@@ -7862,7 +7864,8 @@
         "durationMinutes": "{n} 分钟",
         "durationMinute": "1 分钟",
         "durationSecondsCount": "{n} 秒",
-        "durationSecond": "1 秒"
+        "durationSecond": "1 秒",
+        "recoveryModelCredit": "同一模型配置后续请求成功生成有效回答后自动解除告警，不会发送付费健康检查请求。"
       },
       "active": {
         "title": "告警列表",
@@ -7950,7 +7953,8 @@
         "multiple_login_failures": "多次登录失败",
         "api_token_created": "API 令牌创建",
         "api_token_deleted": "API 令牌删除",
-        "permission_changed": "权限变更"
+        "permission_changed": "权限变更",
+        "ai_model_insufficient_credit": "AI 模型账户余额不足"
       }
     },
     "alerts": {

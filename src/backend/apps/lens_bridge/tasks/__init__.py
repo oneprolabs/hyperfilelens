@@ -26,11 +26,13 @@ from apps.lens_bridge.tasks.run_submission_recovery import (
     reconcile_run_submissions_task,
 )
 from apps.lens_bridge.tasks.usage_reconciliation import (
+    diagnose_provider_error_task,
     execute_usage_ledger_reconciliation_task,
     reconcile_usage_ledgers_task,
 )
 
 __all__ = [
+    "diagnose_provider_error_task",
     "execute_knowledge_source_sync_task",
     "reconcile_knowledge_source_syncs_task",
     "execute_chat_user_provision_task",

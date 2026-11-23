@@ -39,7 +39,29 @@ def _task_rule(
     }
 
 
+_AI_CREDIT_RULE = {
+    "default_key": "ai_model.insufficient_credit",
+    "name": "AI Model Credit Issue",
+    "description": "Alert when the model provider explicitly reports insufficient credit.",
+    "type": AlertType.EVENT,
+    "severity": AlertSeverity.CRITICAL,
+    "enabled": True,
+    "resource_type": ResourceType.AI_MODEL,
+    "scope": PolicyScope.ALL,
+    "resource_ids": [],
+    "trigger_rule": {
+        "event_category": "configuration",
+        "event_types": ["ai_model_insufficient_credit"],
+        "repeat_interval_seconds": 3600,
+    },
+    "recovery_rule": {
+        "enabled": True, "notify_on_firing": True, "notify_on_resolved": True,
+    },
+}
+
+
 ORGANIZATION_DEFAULT_ALERT_RULES: tuple[dict[str, Any], ...] = (
+    _AI_CREDIT_RULE,
     _task_rule(
         key="backup.task_failed",
         name="Backup Task Failed",
@@ -126,6 +148,7 @@ ORGANIZATION_DEFAULT_ALERT_RULES: tuple[dict[str, Any], ...] = (
 
 
 PLATFORM_DEFAULT_ALERT_RULES: tuple[dict[str, Any], ...] = (
+    _AI_CREDIT_RULE,
     {
         "default_key": "platform.cpu_high",
         "name": "Control Plane CPU Usage High",

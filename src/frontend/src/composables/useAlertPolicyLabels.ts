@@ -20,6 +20,7 @@ export const ALERT_RESOURCE_TYPES = [
   'target_storage',
   'task',
   'system_service',
+  'ai_model',
 ] as const
 export type AlertResourceType = (typeof ALERT_RESOURCE_TYPES)[number]
 
@@ -49,6 +50,7 @@ export const EVENT_ALERT_RESOURCE_TYPES = [
   'backup_repository',
   'task',
   'system_service',
+  'ai_model',
 ] as const
 
 /** Platform-only resource targets added for Admin Console Alerting. */

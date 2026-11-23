@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from functools import partial
 
+from django.db import transaction
 from django.utils import timezone
 
 from apps.alert.constants import AlertStatus, AlertType
@@ -71,6 +73,15 @@ def _should_retry_firing_notification(alert: AlertRecord, policy: AlertPolicy | 
         return True
     metadata = alert.metadata or {}
     last_sent = metadata.get("last_notification_at")
+    scheduled = metadata.get("last_notification_scheduled_at")
+    if scheduled:
+        # Reserve both initial and repeat sends while their deferred callback
+        # is in flight. An old reservation must not bypass a recent delivery.
+        from django.utils.dateparse import parse_datetime
+        queued_at = parse_datetime(str(scheduled))
+        if queued_at is not None and timezone.is_aware(queued_at):
+            if (timezone.now() - queued_at).total_seconds() < 60:
+                return False
     if not last_sent:
         return True
     from django.utils.dateparse import parse_datetime
@@ -104,6 +115,8 @@ def fire_alert(
     alert_key: str = "default",
     metadata=None,
     audit_log_id: int | None = None,
+    defer_notifications: bool = False,
+    preserve_acknowledgement: bool = False,
 ) -> AlertRecord | None:
     resource_id = getattr(resource, "id", None)
     if resource_id is not None:
@@ -148,7 +161,8 @@ def fire_alert(
         previous_status = alert.status
         alert.resource_type = resource_type
         alert.resource_name = resource_name
-        alert.status = AlertStatus.FIRING
+        acknowledged = preserve_acknowledgement and previous_status == AlertStatus.ACKNOWLEDGED
+        alert.status = previous_status if acknowledged else AlertStatus.FIRING
         alert.last_triggered_at = now
         if current_value is not None:
             alert.current_value = Decimal(str(current_value))
@@ -178,14 +192,20 @@ def fire_alert(
             ]
         )
         if _notify_on_firing(policy) and not _managed_repeat_exhausted(alert, policy) and (
-            previous_status != AlertStatus.FIRING or _should_retry_firing_notification(alert, policy)
+            (previous_status != AlertStatus.FIRING and not acknowledged)
+            or _should_retry_firing_notification(alert, policy)
         ):
             merged = dict(alert.metadata or {})
             merged["repeat_count"] = int(merged.get("repeat_count") or 0) + (1 if previous_status == AlertStatus.FIRING else 0)
             alert.metadata = merged
             alert.save(update_fields=["metadata", "updated_at"])
-            send_notification(alert)
-        if previous_status != AlertStatus.FIRING:
+            if defer_notifications:
+                alert.metadata["last_notification_scheduled_at"] = now.isoformat()
+                alert.save(update_fields=["metadata"])
+                transaction.on_commit(partial(send_notification, alert), robust=True)
+            else:
+                send_notification(alert)
+        if previous_status != AlertStatus.FIRING and not acknowledged:
             _publish_in_app(alert, resolved=False)
         return alert
 
@@ -210,12 +230,17 @@ def fire_alert(
         last_triggered_at=now,
     )
     if _notify_on_firing(policy):
-        send_notification(alert)
+        if defer_notifications:
+            alert.metadata["last_notification_scheduled_at"] = now.isoformat()
+            alert.save(update_fields=["metadata"])
+            transaction.on_commit(partial(send_notification, alert), robust=True)
+        else:
+            send_notification(alert)
     _publish_in_app(alert, resolved=False)
     return alert
 
 
-def resolve_alert(alert: AlertRecord) -> AlertRecord:
+def resolve_alert(alert: AlertRecord, *, defer_notifications: bool = False) -> AlertRecord:
     resolved_at = timezone.now()
     updated = AlertRecord.objects.filter(id=alert.id).exclude(
         status=AlertStatus.RESOLVED,
@@ -232,6 +257,9 @@ def resolve_alert(alert: AlertRecord) -> AlertRecord:
     alert.updated_at = resolved_at
     policy = AlertPolicy.objects.filter(id=alert.policy_id).first() if alert.policy_id else None
     if _notify_on_resolved(policy):
-        send_resolved_notification(alert)
+        if defer_notifications:
+            transaction.on_commit(partial(send_resolved_notification, alert), robust=True)
+        else:
+            send_resolved_notification(alert)
     _publish_in_app(alert, resolved=True)
     return alert

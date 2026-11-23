@@ -1,6 +1,11 @@
-export type RecoveryKind = 'numeric' | 'heartbeat' | 'manual'
+export type RecoveryKind = 'numeric' | 'heartbeat' | 'model_credit' | 'manual'
 
 export function recoveryKind(type: string, trigger: Record<string, unknown>): RecoveryKind {
+  if (
+    type === 'event' && trigger.event_category === 'configuration'
+    && Array.isArray(trigger.event_types) && trigger.event_types.length === 1
+    && trigger.event_types[0] === 'ai_model_insufficient_credit'
+  ) return 'model_credit'
   if (type === 'metric' || type === 'system') return 'numeric'
   if (
     (type === 'health' || type === 'availability')
@@ -46,5 +51,5 @@ export function switchRecovery(
   ))
   return kind === 'numeric'
     ? { ...shared, enabled: true, operator: '<', threshold: 70, duration_seconds: 180 }
-    : { ...shared, enabled: kind === 'heartbeat' }
+    : { ...shared, enabled: kind === 'heartbeat' || kind === 'model_credit' }
 }

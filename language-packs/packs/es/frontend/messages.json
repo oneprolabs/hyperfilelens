@@ -7677,7 +7677,8 @@
         "task": "Tarea",
         "system_service": "Servicio del sistema",
         "license": "Licencia",
-        "user": "Usuario"
+        "user": "Usuario",
+        "ai_model": "Modelo de IA"
       },
       "resourceTypeDescriptions": {
         "system": "El host del servidor HyperFileLens.",
@@ -7690,7 +7691,8 @@
         "task": "Trabajos de copia de seguridad, restauración y operaciones de repositorio.",
         "system_service": "Servicios de plataforma en tiempo de ejecución, como API, base de datos y workers.",
         "license": "Grupos de licencias de la instancia o la organización.",
-        "user": "Cuentas de usuario y destinos de identidad."
+        "user": "Cuentas de usuario y destinos de identidad.",
+        "ai_model": "Configuraciones de modelos de IA administradas por la plataforma o la organización."
       },
       "policies": {
         "title": "Reglas de alerta",
@@ -7862,7 +7864,8 @@
         "durationMinutes": "{n} minutos",
         "durationMinute": "1 minuto",
         "durationSecondsCount": "{n} segundos",
-        "durationSecond": "1 segundo"
+        "durationSecond": "1 segundo",
+        "recoveryModelCredit": "Se resuelve cuando una solicitud posterior con la misma configuración de modelo genera una respuesta válida. No se envían solicitudes de comprobación de pago."
       },
       "active": {
         "title": "Alertas activas",
@@ -7950,7 +7953,8 @@
         "multiple_login_failures": "Varios inicios de sesión fallidos",
         "api_token_created": "Token API creado",
         "api_token_deleted": "Token API eliminado",
-        "permission_changed": "Permiso cambiado"
+        "permission_changed": "Permiso cambiado",
+        "ai_model_insufficient_credit": "Crédito insuficiente del modelo de IA"
       }
     },
     "alerts": {

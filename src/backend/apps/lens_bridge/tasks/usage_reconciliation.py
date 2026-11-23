@@ -14,6 +14,33 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(
+    name="apps.lens_bridge.tasks.usage_reconciliation.diagnose_provider_error_task",
+    soft_time_limit=50,
+    time_limit=60,
+)
+def diagnose_provider_error_task(*, ledger_id: int, claim_token: str) -> str:
+    from apps.lens_bridge.services.provider_errors import diagnose_claimed_ledger
+
+    return diagnose_claimed_ledger(ledger_id=ledger_id, claim_token=claim_token)
+
+
+def _dispatch_provider_diagnostics(limit: int) -> int:
+    from apps.lens_bridge.services.provider_errors import (
+        claim_due_diagnostics, defer_diagnostic,
+    )
+
+    queued = 0
+    for ledger_id, token in claim_due_diagnostics(limit=limit):
+        try:
+            diagnose_provider_error_task.delay(ledger_id=ledger_id, claim_token=token)
+            queued += 1
+        except Exception:
+            logger.warning("Provider diagnostic dispatch deferred ledger_id=%s", ledger_id)
+            defer_diagnostic(ledger_id, token)
+    return queued
+
+
+@shared_task(
     name=(
         "apps.lens_bridge.tasks.usage_reconciliation."
         "execute_usage_ledger_reconciliation_task"
@@ -89,4 +116,5 @@ def reconcile_usage_ledgers_task(*, limit: int = 100) -> dict[str, Any]:
         "claimed": len(claims),
         "queued": queued,
         "failed": failed,
+        "provider_diagnostics_queued": _dispatch_provider_diagnostics(limit),
     }
