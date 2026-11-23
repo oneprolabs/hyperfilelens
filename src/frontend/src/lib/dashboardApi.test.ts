@@ -28,8 +28,8 @@ function mockOtherEndpoint(path: string) {
       nas: { total: 0, available: 0, unavailable: 0 },
     }
   }
-  if (path.includes('/storage/repositories/')) {
-    return [{ id: 1, name: 'Shared repository', repo_type: 's3' }]
+  if (path.includes('/storage/repositories/dashboard-summary/')) {
+    return { repoCount: 1, storagePools: [] }
   }
   return { count: 0, results: [] }
 }
@@ -112,6 +112,7 @@ describe('Dashboard statistics loading', () => {
     const partial = progress.mock.calls[0]![0]
     expect(partial.productionSources.total).toBe(3)
     expect(partial.storage.repoCount).toBe(1)
+    expect(apiMock.mock.calls.filter(([path]) => path.endsWith('/storage/repositories/dashboard-summary/'))).toHaveLength(1)
     expect(partial.taskStatisticsState).toBe('loading')
     expect(partial.tasks7dBuckets).toEqual([])
     expect(partial.isEmpty).toBe(false)
