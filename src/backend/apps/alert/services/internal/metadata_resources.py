@@ -71,6 +71,20 @@ def resource_options(
             }
         ]
     platform_owned = owner_scope == ResourceScope.PLATFORM or organization_id is None
+    if resource_type == ResourceType.AI_MODEL:
+        from apps.lens_bridge.models import LensOrgModelLink
+
+        if request is not None and not platform_owned:
+            from apps.iam.query_authorization import request_authorization
+            context = request_authorization(request)
+            if context is not None and not context.has_organization_resource_scope():
+                return []
+        qs = LensOrgModelLink.objects.filter(
+            scope=ResourceScope.PLATFORM if platform_owned else ResourceScope.ORGANIZATION,
+            organization_id=None if platform_owned else organization_id,
+            is_deleted=False,
+        )
+        return [_option(model.pk, model.display_name) for model in qs.order_by("pk")[:300]]
     if resource_type == ResourceType.SYNC_PROXY:
         qs = Node.objects.filter(role=NodeRole.PROXY)
         qs = (
@@ -165,6 +179,15 @@ def selected_resource_options(
         return []
 
     platform_owned = owner_scope == ResourceScope.PLATFORM or organization_id is None
+    if resource_type == ResourceType.AI_MODEL:
+        # Model configurations are organization administration targets, not
+        # personal resources. Preserve the picker visibility gate on edits.
+        return [
+            item for item in resource_options(
+                organization_id=organization_id, resource_type=resource_type,
+                owner_scope=owner_scope, request=request,
+            ) if str(item["id"]) in ids
+        ]
     rows: list[dict] = []
     if resource_type in {
         ResourceType.SYNC_PROXY,

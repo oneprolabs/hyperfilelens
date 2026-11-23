@@ -10193,5 +10193,9 @@
   "platformOps.personalPlans.currentPlan": "5598ae133285b8a5496cb99613636c7acb3cfba6eb3cb37f9a72b6cbf7637b11",
   "platformOps.personalPlans.assignment": "433ea1a4d668ee93b8ba60fb0d3deb08dcfabbf8f2105d8557e9b1ff3a8c4c59",
   "platformOps.personalPlans.assignmentSaved": "fcfd112105483e0a47d8777779fd3efd51a1bb4552f1aebd1d2abcc73a1afdcd",
-  "platformOps.personalPlans.assignmentFailed": "f01c1917b5085295b9cb6e014497e11f3a072c101c1823091bf691cda48b165b"
+  "platformOps.personalPlans.assignmentFailed": "f01c1917b5085295b9cb6e014497e11f3a072c101c1823091bf691cda48b165b",
+  "ops.alertsCenter.resourceTypes.ai_model": "6771a2a8820399564ff338017851fdc39ca1e689a090501ec0505ef64d43a1ec",
+  "ops.alertsCenter.events.ai_model_insufficient_credit": "8a7111bdb58b72ff90e64a6712f9f46c53f864e6441dcc5b827815595b9a4226",
+  "ops.alertsCenter.resourceTypeDescriptions.ai_model": "7a4919398f19ab82f9c20e39c6844e1db2ffcf14c6787fa73a5391e6396e61c4",
+  "ops.alertsCenter.editor.recoveryModelCredit": "5cc809a2de5cb068c4c3c3d2cbd2b7ff04c830de5ef94347f6f4e579fa34e2f3"
 }

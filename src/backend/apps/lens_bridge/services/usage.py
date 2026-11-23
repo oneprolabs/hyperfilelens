@@ -405,6 +405,9 @@ def capture_ledger_usage(
             row.call_details_json = calls
     if "error" in run:
         row.run_error = str(run.get("error") or "")
+    from apps.lens_bridge.services.provider_errors import initialize_diagnostic
+
+    initialize_diagnostic(row)
     started_at = _datetime(run.get("started_at"))
     if started_at is not None:
         row.started_at = min(
@@ -439,6 +442,7 @@ def capture_ledger_usage(
             "estimated_cost",
             "call_details_json",
             "run_error",
+            "provider_error_state_json",
             "started_at",
             "finished_at",
             "occurred_at",
@@ -477,12 +481,20 @@ def capture_run_usage(
     return capture_ledger_usage(row, run)
 
 
-def _public_run_failure(status: str, raw_error: str) -> tuple[str, str]:
+def _public_run_failure(
+    status: str, raw_error: str, provider_state: dict | None = None,
+) -> tuple[str, str]:
     """Return a stable, tenant-safe error code and message for a terminal run."""
     normalized_status = str(status or "").strip().lower()
     normalized_error = str(raw_error or "").strip().upper()
     if normalized_status == "cancelled":
         return "RUN_CANCELLED", "The AI response was cancelled."
+    from apps.lens_bridge.services.provider_errors import (
+        INSUFFICIENT_CREDIT, credit_failure_message,
+    )
+
+    if normalized_status == "failed" and (message := credit_failure_message(provider_state or {})):
+        return INSUFFICIENT_CREDIT, message
     if "RUN_TOKEN_BUDGET_BUSY" in normalized_error:
         return (
             "AI_RUN_BUSY",
@@ -511,7 +523,8 @@ def _public_run_failure(status: str, raw_error: str) -> tuple[str, str]:
         )
     return (
         "AI_RUN_FAILED",
-        "No answer was generated for this question. Please try again.",
+        "The AI service could not generate an answer. Please try again. "
+        "If the problem persists, contact your administrator.",
     )
 
 
@@ -550,7 +563,9 @@ def run_outcomes_for_messages(
         row = rows.get(run_id)
         if row is None:
             continue
-        error_code, message = _public_run_failure(row.run_status, row.run_error)
+        error_code, message = _public_run_failure(
+            row.run_status, row.run_error, row.provider_error_state_json,
+        )
         outcomes.append(
             {
                 "run_uuid": str(run_id),
@@ -1201,7 +1216,9 @@ def usage_detail(
         payload.update({"answer": "", "models_used": [], "content_available": False})
         # Never expose internal provider diagnostics in the tenant drawer.
         payload["error"] = (
-            _public_run_failure(row.run_status, row.run_error)[1]
+            _public_run_failure(
+                row.run_status, row.run_error, row.provider_error_state_json,
+            )[1]
             if row.run_error or row.run_status in {"failed", "cancelled"}
             else ""
         )

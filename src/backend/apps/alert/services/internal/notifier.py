@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from django.db import transaction
 from django.utils import timezone
 
 from apps.alert.constants import AlertType
@@ -75,13 +76,18 @@ def _mark_notified(
     extra: dict | None = None,
     touch_last_notification: bool = True,
 ) -> None:
-    metadata = dict(alert.metadata or {})
-    if touch_last_notification:
-        metadata["last_notification_at"] = timezone.now().isoformat()
-    if extra:
-        metadata.update(extra)
-    alert.metadata = metadata
-    alert.save(update_fields=["metadata", "updated_at"])
+    # A deferred send can overlap a newer model-credit occurrence. Merge only
+    # delivery fields into the live row instead of overwriting its fresh count.
+    with transaction.atomic():
+        current = AlertRecord.objects.select_for_update().get(pk=alert.pk)
+        metadata = dict(current.metadata or {})
+        if touch_last_notification:
+            metadata["last_notification_at"] = timezone.now().isoformat()
+        if extra:
+            metadata.update(extra)
+        current.metadata = metadata
+        current.save(update_fields=["metadata", "updated_at"])
+        alert.metadata = metadata
 
 
 def _owner_fallback_eligible(alert: AlertRecord, policy: AlertPolicy | None) -> bool:
@@ -189,6 +195,12 @@ def _dispatch(alert: AlertRecord, *, resolved: bool) -> None:
         return
     channel_ids = _channel_ids_for_alert(alert)
     if not channel_ids:
+        if (
+            alert.owner_scope == ResourceScope.PLATFORM
+            and (alert.metadata or {}).get("provider_error_code") == "MODEL_INSUFFICIENT_CREDIT"
+        ):
+            _send_platform_credit_email(alert, resolved=resolved)
+            return
         _send_owner_email_fallback(alert, resolved=resolved)
         return
 
@@ -246,3 +258,45 @@ def send_notification(alert: AlertRecord) -> None:
 
 def send_resolved_notification(alert: AlertRecord) -> None:
     _dispatch(alert, resolved=True)
+
+
+def _send_platform_credit_email(alert: AlertRecord, *, resolved: bool) -> None:
+    """Unbound model-credit rules notify trusted installation administrators."""
+    from django.contrib.auth import get_user_model
+
+    recipients = list(get_user_model().objects.filter(
+        is_active=True, is_staff=True, profile__is_installation_admin=True,
+    ).exclude(email="").values_list("email", flat=True).distinct())
+    if not email_delivery_configured() or not recipients:
+        _mark_notified(
+            alert, touch_last_notification=False,
+            extra={"platform_email_fallback": {
+                "status": "unavailable",
+                "reason": "email_not_configured" if not email_delivery_configured() else "no_recipient",
+            }},
+        )
+        return
+    model = build_alert_email_model(
+        title=alert.title, severity=alert.severity, resolved=resolved,
+        organization_name="Platform", organization_key="",
+        rule_name="AI Model Credit Issue", message=alert.message,
+        resource_type=alert.resource_type, resource_name=alert.resource_name,
+        metadata={}, current_value=None, threshold_value=None, unit="",
+        first_triggered_at=alert.first_triggered_at or alert.created_at,
+        resolved_at=alert.resolved_at,
+    )
+    failed = 0
+    for recipient in recipients:
+        try:
+            send_organization_alert_email(recipient=recipient, model=model)
+        except Exception:
+            failed += 1
+            logger.warning("Platform credit alert email failed alert=%s", alert.pk)
+    _mark_notified(
+        alert, touch_last_notification=failed == 0,
+        extra={"platform_email_fallback": {
+            "status": "sent" if not failed else "failed",
+            "recipient_count": len(recipients), "failed_count": failed,
+            "resolved": resolved,
+        }},
+    )

@@ -35,6 +35,7 @@ class ResourceType(models.TextChoices):
     SYSTEM_SERVICE = "system_service", "System Service"
     LICENSE = "license", "License"
     USER = "user", "User"
+    AI_MODEL = "ai_model", "AI Model"
 
 
 class PolicyScope(models.TextChoices):
@@ -139,6 +140,7 @@ EVENT_TYPES = {
         "repository_capacity_low",
     ],
     "configuration": [
+        "ai_model_insufficient_credit",
         "configuration_changed",
         "notification_channel_changed",
         "alert_policy_changed",

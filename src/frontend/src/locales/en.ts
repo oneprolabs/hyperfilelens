@@ -5384,6 +5384,7 @@ export const en = {
         availability: 'Health',
       },
       resourceTypes: {
+        ai_model: 'AI Model',
         system: 'Control Plane',
         agent_proxy: 'Source Host',
         sync_proxy: 'Proxy Host',
@@ -5441,6 +5442,7 @@ export const en = {
         security: 'Security',
       },
       events: {
+        ai_model_insufficient_credit: 'AI Model Credit Insufficient',
         user_created: 'User Created',
         user_deleted: 'User Deleted',
         user_disabled: 'User Disabled',
@@ -5472,6 +5474,7 @@ export const en = {
         permission_changed: 'Permission Changed',
       },
       resourceTypeDescriptions: {
+        ai_model: 'AI model configurations managed by the platform or organization.',
         system: 'The HyperFileLens server host.',
         agent_proxy: 'Source Hosts connected through Agents.',
         sync_proxy: 'Proxy Hosts used for sync and data movement.',
@@ -5528,6 +5531,7 @@ export const en = {
         recoveryLegacyLabel: 'Legacy automatic resolution setting',
         recoveryManualMeaning: '“Resolve” only updates the alert status. It does not fix the issue or disable the rule; later matches can fire again.',
         recoveryHeartbeat: 'Node online with heartbeat within the timeout',
+        recoveryModelCredit: 'Resolves after a later request using the same model configuration generates a valid answer. No paid health-check requests are sent.',
         recoveryHeartbeatHint: 'When on, alerts resolve once the node is online and its heartbeat is within the timeout. “Resolve” only updates the alert status—it does not fix the issue or disable the rule; later matches can fire again.',
         recoveryTriggerCleared: 'Keep resolving when the trigger condition clears, with no extra duration.',
         recoveryLegacyTask: 'The legacy setting is retained, but automatic resolution on task success is not currently connected. Numeric thresholds and durations do not apply. Resolve alerts manually; success of a later task does not resolve earlier alerts.',

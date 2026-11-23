@@ -581,6 +581,7 @@ const previewRecoveryText = computed(() => {
       : 'ops.alertsCenter.editor.recoveryManual')
   }
   if (currentRecoveryKind.value === 'heartbeat') return t('ops.alertsCenter.editor.recoveryHeartbeat')
+  if (currentRecoveryKind.value === 'model_credit') return t('ops.alertsCenter.editor.recoveryModelCredit')
   if (legacyNumericRecovery.value) return t('ops.alertsCenter.editor.recoveryTriggerCleared')
   const duration = Number(rule.duration_seconds || 0) === 0
     ? t('ops.alertsCenter.editor.recoveryImmediate') : durationLabel(rule.duration_seconds)
@@ -1715,9 +1716,11 @@ onBeforeUnmount(() => {
                 >
                   <el-switch v-model="recoveryEnabled" />
                   <p class="fullscreen-form-field__hint">
-                    {{ currentRecoveryKind === 'heartbeat'
-                      ? t('ops.alertsCenter.editor.recoveryHeartbeatHint')
-                      : t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}
+                    {{ currentRecoveryKind === 'model_credit'
+                      ? t('ops.alertsCenter.editor.recoveryModelCredit')
+                      : currentRecoveryKind === 'heartbeat'
+                        ? t('ops.alertsCenter.editor.recoveryHeartbeatHint')
+                        : t('ops.alertsCenter.editor.fieldRecoveryEnabledHint') }}
                   </p>
                 </el-form-item>
                 <template v-if="recoveryEnabled && legacyNumericRecovery">
