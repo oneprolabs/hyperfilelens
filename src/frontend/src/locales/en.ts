@@ -4055,6 +4055,9 @@ export const en = {
         operations_notification_records: "Delivery History",
         operations_audit_logs: "Audit Logs",
       },
+      personalResourceLabels: {
+        managedStorageConnections: "Managed Storage Connections",
+      },
       selectAll_view: "View All",
       selectAll_manage: "Manage All",
       selectAll_delete: "Delete All",

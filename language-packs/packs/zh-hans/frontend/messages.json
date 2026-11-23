@@ -6316,6 +6316,9 @@
         "operations_audit_logs": "审计日志",
         "configuration_managed_storage": "托管存储"
       },
+      "personalResourceLabels": {
+        "managedStorageConnections": "托管存储连接"
+      },
       "selectAll_view": "全选查看",
       "selectAll_manage": "全选管理",
       "selectAll_delete": "全选删除",

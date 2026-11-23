@@ -6316,6 +6316,9 @@
         "operations_audit_logs": "Registros de auditoría",
         "configuration_managed_storage": "Almacenamiento gestionado"
       },
+      "personalResourceLabels": {
+        "managedStorageConnections": "Conexiones de almacenamiento gestionado"
+      },
       "selectAll_view": "Seleccionar todos los permisos de lectura",
       "selectAll_manage": "Seleccionar todos los permisos de gestión",
       "selectAll_delete": "Seleccionar todos los permisos de eliminación",
