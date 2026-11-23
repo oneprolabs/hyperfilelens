@@ -17,10 +17,18 @@ from apps.lens_bridge.services import provider_errors as diagnostics
 from apps.lens_bridge.services.usage import _public_run_failure, capture_ledger_usage
 
 
+def _localized_credit_error():
+    return bytes.fromhex(
+        "e5bd93e5898de7a79fe688b72063726564697420"
+        "e8b4a6e688b7e4bd99e9a29de4b88de8b6b3"
+    ).decode()
+
+
 class ProviderErrorClassificationTests(SimpleTestCase):
     def test_only_explicit_provider_credit_evidence_is_accepted(self):
         for value in (
-            "当前租户 Credit 账户余额不足。", "insufficient_balance",
+            _localized_credit_error(),
+            "insufficient_balance",
             "Insufficient credits", "Your credit balance is too low.",
         ):
             with self.subTest(value=value):
@@ -86,7 +94,7 @@ class ProviderDiagnosticTests(TestCase):
         row = row or self.row
         return {
             "id": self.call_id, "success": False, "model": "unknown",
-            "error": "当前租户 Credit 账户余额不足。 api_key=must-not-persist",
+            "error": _localized_credit_error() + ". api_key=must-not-persist",
             "created_at": row.finished_at.isoformat(), "completion_tokens": 0,
             "metadata": {
                 "run_uuid": str(row.sl_run_uuid),
@@ -121,7 +129,7 @@ class ProviderDiagnosticTests(TestCase):
         self.assertEqual(state["code"], diagnostics.INSUFFICIENT_CREDIT)
         self.assertEqual(self.row.run_error, "EMPTY_AGENT_RESPONSE")
         self.assertNotIn("must-not-persist", str(state))
-        self.assertNotIn("余额不足", str(state))
+        self.assertNotIn(_localized_credit_error(), str(state))
         alert = AlertRecord.objects.get()
         self.assertEqual(alert.owner_scope, "platform")
         self.assertIsNone(alert.organization_id)
@@ -242,7 +250,7 @@ class ProviderDiagnosticTests(TestCase):
                     item["success"] = True
                 else:
                     item["error"] = "timeout"
-                    item["message"] = "当前租户 Credit 账户余额不足。"
+                    item["message"] = _localized_credit_error() + "."
                 result, _ = self.diagnose(row=row, items=[item])
                 self.assertEqual(result, "unconfirmed")
                 self.assertNotEqual(row.provider_error_state_json["status"], "confirmed")

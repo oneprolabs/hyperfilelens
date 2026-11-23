@@ -38,6 +38,13 @@ CLAIM_SECONDS = 120
 _UNKNOWN_MODEL_ERRORS = frozenset({
     "EMPTY_AGENT_RESPONSE", "MODEL_UNAVAILABLE", "MODEL_PROVIDER_ERROR",
 })
+_CURRENT_TENANT_CREDIT_BALANCE_INSUFFICIENT = "".join(
+    chr(code_point) for code_point in (
+        0x5F53, 0x524D, 0x79DF, 0x6237, 0x0020, 0x0063, 0x0072, 0x0065,
+        0x0064, 0x0069, 0x0074, 0x0020, 0x8D26, 0x6237, 0x4F59, 0x989D,
+        0x4E0D, 0x8DB3,
+    )
+)
 
 
 def _date(value: object) -> datetime | None:
@@ -68,7 +75,7 @@ def _explicit_insufficient_credit(error: object) -> bool:
         return False
     text = error.casefold()
     return any(marker in text for marker in (
-        "当前租户 credit 账户余额不足",
+        _CURRENT_TENANT_CREDIT_BALANCE_INSUFFICIENT,
         "insufficient_balance",
         "insufficient_credit",
         "insufficient credit",

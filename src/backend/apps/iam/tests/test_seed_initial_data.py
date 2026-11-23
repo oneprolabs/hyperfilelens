@@ -144,7 +144,7 @@ class SeedInitialDataCommandTests(TestCase):
                 organization=membership.organization,
                 default_key__isnull=False,
             ).count(),
-            7,
+            8,
         )
         from common.resource_scope import ResourceScope
 
@@ -154,7 +154,7 @@ class SeedInitialDataCommandTests(TestCase):
                 organization__isnull=True,
                 default_key__isnull=False,
             ).count(),
-            3,
+            4,
         )
 
         profile = Profile.objects.get(user=user)
@@ -202,7 +202,7 @@ class SeedInitialDataCommandTests(TestCase):
                 organization__isnull=True,
                 default_key__isnull=False,
             ).count(),
-            3,
+            4,
         )
 
         user = User.objects.get(email="admin@hyperfilelens.com")

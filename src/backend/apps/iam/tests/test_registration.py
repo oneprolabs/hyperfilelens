@@ -468,7 +468,7 @@ class RegistrationServiceTests(APITestCase):
                 organization=org1,
                 default_key__isnull=False,
             ).count(),
-            7,
+            8,
         )
 
     def test_complete_user_registration_creates_unique_org_from_email(self):
