@@ -5,14 +5,13 @@ import { listRecords, listPolicies as listAlertPolicies, type AlertRecord } from
 import { auditStatistics } from './auditApi'
 import { dashboardTaskStatistics, listTasks, type TaskRow, type TaskStatistics } from './taskApi'
 import { getRouteRequestSignal } from './routeRequestAbort'
-import { listAllNodes } from './nodeApi'
+import { getNodeStatistics, type NodeStatistics } from './nodeApi'
 import { fetchCurrentLicense } from './subscriptionApi'
 import { buildQuotaRows, type QuotaUsageRow } from './licenseQuotaDisplay'
 import { productionSourceSummary, type ProductionSourceSummary } from './sourceApi'
 import { listBackupConfigs } from './protectionBackupConfigApi'
+import { listBackupPolicies } from './protectionPolicyApi'
 import { listRestorePlans } from './restoreApi'
-import { summarizeNodeAvailability } from './nodeAvailability'
-import type { ApiNode } from '../types/node'
 
 export type StorageSummary = {
   /** Backup data stored across every repository. */
@@ -242,30 +241,14 @@ type ApiRepository = {
   capacity_probe_status?: string
 }
 
-type ApiPolicy = {
-  id: number
-  name?: string
-  is_active?: boolean
-  enabled?: boolean
-}
-
-function isBackupPolicyEnabled(policy: ApiPolicy): boolean {
-  if (policy.is_active === false) return false
-  if (policy.enabled === false) return false
-  return true
-}
-
 const RESTORE_TERMINAL = new Set(['success', 'failed', 'timeout', 'cancelled'])
 
 function summarizeRecovery(params: {
-  policies: ApiPolicy[]
-  backupConfigs: Array<{ recovery_plan_enabled?: boolean }>
+  backupPoliciesEnabled: number
+  recoveryConfigCount: number
   restorePlansEnabled: number
   restoreTasks: TaskRow[]
 }): RecoverySummary {
-  const backupPoliciesEnabled = params.policies.filter(isBackupPolicyEnabled).length
-  const recoveryConfigCount = params.backupConfigs.filter((c) => c.recovery_plan_enabled === true).length
-
   let lastRestore: RecoveryLastRestore | null = null
   for (const task of params.restoreTasks) {
     if (!RESTORE_TERMINAL.has(task.status)) continue
@@ -277,8 +260,8 @@ function summarizeRecovery(params: {
   }
 
   return {
-    backupPoliciesEnabled,
-    recoveryConfigCount,
+    backupPoliciesEnabled: params.backupPoliciesEnabled,
+    recoveryConfigCount: params.recoveryConfigCount,
     restorePlansEnabled: params.restorePlansEnabled,
     lastRestore,
   }
@@ -475,15 +458,6 @@ export function topRepos(repos: ApiRepository[], limit = 5): RepoUsageRow[] {
   return repositoryUsageRows(repos).slice(0, limit)
 }
 
-function countNodesByRole(nodes: ApiNode[]): Record<string, number> {
-  const out: Record<string, number> = { agent: 0, proxy: 0, gateway: 0 }
-  for (const n of nodes) {
-    if (n.role in out) out[n.role] += 1
-    else out[n.role] = (out[n.role] || 0) + 1
-  }
-  return out
-}
-
 export async function loadDashboardOverview(
   t: (key: string, p?: Record<string, unknown>) => string,
   onProgress?: (overview: DashboardOverview) => void,
@@ -527,13 +501,15 @@ export async function loadDashboardOverview(
     license,
     runningTasksPage,
     productionSources,
-    nodes,
+    nodeStatistics,
     reposRaw,
+    storageSummary,
     alertsFiringPage,
     alertsAckPage,
     alertPoliciesPage,
     auditStats,
-    protectionPoliciesRaw,
+    protectionPoliciesPage,
+    enabledProtectionPoliciesPage,
     notifyStats,
     backupConfigsPage,
     restorePlansEnabledPage,
@@ -558,8 +534,9 @@ export async function loadDashboardOverview(
       hosts: { total: 0, available: 0, unavailable: 0 },
       nas: { total: 0, available: 0, unavailable: 0 },
     })),
-    listAllNodes().catch(() => []),
+    getNodeStatistics().catch((): NodeStatistics => ({ total: 0, online: 0, offline: 0, by_role: {} })),
     api<unknown>('/api/v1/storage/repositories/?page_size=200').then((raw) => asList<ApiRepository>(raw)).catch(() => []),
+    api<unknown>('/api/v1/storage/repositories/dashboard-summary/').then((raw) => unwrapApiPayload<StorageSummary>(raw)).catch(() => null),
     listRecords({ status: 'firing', page_size: 5 }).catch(() => ({ count: 0, results: [] })),
     listRecords({ status: 'acknowledged', page_size: 5 }).catch(() => ({ count: 0, results: [] })),
     listAlertPolicies({ page_size: 1 }).catch(() => ({ count: 0, results: [] })),
@@ -567,9 +544,10 @@ export async function loadDashboardOverview(
       total_count: 0,
       today_count: 0,
     })),
-    api<unknown>('/api/v1/protection/policies/?page_size=200').then((raw) => asList<ApiPolicy>(raw)).catch(() => []),
+    listBackupPolicies({ page_size: 1 }).catch(() => ({ count: 0 })),
+    listBackupPolicies({ page_size: 1, is_active: true }).catch(() => ({ count: 0 })),
     api<unknown>('/api/v1/notifications/logs/stats/').then((raw) => unwrapApiPayload<{ failed?: number }>(raw)).catch(() => ({ failed: 0 })),
-    listBackupConfigs({ page_size: 200 }).catch(() => ({ count: 0, results: [] })),
+    listBackupConfigs({ page_size: 1, recovery_plan_enabled: 'true' }).catch(() => ({ count: 0 })),
     listRestorePlans({ enabled: true, page_size: 1 }).catch(() => ({ count: 0, results: [] })),
     listTasks({
       task_type: 'restore',
@@ -579,8 +557,8 @@ export async function loadDashboardOverview(
     loadEventsPreview().catch(() => ({ count: 0, results: [] })),
   ])
 
-  const nodeAvailability = summarizeNodeAvailability(nodes)
-  const nodesTotal = nodes.length
+  const nodeAvailability = { online: nodeStatistics.online, offline: nodeStatistics.offline }
+  const nodesTotal = nodeStatistics.total
   const orgName =
     license.organization_name ||
     license.license?.organization_name ||
@@ -603,12 +581,12 @@ export async function loadDashboardOverview(
     })
   }
 
-  const protectionPolicies = protectionPoliciesRaw.length
-  const protectionPoliciesEnabled = protectionPoliciesRaw.filter(isBackupPolicyEnabled).length
+  const protectionPolicies = protectionPoliciesPage.count
+  const protectionPoliciesEnabled = enabledProtectionPoliciesPage.count
 
   const recovery = summarizeRecovery({
-    policies: protectionPoliciesRaw,
-    backupConfigs: backupConfigsPage.results,
+    backupPoliciesEnabled: protectionPoliciesEnabled,
+    recoveryConfigCount: backupConfigsPage.count,
     restorePlansEnabled: restorePlansEnabledPage.count || restorePlansEnabledPage.results.length,
     restoreTasks: restoreTasksPage.results,
   })
@@ -626,7 +604,7 @@ export async function loadDashboardOverview(
     nodesTotal === 0 &&
     productionSources.total === 0 &&
     protectionPolicies === 0 &&
-    reposRaw.length === 0
+    (storageSummary?.repoCount ?? reposRaw.length) === 0
 
   const repositories = repositoryUsageRows(reposRaw)
   const activeAlerts = [
@@ -683,12 +661,12 @@ export async function loadDashboardOverview(
     nodesOnline: nodeAvailability.online,
     nodesTotal,
     nodesOffline: nodeAvailability.offline,
-    nodesByRole: countNodesByRole(nodes),
+    nodesByRole: nodeStatistics.by_role,
     productionSources,
     protectionPolicies,
     protectionPoliciesEnabled,
     recovery,
-    storage: summarizeStorage(reposRaw),
+    storage: storageSummary ?? summarizeStorage(reposRaw),
     repositories,
     topRepos: topRepos(reposRaw),
     notificationFailed: Number(notifyStats.failed) || 0,

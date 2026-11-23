@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw, Search as SearchIcon } from 'lucide-vue-next'
 import { api } from '../lib/api'
-import { asList } from '../lib/parse'
+import { asList, asPagination, unwrapApiPayload } from '../lib/parse'
+import HflPagination from '../components/HflPagination.vue'
 import ModulePage from '../components/ModulePage.vue'
 import HflTypeLabel from '../components/HflTypeLabel.vue'
 import SnapshotStatusTag from '../components/SnapshotStatusTag.vue'
@@ -12,6 +13,7 @@ import TaskStatusTag from '../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../components/TaskTypeLabel.vue'
 import ErrorState from '../components/errors/ErrorState.vue'
 import { useDebouncedAction } from '../composables/useDebouncedAction'
+import { usePageRequestScope } from '../composables/usePageRequestScope'
 import { operationalSearchAliases, taskAlertDisplay } from '../lib/operationalEventDisplay'
 import { alertStatusTagAttrs as sharedAlertStatusTagAttrs, lifecycleStatusTagAttrs, severityStatusTagAttrs } from '../lib/statusTag'
 
@@ -27,25 +29,38 @@ type Snapshot = {
 }
 type Alert = { id: string; type?: string; title: string; status: string; severity?: string }
 
-function includesAny(hay: string, q: string) {
-  if (!q) return true
-  return hay.toLowerCase().includes(q.toLowerCase())
-}
-
 const { t } = useI18n()
 const route = useRoute()
 const q = ref(String(route.query.q || ''))
 const busy = ref(false)
 const alertLoading = ref(false)
 const alertError = ref<unknown>(null)
-let alertRequestSequence = 0
-const { schedule: scheduleAlertSearch } = useDebouncedAction(() => loadAlerts())
+const searchError = ref<unknown>(null)
+const requests = usePageRequestScope()
+const { schedule, runNow } = useDebouncedAction(() => void load())
 
 const tasks = ref<Task[]>([])
 const nodes = ref<Node[]>([])
 const repos = ref<Repo[]>([])
 const snaps = ref<Snapshot[]>([])
 const alerts = ref<Alert[]>([])
+const pageSize = 20
+const sections = {
+  tasks: { path: '/api/v1/tasks/', rows: tasks },
+  nodes: { path: '/api/v1/node/nodes/', rows: nodes },
+  repos: { path: '/api/v1/storage/repositories/', rows: repos },
+  snaps: { path: '/api/v1/protection/backup-source-snapshots/', rows: snaps },
+}
+type SearchSection = keyof typeof sections | 'alerts'
+const pagination = reactive({
+  tasks: { page: 1, total: 0 }, nodes: { page: 1, total: 0 }, repos: { page: 1, total: 0 },
+  snaps: { page: 1, total: 0 }, alerts: { page: 1, total: 0 },
+})
+
+function resultCount(response: unknown, size: number) {
+  const payload = unwrapApiPayload<{ count?: number }>(response)
+  return asPagination(response)?.total ?? payload?.count ?? size
+}
 
 function nodeStatusLabel(status?: string) {
   const keys: Record<string, string> = {
@@ -107,50 +122,82 @@ const side = computed(() => [
   { to: '/insight/copilot', label: t('searchPage.sideInsight') },
 ])
 
-async function load() {
-  const [j, n, r, s] = await Promise.all([
-    api<unknown>(`/api/v1/tasks/`),
-    api<unknown>(`/api/v1/node/nodes/`),
-    api<unknown>(`/api/v1/storage/repositories/`),
-    api<unknown>(`/api/v1/protection/backup-source-snapshots/?page=1&page_size=100`),
-    loadAlerts(),
-  ])
-  tasks.value = asList<Task>(j)
-  nodes.value = asList<Node>(n)
-  repos.value = asList<Repo>(r)
-  snaps.value = asList<Snapshot>(s)
-}
+async function load(section?: keyof typeof sections) {
+  const signal = requests.nextSignal('search')
+  busy.value = true
+  searchError.value = null
+  async function loadSection<Row>(key: keyof typeof sections, path: string, rows: { value: Row[] }) {
+    const query = new URLSearchParams({ page: String(pagination[key].page), page_size: String(pageSize) })
+    if (q.value.trim()) query.set('search', q.value.trim())
+    try {
+      const response = await api<unknown>(`${path}?${query}`, { signal })
+      if (!signal.aborted) {
+        rows.value = asList<Row>(response)
+        pagination[key].total = resultCount(response, rows.value.length)
+      }
+    } catch (error) {
+      if (signal.aborted) return
+      rows.value = []
+      searchError.value ??= error
+    }
+  }
 
-async function loadAlerts() {
-  const requestId = ++alertRequestSequence
-  alertLoading.value = true
-  alertError.value = null
-  const query = new URLSearchParams({ page_size: '20', search: q.value.trim(), search_context: 'global' })
-  const aliases = operationalSearchAliases(q.value, t, 'alert')
-  if (aliases.length) query.set('search_aliases', JSON.stringify(aliases))
   try {
-    const response = await api<unknown>(`/api/v1/alerts/records/?${query}`)
-    if (requestId === alertRequestSequence) alerts.value = asList<Alert>(response)
-  } catch (error) {
-    if (requestId === alertRequestSequence) alertError.value = error
+    await Promise.all([
+      !section || section === 'tasks' ? loadSection('tasks', sections.tasks.path, tasks) : null,
+      !section || section === 'nodes' ? loadSection('nodes', sections.nodes.path, nodes) : null,
+      !section || section === 'repos' ? loadSection('repos', sections.repos.path, repos) : null,
+      !section || section === 'snaps' ? loadSection('snaps', sections.snaps.path, snaps) : null,
+      !section ? loadAlerts() : null,
+    ])
   } finally {
-    if (requestId === alertRequestSequence) alertLoading.value = false
+    requests.releaseSignal('search', signal)
+    if (!signal.aborted) busy.value = false
   }
 }
 
-onMounted(() => {
-  load().catch(() => {
-    tasks.value = []
-    nodes.value = []
-    repos.value = []
-    snaps.value = []
-  })
-})
-onBeforeUnmount(() => { alertRequestSequence += 1 })
-watch(q, () => {
-  alertRequestSequence += 1
+async function loadAlerts() {
+  const signal = requests.nextSignal('alerts')
   alertLoading.value = true
-  scheduleAlertSearch()
+  alertError.value = null
+  const query = new URLSearchParams({ page: String(pagination.alerts.page), page_size: String(pageSize), search: q.value.trim(), search_context: 'global' })
+  const aliases = operationalSearchAliases(q.value, t, 'alert')
+  if (aliases.length) query.set('search_aliases', JSON.stringify(aliases))
+  try {
+    const response = await api<unknown>(`/api/v1/alerts/records/?${query}`, { signal })
+    if (!signal.aborted) {
+      alerts.value = asList<Alert>(response)
+      pagination.alerts.total = resultCount(response, alerts.value.length)
+    }
+  } catch (error) {
+    if (!signal.aborted) alertError.value = error
+  } finally {
+    requests.releaseSignal('alerts', signal)
+    if (!signal.aborted) alertLoading.value = false
+  }
+}
+
+async function changePage(section: SearchSection, page: number) {
+  if (busy.value || alertLoading.value) return
+  pagination[section].page = page
+  if (section === 'alerts') {
+    await loadAlerts()
+  } else {
+    await load(section)
+  }
+}
+
+onMounted(runNow)
+watch(q, () => {
+  requests.abortScope('search')
+  requests.abortScope('alerts')
+  busy.value = true
+  alertLoading.value = true
+  for (const state of Object.values(pagination)) {
+    state.page = 1
+    state.total = 0
+  }
+  schedule()
 })
 
 watch(
@@ -160,30 +207,10 @@ watch(
   },
 )
 
-const taskRows = computed(() =>
-  tasks.value
-    .filter((x) => includesAny(`${x.id} ${x.task_uuid} ${x.task_type} ${x.status} ${x.display_name || ''}`, q.value))
-    .slice(0, 20),
-)
-const nodeRows = computed(() => nodes.value.filter((x) => includesAny(`${x.id} ${x.name} ${x.status || ''}`, q.value)).slice(0, 20))
-const repoRows = computed(() => repos.value.filter((x) => includesAny(`${x.id} ${x.name} ${x.repo_type || ''} ${x.status || ''}`, q.value)).slice(0, 20))
-const snapRows = computed(() =>
-  snaps.value
-    .filter((x) => includesAny(`${x.id} ${x.snapshot_uid} ${x.source_display_name || ''} ${x.repository_display_name || ''} ${x.status || ''}`, q.value))
-    .slice(0, 20),
-)
 const alertRows = computed(() =>
   alerts.value.map(alert => ({ ...alert, title: taskAlertDisplay(alert, t).title })),
 )
 
-async function onRefresh() {
-  busy.value = true
-  try {
-    await load()
-  } finally {
-    busy.value = false
-  }
-}
 </script>
 
 <template>
@@ -191,7 +218,7 @@ async function onRefresh() {
     <template #actions>
       <ElButton
         :disabled="busy"
-        @click="onRefresh"
+        @click="runNow"
       >
         <RefreshCw :size="16" /> {{ t('searchPage.refresh') }}
       </ElButton>
@@ -215,15 +242,16 @@ async function onRefresh() {
       </div>
     </div>
 
+    <ErrorState v-if="searchError" :error="searchError" @retry="runNow" />
     <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-[var(--card-gap)]">
       <div class="hfl-list-panel">
         <div class="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">
           {{ t('searchPage.sectionTasks') }}
         </div>
         <el-table
-          :data="taskRows"
+          v-loading="busy"
+          :data="tasks"
           stripe
-          :loading="busy"
         >
           <el-table-column
             prop="id"
@@ -262,6 +290,14 @@ async function onRefresh() {
             />
           </template>
         </el-table>
+        <HflPagination
+          v-if="pagination.tasks.total > pageSize"
+          :current-page="pagination.tasks.page"
+          :page-size="pageSize"
+          :total="pagination.tasks.total"
+          layout="prev, pager, next"
+          @update:current-page="changePage('tasks', $event)"
+        />
       </div>
 
       <div class="hfl-list-panel">
@@ -269,9 +305,9 @@ async function onRefresh() {
           {{ t('searchPage.sectionNodes') }}
         </div>
         <el-table
-          :data="nodeRows"
+          v-loading="busy"
+          :data="nodes"
           stripe
-          :loading="busy"
         >
           <el-table-column
             prop="id"
@@ -307,6 +343,14 @@ async function onRefresh() {
             />
           </template>
         </el-table>
+        <HflPagination
+          v-if="pagination.nodes.total > pageSize"
+          :current-page="pagination.nodes.page"
+          :page-size="pageSize"
+          :total="pagination.nodes.total"
+          layout="prev, pager, next"
+          @update:current-page="changePage('nodes', $event)"
+        />
       </div>
 
       <div class="hfl-list-panel">
@@ -314,9 +358,9 @@ async function onRefresh() {
           {{ t('searchPage.sectionRepos') }}
         </div>
         <el-table
-          :data="repoRows"
+          v-loading="busy"
+          :data="repos"
           stripe
-          :loading="busy"
         >
           <el-table-column
             prop="id"
@@ -360,6 +404,14 @@ async function onRefresh() {
             />
           </template>
         </el-table>
+        <HflPagination
+          v-if="pagination.repos.total > pageSize"
+          :current-page="pagination.repos.page"
+          :page-size="pageSize"
+          :total="pagination.repos.total"
+          layout="prev, pager, next"
+          @update:current-page="changePage('repos', $event)"
+        />
       </div>
 
       <div class="hfl-list-panel">
@@ -367,9 +419,9 @@ async function onRefresh() {
           {{ t('searchPage.sectionSnapshots') }}
         </div>
         <el-table
-          :data="snapRows"
+          v-loading="busy"
+          :data="snaps"
           stripe
-          :loading="busy"
         >
           <el-table-column
             prop="id"
@@ -417,6 +469,14 @@ async function onRefresh() {
             />
           </template>
         </el-table>
+        <HflPagination
+          v-if="pagination.snaps.total > pageSize"
+          :current-page="pagination.snaps.page"
+          :page-size="pageSize"
+          :total="pagination.snaps.total"
+          layout="prev, pager, next"
+          @update:current-page="changePage('snaps', $event)"
+        />
       </div>
 
       <div class="hfl-list-panel lg:col-span-2">
@@ -480,6 +540,14 @@ async function onRefresh() {
             />
           </template>
         </el-table>
+        <HflPagination
+          v-if="pagination.alerts.total > pageSize"
+          :current-page="pagination.alerts.page"
+          :page-size="pageSize"
+          :total="pagination.alerts.total"
+          layout="prev, pager, next"
+          @update:current-page="changePage('alerts', $event)"
+        />
       </div>
     </div>
   </ModulePage>

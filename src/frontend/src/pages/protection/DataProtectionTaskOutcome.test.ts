@@ -30,6 +30,8 @@ describe('Data Protection task outcome columns', () => {
   })
 
   it('keeps Insight workspace restores out of Protection task state', () => {
-    expect(page).toContain("exclude_insight_workspace_restores: 'true'")
+    expect(page).toMatch(/async function refreshStep3RuntimeRows[\s\S]*?listBackupSelectableSources\(\{[\s\S]*?expand: 'runtime'/)
+    const runtimeSelector = readFileSync(resolve(process.cwd(), '../backend/apps/source/services/internal/backup_selectable.py'), 'utf8')
+    expect(runtimeSelector.match(/RestoreRecord\.objects\.filter\(\s*organization_id=organization_id,\s*purpose=RestoreRecord\.Purpose\.USER_DATA,/g)).toHaveLength(2)
   })
 })

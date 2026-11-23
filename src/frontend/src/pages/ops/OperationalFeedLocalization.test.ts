@@ -33,7 +33,11 @@ vi.mock('../../lib/alertApi', () => ({
   listRecords: mocks.records, recordStatistics: mocks.statistics,
   acknowledgeRecord: vi.fn(), resolveRecord: vi.fn(),
 }))
-vi.mock('../../lib/api', () => ({ api: mocks.events, apiErrorMessage: () => 'Request failed' }))
+vi.mock('../../lib/api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../lib/api')>(),
+  api: mocks.events,
+  apiErrorMessage: () => 'Request failed',
+}))
 vi.mock('../../lib/notificationApi', () => ({
   listUserNotifications: mocks.notifications, markAllUserNotificationsRead: vi.fn(), markUserNotificationRead: vi.fn(),
   listChannels: mocks.channels, listLogs: mocks.logs, logStats: mocks.logStats,

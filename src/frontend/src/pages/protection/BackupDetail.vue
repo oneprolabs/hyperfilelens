@@ -38,19 +38,19 @@ import {
 import {
   deleteBackupSourceSnapshot,
   getBackupConfig,
-  getBackupSourceSnapshot,
   listBackupSourceSnapshots,
   type BackupConfigDetail,
   type BackupSourceSnapshot,
   type CompressionLevel,
 } from '../../lib/protectionBackupConfigApi'
 import {
-  listBackupPolicies,
-  listFileFilterRules,
+  getBackupPolicy,
+  getFileFilterRule,
   type BackupPolicy,
   type FileFilterRule,
 } from '../../lib/protectionPolicyApi'
-import { listAllStorageRepositories, type StorageRepository } from '../../lib/storageRepositoryApi'
+import { getStorageRepository, type StorageRepository } from '../../lib/storageRepositoryApi'
+import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { listBackupSelectableSources, type BackupSelectableSource } from '../../lib/sourceApi'
 import { listTasks, type TaskRow } from '../../lib/taskApi'
 
@@ -66,6 +66,12 @@ const resourcePermissions = useResourceCapabilities(computed(() => realBackupCon
   ? [{ resource_type: 'backup_config' as const, resource_id: realBackupConfig.value.id }] : []))
 const realSnapshots = ref<BackupSourceSnapshot[]>([])
 const realTasks = ref<TaskRow[]>([])
+const latestSnapshot = ref<BackupSourceSnapshot>()
+const snapshotPage = ref(1)
+const taskPage = ref(1)
+const snapshotCount = ref(0)
+const taskCount = ref(0)
+const historyPageSize = 30
 const sourceInfo = ref<BackupSelectableSource | null>(null)
 const repositoryById = ref(new Map<number, StorageRepository>())
 const policyById = ref(new Map<number, BackupPolicy>())
@@ -219,7 +225,7 @@ const backup = computed<DetailBackup | null>(() => {
   const repo = repositoryById.value.get(config.repository_id)
   const policyRow = config.backup_policy_id ? policyById.value.get(config.backup_policy_id) : undefined
   const filterRow = config.file_filter_rule_id ? filterById.value.get(config.file_filter_rule_id) : undefined
-  const latest = realSnapshots.value.find((item) => item.finished_at || item.started_at || item.created_at)
+  const latest = latestSnapshot.value
   const sourceName = sourceLabel()
   const hostname = sourceHostname()
   const snapshots = realSnapshots.value.map<DetailSnapshot>((snapshot) => ({
@@ -324,11 +330,23 @@ function taskPayload(task: TaskRow): Record<string, unknown> {
     : {}
 }
 
+const taskSnapshotIds = ref(new Map<string, string>())
+
+async function loadTaskSnapshotIds(configId: number, tasks: TaskRow[], signal: AbortSignal, known: BackupSourceSnapshot[] = []) {
+  const links = new Map(known.map((snapshot) => [snapshot.task_uuid, snapshot.snapshot_uid || String(snapshot.id)]))
+  const missing = [...new Set(tasks.map((task) => task.task_uuid).filter((uuid) => uuid && !links.has(uuid)))].sort()
+  if (missing.length) {
+    const page = await listBackupSourceSnapshots({ backup_config_id: configId, task_uuids: missing.join(','), page: 1, page_size: missing.length }, { signal })
+    for (const snapshot of page.results) {
+      if (!links.has(snapshot.task_uuid)) links.set(snapshot.task_uuid, snapshot.snapshot_uid || String(snapshot.id))
+    }
+  }
+  return links
+}
+
 const taskList = computed<DemoTask[]>(() => {
   if (!backup.value) return []
-  const snapshotByTaskUuid = new Map(backup.value.snapshots.map((snapshot) => [snapshot.taskUuid, snapshot]))
   return realTasks.value.map((task) => {
-    const linkedSnapshot = snapshotByTaskUuid.get(task.task_uuid)
     const payload = taskPayload(task)
     const sourceName = sourceLabel()
     const status = String(task.status || 'pending') as DemoTaskStatus
@@ -341,7 +359,7 @@ const taskList = computed<DemoTask[]>(() => {
       duration: taskDurationText(task.started_at || task.created_at || '', task.finished_at || ''),
       trigger: triggerLabel(task.trigger_type || String(payload.trigger_type || '')),
       executor: sourceName || `${payload.source_type || ''}:${payload.source_ref_id || ''}`,
-      snapshotId: linkedSnapshot?.id ?? null,
+      snapshotId: taskSnapshotIds.value.get(task.task_uuid) ?? null,
       detail: task.error_message || stepLabel(task.current_step) || task.display_name || t('protection.backupDetail.durationDash'),
     }
   })
@@ -432,50 +450,57 @@ onBeforeUnmount(() => {
   unbindDrawerResize()
 })
 
+const detailRequests = usePageRequestScope()
+
 async function loadBackupDetail() {
+  const signal = detailRequests.nextSignal('backup-detail')
   const numericId = Number(backupId.value)
   if (!Number.isFinite(numericId) || numericId <= 0) {
     realBackupConfig.value = null
     realSnapshots.value = []
     realTasks.value = []
+    detailLoading.value = false
     detailLoadError.value = t('protection.backupDetail.notFound')
+    detailRequests.releaseSignal('backup-detail', signal)
     return
   }
   detailLoading.value = true
   detailLoadError.value = ''
   try {
-    const config = await getBackupConfig(numericId)
+    const config = await getBackupConfig(numericId, { signal })
+    if (signal.aborted) return
     realBackupConfig.value = config
     const sourceId = `${config.source_type}:${config.source_ref_id}`
-    const [snapshotsPage, repositories, policies, filters, selectable, tasksPage] = await Promise.all([
-      listBackupSourceSnapshots({ backup_config_id: config.id, page: 1, page_size: 200, ordering: '-created_at' }),
-      listAllStorageRepositories({ page_size: 10 }).catch(() => [] as StorageRepository[]),
-      listBackupPolicies({ page: 1, page_size: 500 }).catch(() => ({ count: 0, results: [] as BackupPolicy[] })),
-      listFileFilterRules({ page: 1, page_size: 500 }).catch(() => ({ count: 0, results: [] as FileFilterRule[] })),
-      listBackupSelectableSources({ ids: sourceId, page: 1, page_size: 1 }).catch(() => ({ count: 0, results: [] as BackupSelectableSource[] })),
-      listTasks({ task_type: 'backup', page: 1, page_size: 200 }).catch(() => ({ count: 0, results: [] as TaskRow[] })),
+    const [snapshotsPage, repository, policy, filterRule, selectable, tasksPage] = await Promise.all([
+      listBackupSourceSnapshots({ backup_config_id: config.id, page: snapshotPage.value, page_size: historyPageSize, ordering: '-created_at', include_directory_snapshots: 1 }, { signal }),
+      getStorageRepository(config.repository_id, { signal }).catch(() => null),
+      config.backup_policy_id ? getBackupPolicy(config.backup_policy_id, { signal }).catch(() => null) : null,
+      config.file_filter_rule_id ? getFileFilterRule(config.file_filter_rule_id, { signal }).catch(() => null) : null,
+      listBackupSelectableSources({ ids: sourceId, page: 1, page_size: 1 }, { signal }).catch(() => ({ count: 0, results: [] as BackupSelectableSource[] })),
+      listTasks({ task_type: 'backup', backup_config_id: config.id, page: taskPage.value, page_size: historyPageSize }, { signal }).catch(() => ({ count: 0, results: [] as TaskRow[] })),
     ])
-    repositoryById.value = new Map(repositories.map((repo) => [repo.id, repo]))
-    policyById.value = new Map(policies.results.map((item) => [item.id, item]))
-    filterById.value = new Map(filters.results.map((item) => [item.id, item]))
+    if (signal.aborted) return
+    repositoryById.value = new Map(repository ? [[repository.id, repository]] : [])
+    policyById.value = new Map(policy ? [[policy.id, policy]] : [])
+    filterById.value = new Map(filterRule ? [[filterRule.id, filterRule]] : [])
     sourceInfo.value = selectable.results[0] ?? null
-    const snapshotDetails = await Promise.all(
-      snapshotsPage.results.map((snapshot) =>
-        getBackupSourceSnapshot(snapshot.id).catch(() => snapshot),
-      ),
-    )
-    realSnapshots.value = snapshotDetails
-    realTasks.value = tasksPage.results.filter((task) => {
-      const payload = taskPayload(task)
-      return Number(payload.backup_config_id || 0) === config.id
-    })
+    realSnapshots.value = snapshotsPage.results
+    if (snapshotPage.value === 1) latestSnapshot.value = snapshotsPage.results[0]
+    snapshotCount.value = snapshotsPage.count
+    taskCount.value = tasksPage.count
+    realTasks.value = tasksPage.results
+    const links = await loadTaskSnapshotIds(config.id, tasksPage.results, signal, snapshotsPage.results).catch(() => new Map<string, string>())
+    if (!signal.aborted) taskSnapshotIds.value = links
   } catch (err) {
+    if (signal.aborted) return
     realBackupConfig.value = null
     realSnapshots.value = []
     realTasks.value = []
+    taskSnapshotIds.value = new Map()
     detailLoadError.value = apiErrorMessage(err, t('errors.generic.loadFailed'))
   } finally {
-    detailLoading.value = false
+    detailRequests.releaseSignal('backup-detail', signal)
+    if (!signal.aborted) detailLoading.value = false
   }
 }
 
@@ -484,8 +509,43 @@ onMounted(() => {
 })
 
 watch(backupId, () => {
+  snapshotPage.value = 1
+  taskPage.value = 1
+  latestSnapshot.value = undefined
   void loadBackupDetail()
 })
+
+async function changeHistoryPage(kind: 'snapshot' | 'task', page: number) {
+  const config = realBackupConfig.value
+  if (!config || detailLoading.value) return
+  const signal = detailRequests.nextSignal('backup-detail')
+  detailLoading.value = true
+  try {
+    if (kind === 'snapshot') {
+      const result = await listBackupSourceSnapshots({
+        backup_config_id: config.id, page, page_size: historyPageSize,
+        ordering: '-created_at', include_directory_snapshots: 1,
+      }, { signal })
+      if (signal.aborted) return
+      realSnapshots.value = result.results
+      snapshotPage.value = page
+      snapshotCount.value = result.count
+    } else {
+      const result = await listTasks({ task_type: 'backup', backup_config_id: config.id, page, page_size: historyPageSize }, { signal })
+      const links = await loadTaskSnapshotIds(config.id, result.results, signal, realSnapshots.value)
+      if (signal.aborted) return
+      taskSnapshotIds.value = links
+      realTasks.value = result.results
+      taskPage.value = page
+      taskCount.value = result.count
+    }
+  } catch (error) {
+    if (!signal.aborted) ElMessage.error(apiErrorMessage(error, t('errors.generic.loadFailed')))
+  } finally {
+    detailRequests.releaseSignal('backup-detail', signal)
+    if (!signal.aborted) detailLoading.value = false
+  }
+}
 
 type RecoveryDirNode = {
   id: string
@@ -1003,6 +1063,7 @@ async function confirmDeleteSnapshot() {
   deleteSnapshotLoading.value = true
   try {
     await deleteBackupSourceSnapshot(row.apiId)
+    snapshotPage.value = 1
     await loadBackupDetail()
     deleteSnapshotDialogOpen.value = false
     pendingDeleteSnapshot.value = null
@@ -1150,6 +1211,7 @@ function closeDeleteSnapshotDialog() {
           <div class="hfl-list-panel">
             <el-table
               ref="snapshotTableRef"
+              v-loading="detailLoading"
               v-table-overflow-title
               :data="backup.snapshots"
               stripe
@@ -1259,6 +1321,16 @@ function closeDeleteSnapshotDialog() {
                 />
               </template>
             </el-table>
+            <div class="hfl-list-footer">
+              <ElPagination
+                :current-page="snapshotPage"
+                :page-size="historyPageSize"
+                :total="snapshotCount"
+                :disabled="detailLoading"
+                layout="total, prev, pager, next"
+                @update:current-page="changeHistoryPage('snapshot', $event)"
+              />
+            </div>
           </div>
         </el-tab-pane>
 
@@ -1269,6 +1341,7 @@ function closeDeleteSnapshotDialog() {
           <div class="hfl-list-panel">
             <el-table
               ref="taskTableRef"
+              v-loading="detailLoading"
               v-table-overflow-title
               :data="taskList"
               stripe
@@ -1354,6 +1427,16 @@ function closeDeleteSnapshotDialog() {
                 />
               </template>
             </el-table>
+            <div class="hfl-list-footer">
+              <ElPagination
+                :current-page="taskPage"
+                :page-size="historyPageSize"
+                :total="taskCount"
+                :disabled="detailLoading"
+                layout="total, prev, pager, next"
+                @update:current-page="changeHistoryPage('task', $event)"
+              />
+            </div>
           </div>
         </el-tab-pane>
       </el-tabs>

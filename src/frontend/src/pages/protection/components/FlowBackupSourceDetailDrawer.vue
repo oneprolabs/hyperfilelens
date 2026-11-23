@@ -122,7 +122,7 @@ import {
   type TransferProgress,
 } from '../../../lib/kopiaProgress'
 import type { TaskEventRow, TaskResourceRow, TaskRow } from '../../../lib/taskApi'
-import { getTask, listTaskEvents, listTasks } from '../../../lib/taskApi'
+import { getTask, listTasks } from '../../../lib/taskApi'
 import type { RestoreEndpointType, RestoreRecord, RestoreRecordItem, RestoreRecordSearchField } from '../../../lib/restoreApi'
 import { listRestoreRecords, fetchRestoreRecordRuntime } from '../../../lib/restoreApi'
 import { formatLocalDateTime } from '../../../lib/dateTime'
@@ -1698,12 +1698,10 @@ async function refreshActiveTask() {
   activeTaskLoading.value = true
   const taskUuid = activeTask.value.task_uuid
   try {
-    const [task, events] = await Promise.all([
-      getTask(taskUuid),
-      listTaskEvents(taskUuid, { page: 1, page_size: 500 }),
-    ])
+    const task = await getTask(taskUuid)
+    if (activeTask.value?.task_uuid !== taskUuid || !taskDetailOpen.value) return
     activeTask.value = task
-    taskDetailEvents.value = events.results
+    taskDetailEvents.value = task.recent_events || []
     syncSourceTask(task)
     initExpandedSteps(task)
     await loadActiveBackupSnapshot(task)
@@ -1739,7 +1737,6 @@ function openTaskDetail(task: TaskRow) {
   taskDetailOpen.value = true
   resetResourceDetails()
   initExpandedSteps(task)
-  void refreshActiveTask()
 }
 
 async function openTaskDetailByUuid(taskUuid?: string | null) {

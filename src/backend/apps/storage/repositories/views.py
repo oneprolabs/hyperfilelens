@@ -620,6 +620,59 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
             return RepositoryWriteSerializer
         return RepositorySerializer
 
+    @action(detail=False, methods=["get"], url_path="dashboard-summary")
+    def dashboard_summary(self, request):
+        rows = self.get_queryset().values(
+            "id", "name", "repo_type", "estimated_usage_bytes", "storage_total_bytes",
+            "storage_used_bytes", "storage_available_bytes", "storage_pool_key",
+            "storage_mount_point", "capacity_probe_status", "bind_node_id",
+        ).order_by("-created_at", "-id")
+        pools = {}
+        total_used = repository_count = capacity_count = covered_count = 0
+        pending = False
+        for row in rows.iterator(chunk_size=1000):
+            repository_count += 1
+            total_used += row["estimated_usage_bytes"]
+            capacity_expected = row["repo_type"] in (Repository.Type.NAS, Repository.Type.PROXY_FS)
+            capacity_count += int(capacity_expected)
+            capacity = row["storage_total_bytes"]
+            if capacity <= 0:
+                pending = pending or (capacity_expected and row["capacity_probe_status"] != "failed")
+                continue
+            covered_count += 1
+            key = row["storage_pool_key"].strip() or f"repository:{row['id']}"
+            used = max(0, row["storage_used_bytes"])
+            available = max(0, row["storage_available_bytes"])
+            if key not in pools:
+                pools[key] = {"key": key, "label": row["storage_mount_point"].strip() or row["name"],
+                              "usedBytes": used, "availableBytes": available, "capacityBytes": capacity,
+                              "repoCount": 1, "bound_node_id": row["bind_node_id"] if row["storage_mount_point"].strip() else None}
+            else:
+                pool = pools[key]
+                pool["usedBytes"] = max(pool["usedBytes"], used)
+                pool["availableBytes"] = min(pool["availableBytes"], available)
+                pool["capacityBytes"] = max(pool["capacityBytes"], capacity)
+                pool["repoCount"] += 1
+        nodes = Node.objects.filter(
+            organization_id=self._membership().organization_id,
+            pk__in={pool["bound_node_id"] for pool in pools.values() if pool["bound_node_id"]},
+        ).in_bulk()
+        for pool in pools.values():
+            node = nodes.get(pool.pop("bound_node_id"))
+            if node is not None and node.name.strip():
+                pool["label"] = f"{node.name.strip()} · {pool['label']}"
+        return Response({
+            "usedBytes": total_used,
+            "storageUsedBytes": sum(pool["usedBytes"] for pool in pools.values()),
+            "availableBytes": sum(pool["availableBytes"] for pool in pools.values()),
+            "capacityBytes": sum(pool["capacityBytes"] for pool in pools.values()),
+            "repoCount": repository_count,
+            "capacityRepoCount": capacity_count,
+            "coveredRepoCount": covered_count,
+            "pools": list(pools.values()),
+            "capacityMode": "known" if pools else "pending" if pending else "unlimited" if repository_count else "empty",
+        })
+
     def get_serializer_context(self):
         context = super().get_serializer_context()
         if self.action in {"create", "update", "partial_update"}:

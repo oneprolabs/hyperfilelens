@@ -54,7 +54,7 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
 
   it('tracks queued reset source ids across step3 pages and refreshes pipeline only when finished', () => {
     expect(page).toContain('const pendingResetPipelineSourceIds = ref<string[]>([])')
-    expect(page).toContain('trackResetPipelineSources(sourceIdList)')
+    expect(page).toContain('trackResetPipelineSources(sourceIdList.filter((id) => resetTaskUuidBySource.has(id)))')
 
     const refreshStep3 = sourceBetween(
       'async function refreshStep3SourceList()',
@@ -62,9 +62,9 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
     )
     expect(refreshStep3).toContain('const resetTrackedIds = collectResetTrackedIds()')
     expect(refreshStep3).toContain(
-      'const configsLoaded = await refreshBackupConfigs(signal, { preserveOnError: true })',
+      'const resetStates = await refreshTrackedResetStates(resetTrackedIds, signal)',
     )
-    expect(refreshStep3).toContain('if (!configsLoaded) return')
+    expect(refreshStep3).toContain("(id) => resetStates.get(id) ?? 'resetting'")
     expect(refreshStep3).toContain('selectFinishedResetSourceIds(')
     expect(refreshStep3).toContain('selectTerminalFailedResetSourceIds(')
     expect(refreshStep3).toContain('untrackResetPipelineSources(failedIds)')
@@ -84,12 +84,14 @@ describe('backup wizard reset → Backup Configuration list (#362)', () => {
     expect(refresh).toContain('if (pendingResetPipelineSourceIds.value.length > 0) return true')
   })
 
-  it('returns false from refreshBackupConfigs soft-failure so reset completion is not inferred', () => {
-    const refreshConfigs = sourceBetween(
-      'async function refreshBackupConfigs(',
-      'function displayNameForSource(type: string, refId: number, fallback: string)',
+  it('requires an observed successful reset task before treating a tracked source as finished', () => {
+    const refreshTrackedResets = sourceBetween(
+      'async function refreshTrackedResetStates(',
+      'function collectResetTrackedIds()',
     )
-    expect(refreshConfigs).toContain('return true')
-    expect(refreshConfigs).toContain('return false')
+    expect(refreshTrackedResets).toContain("await listTasks({ task_uuids: chunk.join(',')")
+    expect(refreshTrackedResets).not.toContain('getTask(')
+    expect(refreshTrackedResets).toContain("if (status === 'success') states.set(id, '')")
+    expect(page).not.toContain('async function refreshBackupConfigs(')
   })
 })

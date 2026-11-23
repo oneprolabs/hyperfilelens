@@ -6,7 +6,8 @@ const page = readFileSync(resolve(process.cwd(), 'src/pages/node/AddProxyFsRepos
 
 describe('Add Local Disk Repository proxy availability', () => {
   it('loads proxy nodes without treating online as a lifecycle status', () => {
-    expect(page).toContain("listAllNodes({ role: 'proxy' })")
+    expect(page).toContain('useProxyNodeOptions(() => proxyNodeId.value, true)')
+    expect(page).toContain(':remote-method="searchProxyNodes"')
     expect(page).not.toContain("status: 'online'")
   })
 

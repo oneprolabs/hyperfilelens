@@ -102,6 +102,15 @@ class _BackupConfigViewSetBase(viewsets.ModelViewSet):
             repository_id=int(repo_id) if repo_id else None,
             ordering=params.get("ordering") or None,
         )
+        for field in ("backup_policy_id", "file_filter_rule_id"):
+            if value := params.get(field):
+                if not value.isascii() or not value.isdecimal() or len(value) > 19 or not 0 < int(value) < 2**63:
+                    raise ValidationError({field: "Expected a positive integer."})
+                queryset = queryset.filter(**{field: int(value)})
+        if (recovery_enabled := params.get("recovery_plan_enabled")) is not None:
+            if recovery_enabled not in {"true", "false"}:
+                raise ValidationError({"recovery_plan_enabled": "Expected true or false."})
+            queryset = queryset.filter(recovery_plan_enabled=recovery_enabled == "true")
         return filter_resource_queryset(
             self.request,
             queryset,

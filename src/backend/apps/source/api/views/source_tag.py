@@ -211,34 +211,35 @@ def _visible_tag_count(request, tag):
     )
 
 
+def _untagged_source_count(request, org):
+    count = 0
+    visible_tags = _visible_tags(request).values("pk")
+    for kind, model, resource_kind, filters in (
+        ("agent", Node, "node", {"role": NodeRole.AGENT, "is_deleted": False}),
+        ("nas", SourceResource, "source_resource", {"resource_type": ResourceType.NAS, "is_deleted": False}),
+    ):
+        resources = filter_resource_queryset(
+            request, model.objects.filter(organization=org, **filters), resource_kind,
+            action="resource.view",
+        )
+        tagged = SourceTagAssignment.objects.filter(
+            organization=org, source_kind=kind, tag_id__in=visible_tags,
+        ).values("ref_id")
+        count += resources.exclude(pk__in=Subquery(tagged)).count()
+    return count
+
+
 class SourceTagListView(SourceTagsCapabilityMixin, APIView):
     permission_classes = [IsAuthenticated, TagPermission]
 
     def get(self, request):
         org = require_org(request)
-        tags = _tag_list(request)
-        untagged_count = 0
-        for kind, model, filters in (
-            ("agent", Node, {"role": NodeRole.AGENT, "is_deleted": False}),
-            (
-                "nas",
-                SourceResource,
-                {"resource_type": ResourceType.NAS, "is_deleted": False},
-            ),
-        ):
-            resources = filter_resource_queryset(
-                request,
-                model.objects.filter(organization=org, **filters),
-                "node" if kind == "agent" else "source_resource",
-                action="resource.view",
-            )
-            # Hidden tags must not change a user's visible tag-filter counts.
-            tagged = SourceTagAssignment.objects.filter(
-                organization=org,
-                source_kind=kind,
-                tag_id__in=_visible_tags(request).values("pk"),
-            ).values("ref_id")
-            untagged_count += resources.exclude(pk__in=Subquery(tagged)).count()
+        view = request.query_params.get("view", "list")
+        if view not in {"list", "options", "filter", "untagged"}:
+            raise ValidationError({"view": "Unknown tag view."})
+        if view == "untagged":
+            return Response({"untagged_source_count": _untagged_source_count(request, org)})
+        tags = _visible_tags(request).order_by("name", "id") if view == "options" else _tag_list(request)
         total = tags.count()
         if "page" in request.query_params or "page_size" in request.query_params:
             try:
@@ -252,6 +253,9 @@ class SourceTagListView(SourceTagsCapabilityMixin, APIView):
                 ) from exc
             tags = tags[(page - 1) * size : page * size]
         tags = list(tags)
+        if view in {"options", "filter"}:
+            payload = _tag_summary if view == "options" else _tag_payload
+            return Response({"results": [payload(tag) for tag in tags], "count": total})
         authority = request_authorization(request)
         actions = ("protection.tags.manage", "protection.tags.delete")
         capabilities = (
@@ -281,7 +285,7 @@ class SourceTagListView(SourceTagsCapabilityMixin, APIView):
                 "can_create": authority.has_org_action("protection.tags.manage")
                 if authority
                 else get_authz_provider() is None,
-                "untagged_source_count": untagged_count,
+                "untagged_source_count": _untagged_source_count(request, org),
             }
         )
 

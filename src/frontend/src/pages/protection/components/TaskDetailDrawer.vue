@@ -126,6 +126,13 @@ let statusRefreshTimer: number | null = null
 let statusRefreshInFlight = false
 let detailRequestId = 0
 const detailEvents = ref<TaskEventRow[]>([])
+const eventPageSize = 300
+const eventsLoading = ref(false)
+const eventsLoadError = ref('')
+const eventsHaveMore = ref(false)
+let eventsTaskUuid = ''
+let eventsCursor: number | undefined
+let eventsController: AbortController | undefined
 const detailRefreshing = ref(false)
 const historyLoading = ref(false)
 const executionHistory = ref<NonNullable<TaskRow['execution_history']>>([])
@@ -434,9 +441,8 @@ const {
     emit('task-updated', task)
   },
   onTerminal: async (task) => {
-    const events = await loadTaskEvents(task.task_uuid, { page: 1, page_size: 300 })
-    if (activeTask.value?.task_uuid !== task.task_uuid) return
-    detailEvents.value = events.results
+    await refreshTaskEvents(task.task_uuid)
+    if (!props.modelValue || props.taskUuid !== task.task_uuid || activeTask.value?.task_uuid !== task.task_uuid) return
     initExpandedSteps(task)
     if (task.status === 'cancelled') {
       ElMessage.success(t('ops.task.repositoryCancelComplete'))
@@ -861,10 +867,63 @@ function syncExecutionHistory(task: TaskRow) {
   }
 }
 
+function resetTaskEvents(taskUuid = '') {
+  eventsController?.abort()
+  eventsController = undefined
+  eventsTaskUuid = taskUuid
+  eventsCursor = undefined
+  detailEvents.value = []
+  eventsLoading.value = false
+  eventsLoadError.value = ''
+  eventsHaveMore.value = false
+}
+
+async function refreshTaskEvents(uuid: string, append = false) {
+  if (!props.modelValue || props.taskUuid !== uuid || eventsTaskUuid !== uuid) return
+  if (append && (eventsLoading.value || !eventsHaveMore.value || eventsCursor === undefined)) return
+  eventsController?.abort()
+  const controller = new AbortController()
+  eventsController = controller
+  eventsLoading.value = true
+  eventsLoadError.value = ''
+  const isCurrent = () => !controller.signal.aborted && props.modelValue && props.taskUuid === uuid
+  try {
+    const page = await loadTaskEvents(uuid, {
+      page: 1,
+      page_size: eventPageSize,
+      after_seq: append ? eventsCursor : undefined,
+    }, { signal: controller.signal })
+    if (!isCurrent()) return
+    const events = new Map<number, TaskEventRow>()
+    if (eventsCursor !== undefined) {
+      for (const event of detailEvents.value) events.set(event.seq, event)
+    }
+    for (const event of page.results) events.set(event.seq, event)
+    detailEvents.value = [...events.values()].sort((left, right) => left.seq - right.seq)
+    eventsCursor = detailEvents.value.at(-1)?.seq
+    eventsHaveMore.value = page.results.length > 0 && (append
+      ? page.count > page.results.length
+      : page.count > detailEvents.value.length)
+  } catch (error) {
+    if (isCurrent()) eventsLoadError.value = apiErrorMessageI18n(error, t)
+  } finally {
+    if (eventsController === controller) {
+      eventsController = undefined
+      eventsLoading.value = false
+    }
+  }
+}
+
+function loadMoreTaskEvents() {
+  if (!activeTask.value) return
+  void refreshTaskEvents(activeTask.value.task_uuid, eventsCursor !== undefined && eventsHaveMore.value)
+}
+
 async function loadTaskDetail(taskUuid: string) {
   const uuid = String(taskUuid || '').trim()
   if (!uuid) return
   const requestId = ++detailRequestId
+  if (eventsTaskUuid !== uuid) resetTaskEvents(uuid)
   if (historyTaskUuid !== uuid) resetExecutionHistory(uuid)
   stopRepositoryCancellation()
   detailRefreshing.value = true
@@ -876,16 +935,15 @@ async function loadTaskDetail(taskUuid: string) {
     activeTask.value = task
     resetDrawerScroll()
     taskOwner.value = t('ops.task.emptyMark')
-    detailEvents.value = task.recent_events || []
+    if (eventsCursor === undefined) detailEvents.value = task.recent_events || []
     selectedResourceType.value = task.resources?.[0]?.resource_type || ''
     backupSourceRows.value = []
     resetRepositoryResourceRows()
     initExpandedSteps(task)
     activeDetailTab.value = 'steps'
     void loadTaskOwner(task)
-    const events = await loadTaskEvents(uuid, { page: 1, page_size: 300 })
+    await refreshTaskEvents(uuid)
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
-    detailEvents.value = events.results
     syncRepositoryCancellation(task)
   } catch (err) {
     if (requestId !== detailRequestId || !props.modelValue || props.taskUuid !== uuid) return
@@ -923,10 +981,7 @@ async function refreshRunningTaskStatus() {
     emit('task-updated', task)
     syncRepositoryCancellation(task)
     if (task.status !== 'running') {
-      const events = await loadTaskEvents(uuid, { page: 1, page_size: 300 })
-      if (requestId === detailRequestId && props.modelValue && props.taskUuid === uuid) {
-        detailEvents.value = events.results
-      }
+      await refreshTaskEvents(uuid)
     }
   } catch {
     // A status-only refresh is best effort; leave the current detail visible.
@@ -999,11 +1054,12 @@ async function cancelActiveTask() {
     } else {
       updated = await cancelTask(task.task_uuid, reason)
     }
+    if (!props.modelValue || props.taskUuid !== task.task_uuid || activeTask.value?.task_uuid !== task.task_uuid) return
     syncExecutionHistory(updated)
     activeTask.value = updated
     emit('task-updated', updated)
-    const events = await loadTaskEvents(updated.task_uuid, { page: 1, page_size: 300 })
-    detailEvents.value = events.results
+    await refreshTaskEvents(updated.task_uuid)
+    if (!props.modelValue || props.taskUuid !== updated.task_uuid || activeTask.value?.task_uuid !== updated.task_uuid) return
     initExpandedSteps(updated)
     resetRepositoryResourceRows()
     if (activeDetailTab.value === 'resources' && usesTargetRepositoryResources.value) {
@@ -1057,7 +1113,7 @@ function closeDetail() {
   activeTask.value = null
   detailLoadError.value = ''
   taskOwner.value = ''
-  detailEvents.value = []
+  resetTaskEvents()
   activeDetailTab.value = 'steps'
   selectedResourceType.value = ''
   backupSourceRows.value = []
@@ -1066,6 +1122,7 @@ function closeDetail() {
 }
 
 onBeforeUnmount(() => {
+  resetTaskEvents()
   detailRequestId += 1
   historyRequestId += 1
   stopLiveTaskTimers()
@@ -1077,6 +1134,7 @@ watch(
   ([open, taskUuid]) => {
     if (!open) {
       detailRequestId += 1
+      resetTaskEvents()
       resetExecutionHistory()
       stopLiveTaskTimers()
     }
@@ -1623,6 +1681,18 @@ watch(
                 :description="t('ops.task.emptySteps')"
                 :image-size="52"
               />
+              <div v-if="eventsHaveMore || eventsLoadError || eventsLoading" class="hfl-list-footer">
+                <span v-if="eventsLoadError" role="alert">{{ eventsLoadError }}</span>
+                <el-button
+                  v-if="eventsHaveMore || eventsLoadError"
+                  size="small"
+                  :loading="eventsLoading"
+                  @click="loadMoreTaskEvents"
+                >
+                  {{ t(eventsLoadError ? 'common.retry' : 'insight.copilot.loadMore') }}
+                </el-button>
+                <span v-else role="status">{{ t('common.loading') }}</span>
+              </div>
               <div
                 v-if="showUnattributedTaskFailure"
                 class="hfl-task-drawer__event-failure-panel hfl-task-drawer__event-failure-panel--stacked"

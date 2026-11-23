@@ -42,6 +42,8 @@ const props = withDefaults(defineProps<{
   repoType: string
   nasMode?: NasTargetMode
   targets: TargetRepositoryItem[]
+  visibleTargetIds?: string[]
+  hasMore?: boolean
   selectedTarget?: TargetRepositoryItem | null
   targetPlaceholder: string
   repoTypePlaceholder: string
@@ -62,6 +64,8 @@ const emit = defineEmits<{
   'update:repoType': [value: string]
   'update:nasMode': [value: NasTargetMode]
   refresh: []
+  search: [value: string]
+  'load-more': []
 }>()
 
 const { t } = useI18n()
@@ -91,6 +95,10 @@ const inspected = computed(() =>
 )
 const inspectingSelection = computed(() => inspected.value?.id === props.modelValue)
 const filteredTargets = computed(() => {
+  if (props.visibleTargetIds) {
+    const ids = new Set(props.visibleTargetIds)
+    return props.targets.filter((target) => ids.has(target.id))
+  }
   const query = localSearch.value.trim().toLowerCase()
   return props.targets.filter((target) =>
     (!props.repoType || target.repoType === props.repoType) &&
@@ -98,6 +106,7 @@ const filteredTargets = computed(() => {
       .some((value) => value.toLowerCase().includes(query))),
   )
 })
+watch(localSearch, (value) => emit('search', value))
 const selectionHidden = computed(() => !selectionUnavailable.value && selected.value &&
   !filteredTargets.value.some((target) => target.id === props.modelValue),
 )
@@ -311,6 +320,9 @@ async function locateSelection() {
           />
           {{ noDataText }}
         </div>
+        <ElButton v-if="hasMore" :loading="refreshing" @click="emit('load-more')">
+          {{ t('insight.copilot.loadMore') }}
+        </ElButton>
       </div>
       <aside
         class="target-repository-picker__detail scrollbar"

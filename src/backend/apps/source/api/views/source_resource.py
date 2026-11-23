@@ -20,8 +20,24 @@ from apps.source.api.serializers import (
 )
 from apps.source.models import SourceResource
 from apps.source.selectors.interface import source_resources_queryset
-from apps.source.services.internal.agent_host_sync import sync_agent_source_hosts_for_org
+from apps.source.services.internal.agent_host_sync import sync_missing_agent_source_hosts_for_org
 from apps.source import services
+
+
+def _bound_node_ids(request) -> list[int] | None:
+    raw = request.query_params.get("bound_node_ids")
+    if raw is None:
+        return None
+    values = raw.split(",", 100)
+    if len(values) > 100 or any(
+        not (value.isascii() and value.isdecimal() and 0 < len(value) <= 19)
+        for value in values
+    ):
+        raise ValidationError({"bound_node_ids": "Provide 1 to 100 positive node IDs."})
+    ids = list(dict.fromkeys(map(int, values)))
+    if any(not 0 < node_id <= 2**63 - 1 for node_id in ids):
+        raise ValidationError({"bound_node_ids": "Invalid node ID."})
+    return ids
 
 
 def health(_request):
@@ -72,6 +88,11 @@ class _SourceResourceViewSetBase(viewsets.ModelViewSet):
             search=(params.get("search") or "").strip() or None,
             search_field=(params.get("search_field") or "").strip() or None,
         )
+        node_ids = _bound_node_ids(self.request)
+        if node_ids is not None:
+            queryset = queryset.filter(bound_node_id__in=node_ids)
+        if name := (params.get("name") or "").strip():
+            queryset = queryset.filter(name__iexact=name)
         return filter_resource_queryset(
             self.request,
             queryset,
@@ -148,15 +169,16 @@ class _SourceResourceViewSetBase(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         org = require_org(request)
+        node_ids = _bound_node_ids(request)
         resource_type = (request.query_params.get("resource_type") or "").strip()
         if not resource_type or resource_type == "local":
-            sync_agent_source_hosts_for_org(organization_id=org.id)
+            sync_missing_agent_source_hosts_for_org(organization_id=org.id, node_ids=node_ids)
         return super().list(request, *args, **kwargs)
 
     @action(detail=False, methods=["get"])
     def statistics(self, request):
         org = require_org(request)
-        sync_agent_source_hosts_for_org(organization_id=org.id)
+        sync_missing_agent_source_hosts_for_org(organization_id=org.id)
         return Response(services.resource_statistics(
             organization_id=org.id, queryset=self.get_queryset(),
         ))

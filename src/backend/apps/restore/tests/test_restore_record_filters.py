@@ -10,7 +10,7 @@ from apps.restore.api.views.restore_record import (
     _datetime_query_param,
     _restore_record_search_fields,
 )
-from apps.restore.models import RestoreRecord
+from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.restore.selectors.interface import filter_restore_records
 from apps.task.models import Task
 
@@ -138,3 +138,35 @@ class RestoreRecordFilterTests(TestCase):
             _restore_record_search_fields(",")
         with self.assertRaises(ValidationError):
             _datetime_query_param("not-a-date", "created_from")
+
+    def test_history_preserves_item_status_fallback_when_task_is_missing(self):
+        cases = [
+            ([], False),
+            (["success", "success"], True),
+            (["success", "skipped"], False),
+            (["cancelled", "skipped"], True),
+            (["cancelled", "pending"], False),
+            (["failed", "running"], True),
+        ]
+        for index, (statuses, expected) in enumerate(cases):
+            with self.subTest(statuses=statuses):
+                record = self._record(
+                    f"missing-task-{index}",
+                    task=self.success_task,
+                    snapshot=self.target_snapshot,
+                    source_mode=RestoreRecord.SourceMode.MANUAL,
+                )
+                RestoreRecord.objects.filter(pk=record.pk).update(task_uuid=uuid.uuid4())
+                RestoreRecordItem.objects.bulk_create([
+                    RestoreRecordItem(
+                        organization_id=self.organization_id,
+                        restore_record=record,
+                        source_snapshot_directory_id=item_index,
+                        backup_config_dir_id=item_index,
+                        repository_id=31,
+                        status=item_status,
+                    )
+                    for item_index, item_status in enumerate(statuses, start=1)
+                ])
+                self.assertEqual(self._filter(history_only=True).filter(pk=record.pk).exists(), expected)
+                self.assertEqual(self._filter(running_only=True).filter(pk=record.pk).exists(), not expected)

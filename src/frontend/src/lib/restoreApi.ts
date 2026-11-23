@@ -340,6 +340,9 @@ export async function listRestoreRecords(params?: {
   search?: string
   search_fields?: string
   status?: string
+  history_only?: boolean
+  running_only?: boolean
+  backup_config_ids?: string
   source_mode?: 'plan' | 'manual'
   created_from?: string
   created_to?: string

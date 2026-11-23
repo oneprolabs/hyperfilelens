@@ -74,8 +74,9 @@ import { isTransferProgress, type TransferProgress } from '../../lib/kopiaProgre
 import TargetRepositoryDetailCard from './components/TargetRepositoryDetailCard.vue'
 import type { TargetRepositoryItem } from './components/TargetRepositoryPicker.vue'
 import { useBackupWizardSourcePendingOps } from './composables/useBackupWizardSourcePendingOps'
-import { bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges } from '../../lib/sourceTagBulk'
+import { bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges, loadBulkTagChoices } from '../../lib/sourceTagBulk'
 import { SOURCE_TAG_FILTER_LIMIT, useSourceTagFilter } from './composables/useSourceTagFilter'
+import { useRestoreTaskDrawerPage } from './composables/useRestoreTaskDrawerPage'
 import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { flowSourceReadyStatus } from '../../lib/flowSourceDisplay'
 import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
@@ -99,14 +100,13 @@ import {
   type DemoSnapshot,
   type DemoSnapshotDir,
 } from '../../composables/useProtectionDemoStore'
-import { listNodes, updateNode, type EnrollmentOs } from '../../lib/nodeApi'
+import { updateNode, type EnrollmentOs } from '../../lib/nodeApi'
+import { useProxyNodeOptions } from '../../composables/useProxyNodeOptions'
 import {
   createSourceResource,
   createBackupSourceDirectory,
   getBackupSourcePathInfo,
   listBackupSelectableSources,
-  listSourceTags,
-  listSourceTagAssignments,
   bulkUpdateSourceTags,
   type SourceTag,
   listBackupSourceDirectories,
@@ -136,9 +136,7 @@ import { formatNodeBytes, nodeEnrollmentOs } from '../../lib/nodeInventoryDispla
 import {
   getBackupConfig,
   getBackupSourceSnapshot,
-  isInvalidCompressionLevelError,
   listBackupSourceSnapshots,
-  listBackupConfigs,
   resetBackupConfigs,
   type BackupConfig,
   type BackupConfigDetail,
@@ -150,8 +148,6 @@ import {
 import {
   getBackupPolicy,
   getFileFilterRule,
-  listBackupPolicies,
-  listFileFilterRules,
   type BackupPolicy,
   type BackupPolicySchedule,
   type BackupPolicyScheduleMode,
@@ -167,7 +163,6 @@ import {
 } from '../../lib/protectionPolicyFormModel'
 import {
   getStorageRepository,
-  listAllStorageRepositories,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
 import { storageRepositoryLocation } from '../../lib/storageRepositoryDisplay'
@@ -331,7 +326,6 @@ const lifecycleOps = useNodeLifecycleOps({
     await Promise.all([
       loadBackupSelectable({ silent: true }),
       refreshPipelineCounts(),
-      refreshBackupConfigs(undefined, { preserveOnError: true }),
     ])
     if (flowMainStep.value === 1) {
       await refreshFlowStepData(1, { showLoading: false })
@@ -490,14 +484,12 @@ const fileFilterById = ref(new Map<number, FileFilterRule>())
 const backupSnapshotRows = ref<BackupSourceSnapshot[]>([])
 const backupTaskRows = ref<TaskRow[]>([])
 const resetTaskRows = ref<TaskRow[]>([])
-const provisionTaskRows = ref<TaskRow[]>([])
 const restoreTaskRows = ref<TaskRow[]>([])
 const restoreRecordRows = ref<RestoreRecord[]>([])
 const EMPTY_TASK_ROWS: TaskRow[] = []
 const sourceRelatedTaskRows = computed(() => [
   ...backupTaskRows.value,
   ...resetTaskRows.value,
-  ...provisionTaskRows.value,
   ...restoreTaskRows.value,
 ])
 
@@ -525,100 +517,27 @@ function parseEndpointUiId(id: string): { type: 'agent' | 'nas' | 'proxy'; refId
   return { type, refId }
 }
 
-async function refreshBackupConfigs(
-  signal?: AbortSignal,
-  options: { preserveOnError?: boolean } = {},
-): Promise<boolean> {
-  try {
-    const result = await listBackupConfigs({ page: 1, page_size: 200 }, { signal })
-    backupConfigRows.value = result.results
-    backupConfigSourceIds.value = new Set(
-      result.results.map((config) => `${config.source_type}:${config.source_ref_id}`),
-    )
-    const [details, repositories, policies, filters, snapshots, backupTasks, resetTasks, provisionTasks, restoreTasks, restoreRecords] = await Promise.all([
-      Promise.all(result.results.map((config) => getBackupConfig(config.id, { signal }))),
-      listAllStorageRepositories({ page_size: 10 }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        // Keep the last known repository details when this auxiliary request
-        // fails. Replacing the cache with an empty list makes valid targets
-        // render as #<id>/Unknown until the user reloads the page.
-        return null
-      }),
-      listBackupPolicies({ page: 1, page_size: 500 }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as BackupPolicy[] }
-      }),
-      listFileFilterRules({ page: 1, page_size: 500 }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as FileFilterRule[] }
-      }),
-      listBackupSourceSnapshots({ page: 1, page_size: 500, ordering: '-created_at' }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as BackupSourceSnapshot[] }
-      }),
-      listTasks({ task_type: 'backup', page: 1, page_size: 500 }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as TaskRow[] }
-      }),
-      listTasks({ task_type: 'backup_config_reset', page: 1, page_size: 500 }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as TaskRow[] }
-      }),
-      listTasks({ task_type: 'backup_config_provision', page: 1, page_size: 500 }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as TaskRow[] }
-      }),
-      listTasks({
-        task_type: 'restore',
-        page: 1,
-        page_size: 500,
-        exclude_insight_workspace_restores: 'true',
-      }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as TaskRow[] }
-      }),
-      listRestoreRecords({ page: 1, page_size: 500 }, { signal }).catch((e) => {
-        if (pageRequests.isAbortError(e)) throw e
-        return { count: 0, results: [] as RestoreRecord[] }
-      }),
-    ])
-    backupConfigDetailById.value = new Map(details.map((config) => [config.id, config]))
-    if (repositories) {
-      repositoryById.value = new Map(repositories.map((repo) => [repo.id, repo]))
-    }
-    backupPolicyById.value = new Map(policies.results.map((policy) => [policy.id, policy]))
-    fileFilterById.value = new Map(filters.results.map((rule) => [rule.id, rule]))
-    backupSnapshotRows.value = snapshots.results
-    backupTaskRows.value = backupTasks.results
-    resetTaskRows.value = resetTasks.results
-    provisionTaskRows.value = provisionTasks.results
-    restoreTaskRows.value = restoreTasks.results
-    restoreRecordRows.value = restoreRecords.results
-    syncRealBackupConfigsToDemoStore(details, snapshots.results)
-    syncRestoreRecordsToFlowTasks(restoreRecords.results, restoreTasks.results)
-    reconcileRestoreTaskLifecycle()
-    return true
-  } catch (e) {
-    if (pageRequests.isAbortError(e)) throw e
-    ElMessage.error({
-      message: isInvalidCompressionLevelError(e)
-        ? t('protection.backupsPage.compressionInvalidValue')
-        : apiErrorMessage(e, t('protection.backupsPage.backupConfigLoadFailed')),
-      grouping: true,
-    })
-    if (!options.preserveOnError) {
-      backupConfigRows.value = []
-      backupConfigSourceIds.value = new Set()
-      backupConfigDetailById.value = new Map()
-      backupSnapshotRows.value = []
-      backupTaskRows.value = []
-      resetTaskRows.value = []
-      provisionTaskRows.value = []
-      restoreTaskRows.value = []
-      restoreRecordRows.value = []
-    }
-    return false
-  }
+async function refreshSelectedBackupConfigs(sourceIds: string[], signal?: AbortSignal) {
+  const ids = normalizeSourceIdList(sourceIds).filter(isBackupSelectableId)
+  if (!ids.length) return
+  const result = await listBackupSelectableSources({
+    ids: ids.join(','), scope: 'backup_configurations', expand: STEP3_EXPAND,
+  }, { signal })
+  if (signal?.aborted) return
+  const rows = result.results.map(mapBackupSelectableToFlowRow)
+  const refreshedIds = new Set(rows.map((row) => row.id))
+  const configs = expandedBackupConfigs(rows)
+  const retained = [...backupConfigDetailById.value.values()].filter((config) => (
+    !refreshedIds.has(endpointUiId(config.source_type, config.source_ref_id))
+  ))
+  const details = [...retained, ...configs]
+  backupConfigRows.value = details
+  backupConfigSourceIds.value = new Set(details.map((config) => endpointUiId(config.source_type, config.source_ref_id)))
+  backupConfigDetailById.value = new Map(details.map((config) => [config.id, config]))
+  backupSnapshotRows.value = mergeSnapshotListItems(backupSnapshotRows.value, expandedSnapshots(rows))
+  rememberSelectableRows(rows)
+  mergeExpandedBindings(rows)
+  syncRealBackupConfigsToDemoStore(details, backupSnapshotRows.value)
 }
 
 function displayNameForSource(type: string, refId: number, fallback: string) {
@@ -788,8 +707,8 @@ function restoreRecordTaskRow(record: RestoreRecord, tasks: TaskRow[]) {
   return tasks.find((task) => task.task_uuid === record.task_uuid || task.id === record.task_id)
 }
 
-function restoreRecordFlowStatus(record: RestoreRecord, task: TaskRow | undefined): DemoFlowTaskStatus {
-  const status = String(task?.status || '').toLowerCase()
+function restoreRecordFlowStatus(record: RestoreRecord, task: Pick<TaskRow, 'status'> | undefined): DemoFlowTaskStatus {
+  const status = String(task?.status || record.task_summary?.status || '').toLowerCase()
   if (['success', 'completed', 'done'].includes(status)) return 'completed'
   if (status === 'cancelled') return 'failed'
   if (['failed', 'timeout'].includes(status)) return 'failed'
@@ -802,13 +721,14 @@ function restoreRecordFlowStatus(record: RestoreRecord, task: TaskRow | undefine
   return 'running'
 }
 
-function restoreRecordToFlowTask(record: RestoreRecord, tasks: TaskRow[] = restoreTaskRows.value): DemoFlowTask {
+function restoreRecordToFlowTask(record: RestoreRecord, tasks: TaskRow[] = restoreTaskRows.value, useSummary = false): DemoFlowTask {
   const task = restoreRecordTaskRow(record, tasks)
   const configId = Number(record.backup_config_id || 0)
   const backupId = configId ? realBackupId(configId) : undefined
   const backupName = backupId ? store.getBackup(backupId)?.name : ''
-  const progress = Number(task?.progress ?? 0)
-  const status = restoreRecordFlowStatus(record, task)
+  const runtime = useSummary ? record.task_summary : task ?? record.task_summary
+  const progress = Number(runtime?.progress ?? 0)
+  const status = restoreRecordFlowStatus(record, runtime ?? undefined)
   return {
     id: `restore-${record.id}`,
     title: task?.display_name || `${t('protection.backupsPage.flowTaskKindRestore')} · ${backupName || record.restore_uid}`,
@@ -816,8 +736,8 @@ function restoreRecordToFlowTask(record: RestoreRecord, tasks: TaskRow[] = resto
     status,
     progress: status === 'completed' ? 100 : Number.isFinite(progress) ? Math.max(6, progress) : 6,
     phaseIndex: status === 'completed' ? 4 : status === 'failed' ? 3 : 1,
-    startedAt: task?.started_at || record.created_at,
-    endedAt: task?.finished_at || (status === 'completed' || status === 'failed' ? record.updated_at : null),
+    startedAt: runtime?.started_at || record.created_at,
+    endedAt: runtime?.finished_at || (status === 'completed' || status === 'failed' ? record.updated_at : null),
     backupId,
   }
 }
@@ -870,27 +790,6 @@ function reconcileRestoreTaskLifecycle() {
     [...observations].map(([taskUuid, status]) => ({ taskUuid, status })),
   )
   clearFinishedRestoreReconcileTimers()
-}
-
-async function refreshRestoreRecords(sourceId: string, signal?: AbortSignal) {
-  const endpoint = parseEndpointUiId(sourceId)
-  if (!endpoint || endpoint.type === 'proxy') return
-  const records = await listRestoreRecords({
-    page: 1,
-    page_size: 100,
-    source_type: endpoint.type,
-    source_ref_id: endpoint.refId,
-  }, { signal })
-  const sourceConfigIds = new Set(sourceBackupConfigIds(sourceId))
-  restoreRecordRows.value = [
-    ...restoreRecordRows.value.filter((record) => (
-      endpointUiId(record.source_type, record.source_ref_id) !== sourceId
-      && !sourceConfigIds.has(Number(record.backup_config_id || 0))
-    )),
-    ...records.results,
-  ]
-  syncRestoreRecordsToFlowTasks(restoreRecordRows.value, restoreTaskRows.value)
-  reconcileRestoreTaskLifecycle()
 }
 
 async function refreshStep3RuntimeRows(signal?: AbortSignal) {
@@ -964,7 +863,7 @@ const tagFilterDraftUntagged = ref(false)
 const {
   availableSourceTags, untaggedSourceCount, tagFilterLoading, tagFilterError,
   refreshTagFilterOptions, setTagFilterDraftIds, applyTagFilterIds,
-} = useSourceTagFilter(step3TagIds, tagFilterDraftIds)
+} = useSourceTagFilter(step3TagIds, tagFilterDraftIds, tagFilterOpen)
 const filteredTagFilterOptions = computed(() => {
   const query = tagFilterSearch.value.trim().toLocaleLowerCase()
   if (!query) return availableSourceTags.value
@@ -975,7 +874,6 @@ function openTagFilter() {
   tagFilterDraftIds.value = [...step3TagIds.value]
   tagFilterDraftUntagged.value = step3Untagged.value
   tagFilterSearch.value = ''
-  void refreshTagFilterOptions()
 }
 
 function onTagFilterDraftChange(ids: number[]) {
@@ -1861,14 +1759,14 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
   ])
 }
 
-async function refreshStep3State(signal?: AbortSignal) {
+async function refreshStep3State(sourceIds: string[]) {
   if (flowMainStep.value === 2) {
-    await loadStep3Selectable({ signal })
+    await loadStep3Selectable()
     return
   }
   await Promise.all([
-    refreshBackupConfigs(signal),
-    refreshPipelineStep3Count(signal),
+    refreshSelectedBackupConfigs(sourceIds),
+    refreshPipelineStep3Count(),
   ])
 }
 
@@ -1895,21 +1793,6 @@ function syncWizardCountsFromPipeline() {
 
 function syncStep2WizardCountFromPipeline() {
   step2SelectableCount.value = pipelineStep2Count.value
-}
-
-async function refreshSelectableCatalog(ids: string[], signal?: AbortSignal) {
-  const realIds = normalizeSourceIdList(ids.filter(isBackupSelectableId))
-  if (!realIds.length) return
-  try {
-    const list = await listBackupSelectableSources({
-      ids: realIds.join(','),
-      ...(!wizardCanViewSources.value ? { scope: 'backup_configurations' as const } : {}),
-    }, { signal })
-    rememberSelectableRows(list.results.map(mapBackupSelectableToFlowRow))
-  } catch (e) {
-    if (pageRequests.isAbortError(e)) throw e
-    /* best-effort for step2/step3 display */
-  }
 }
 
 async function refreshFlowStepData(
@@ -2191,12 +2074,9 @@ async function openWizardTagAction(action: 'add' | 'remove') {
   wizardTagActionOpen.value = true
   const request = ++wizardTagRequest
   try {
-    const [tags, assignments] = await Promise.all([
-      listSourceTags(),
-      listSourceTagAssignments(selected.map((source) => source.id)),
-    ])
+    const { catalog, assignments } = await loadBulkTagChoices(action, selected.map((source) => source.id))
     if (!wizardTagActionOpen.value || request !== wizardTagRequest) return
-    wizardTagCatalog.value = tags
+    wizardTagCatalog.value = catalog
     wizardTagAssignments.value = assignments
     const refreshedSources = new Map(backupSelectableById.value)
     for (const source of selected) {
@@ -2386,7 +2266,7 @@ function openRecoveryWithBackupIds(backupIds: string[]) {
   invalidateRecoverySnapshotLists(backupIds)
   recTargetValidationResults.value = {}
   recOpen.value = true
-  ensureRecoveryNodes()
+  void loadRecoveryNodes(sourceIds)
   recEntryStage.value = 'chooser'
   recEntryMode.value = 'plan'
   recStep.value = 0
@@ -2801,7 +2681,7 @@ const addSourceOpen = ref(false)
 const addSourceShellRef = ref<HTMLElement | null>(null)
 type AddSourceType = 'hostFileSystem' | 'nas'
 const addSourceType = ref<AddSourceType>('hostFileSystem')
-const proxyNodes = ref<ApiNode[]>([])
+const { proxyNodes, loadProxyNodes: loadProxyOptions, searchProxyNodes, proxyOptionsLoading, loadMoreProxyNodes } = useProxyNodeOptions(() => nasBindNodeId.value, true)
 const proxyNodesRefreshing = ref(false)
 const recoveryNodeRows = ref<ApiNode[]>([])
 const recoveryNodeLoading = ref(false)
@@ -2820,22 +2700,37 @@ const inlineEditorMode = computed<'recovery' | null>(() => {
 })
 
 async function loadProxyNodes() {
-  const signal = pageRequests.nextSignal('proxy-node-options')
   try {
-    proxyNodes.value = await listNodes({ role: 'proxy' }, { signal })
+    await loadProxyOptions()
   } catch (e) {
     if (pageRequests.isAbortError(e)) return
     proxyNodes.value = []
-  } finally {
-    pageRequests.releaseSignal('proxy-node-options', signal)
   }
 }
 
-async function loadRecoveryNodes() {
+async function loadRecoveryNodes(sourceIds: string[]) {
   const signal = pageRequests.nextSignal('recovery-node-options')
   recoveryNodeLoading.value = true
   try {
-    recoveryNodeRows.value = (await listNodes(undefined, { signal })).filter((node) => node.role === 'agent' || node.role === 'proxy')
+    const result = await listBackupSelectableSources({
+      ids: sourceIds.join(','),
+      page: 1,
+      page_size: Math.min(Math.max(sourceIds.length, 1), 100),
+    }, { signal })
+    const rows = new Map<number, ApiNode>()
+    for (const source of result.results) {
+      const nodeId = source.type === 'nas' ? source.bound_node_id : source.ref_id
+      if (!nodeId || rows.has(nodeId)) continue
+      rows.set(nodeId, {
+        id: nodeId,
+        name: source.node_name || source.name,
+        role: source.type === 'nas' ? 'proxy' : 'agent',
+        ip_address: source.node_ip,
+        platform: source.platform,
+        installation_mode: source.installation_mode,
+      } as ApiNode)
+    }
+    recoveryNodeRows.value = [...rows.values()]
     recoveryNodeLoaded.value = true
   } catch (e) {
     if (pageRequests.isAbortError(e)) return
@@ -2845,11 +2740,6 @@ async function loadRecoveryNodes() {
     pageRequests.releaseSignal('recovery-node-options', signal)
     if (!signal.aborted) recoveryNodeLoading.value = false
   }
-}
-
-function ensureRecoveryNodes() {
-  if (recoveryNodeLoaded.value || recoveryNodeLoading.value) return
-  void loadRecoveryNodes()
 }
 
 async function loadRecoveryTargetHostOptions(opts: { reset?: boolean } = {}) {
@@ -2922,12 +2812,8 @@ async function refreshAfterAddSourceClose() {
     await Promise.all([
       loadBackupSelectable(),
       refreshPipelineCounts(),
-      refreshBackupConfigs(),
     ])
-    await refreshSelectableCatalog([
-      ...step2AvailableSourceIds.value,
-      ...step3ConfiguredSourceIds.value,
-    ])
+    if (flowMainStep.value !== 0) await refreshFlowStepData(flowMainStep.value)
     await nextTick()
     if (flowMainStep.value === 0) {
       syncSourceTableSelection()
@@ -3219,7 +3105,6 @@ async function initializeFlow() {
     if (isFixedSnapshotRestore.value) {
       // Standalone restore has its own resource authorization. It must not
       // depend on the Wizard's source inventory counts.
-      await refreshBackupConfigs()
       await initializeFixedSnapshotRestore()
     } else {
       await bootstrapPipeline({
@@ -3356,7 +3241,26 @@ const {
 
 const restoreTaskDrawerOpen = ref(false)
 const restoreDrawerSourceId = ref<string | null>(null)
-const restoreTaskPager = reactive({ page: 1, pageSize: 5 })
+const drawerRestoreConfigIds = computed(() =>
+  restoreTaskDrawerOpen.value && restoreDrawerSourceId.value
+    ? sourceBackupConfigIds(restoreDrawerSourceId.value).sort((left, right) => left - right).join(',')
+    : '',
+)
+const drawerRestoreSource = computed(() => {
+  const configIds = drawerRestoreConfigIds.value
+  const endpoint = parseEndpointUiId(restoreDrawerSourceId.value ?? '')
+  if (!configIds || !endpoint || endpoint.type === 'proxy') return null
+  return { source_type: endpoint.type, source_ref_id: endpoint.refId, backup_config_ids: configIds }
+})
+const {
+  pager: restoreRunningPager, records: restoreRunningRecords, total: restoreRunningTotal,
+  loading: restoreRunningLoading, error: restoreRunningError, load: loadRestoreRunning,
+} = useRestoreTaskDrawerPage(drawerRestoreSource, 'running', 10)
+const {
+  pager: restoreTaskPager, records: restoreHistoryRecords, total: restoreHistoryTotal,
+  loading: restoreHistoryLoading, error: restoreHistoryError, load: loadRestoreHistory,
+  changePageSize: changeRestoreHistoryPageSize,
+} = useRestoreTaskDrawerPage(drawerRestoreSource, 'history', 5)
 
 const drawerSourceRow = computed(() => {
   const id = restoreDrawerSourceId.value
@@ -4306,27 +4210,14 @@ function openLatestRestoreTask(row: FlowSourceRow) {
 
 function openRestoreTaskStatusDrawer(row: FlowSourceRow) {
   restoreDrawerSourceId.value = row.id
-  restoreTaskPager.page = 1
   restoreTaskDrawerOpen.value = true
   nextTick(() => {
     requestAnimationFrame(() => updateDrawerWidth())
   })
-  const scope = 'restore-task-drawer'
-  const signal = pageRequests.nextSignal(scope)
-  void refreshRestoreRecords(row.id, signal)
-    .catch((e) => {
-      showApiError(e)
-    })
-    .finally(() => pageRequests.releaseSignal(scope, signal))
 }
 
 function openFlowSourceListDrawer(row: FlowSourceRow, kind: 'dirs' | 'targets') {
   openFlowSourceDetail(row, { tab: 'overview', scrollTo: kind })
-}
-
-function onRestoreTaskDrawerClosed() {
-  pageRequests.abortScope('restore-task-drawer')
-  restoreDrawerSourceId.value = null
 }
 
 
@@ -4848,6 +4739,7 @@ let step3ActionRefreshInFlight = false
 let step3ActionRefreshSeq = 0
 
 function hasRunningStep3Tasks() {
+  if (restoreRunningTotal.value > 0) return true
   if (pendingResetPipelineSourceIds.value.length > 0) return true
   if (step3InitialLoadPending.value) return true
   // A failed or cancelled first request can leave the table empty even though
@@ -4883,6 +4775,7 @@ function ensureStep3AutoRefreshInterval() {
   if (flowMainStep.value !== 2) return
   step3RefreshTimer = window.setInterval(() => {
     void refreshStep3SourceList()
+    if (restoreTaskDrawerOpen.value && !document.hidden) void refreshRestoreDrawer()
   }, step3RefreshIntervalMs)
 }
 
@@ -4896,27 +4789,23 @@ async function refreshStep3SourceList() {
     // Runtime refresh has no source ids to work with when the initial list
     // load was cancelled or failed. Reload the paged Step 3 catalog directly
     // instead of returning early and waiting for a manual page refresh.
-    if (step3SelectableRows.value.length === 0) {
+    const provisionTracked = step3SourceList.value.some((row) => sourceProvisionState(row.id) === 'provisioning')
+    if (step3SelectableRows.value.length === 0 || resetTrackedIds.length || provisionTracked) {
       await loadStep3Selectable({ signal })
-      return
+    } else {
+      await refreshStep3RuntimeRows(signal)
     }
-    await refreshStep3RuntimeRows(signal)
-    const provisionTracked = step3SourceList.value.some((row) => Boolean(sourceProvisionState(row.id)))
-    if (!resetTrackedIds.length && !provisionTracked) return
-    const configsLoaded = await refreshBackupConfigs(signal, { preserveOnError: true })
-    if (!pageRequests.isCurrentSignal(scope, signal)) return
-    // Soft-failure clears config/task rows; do not treat empty reset state as success.
-    if (!configsLoaded) return
-    await loadStep3Selectable({ signal })
     if (!pageRequests.isCurrentSignal(scope, signal)) return
     if (!resetTrackedIds.length) return
+    const resetStates = await refreshTrackedResetStates(resetTrackedIds, signal)
+    if (!pageRequests.isCurrentSignal(scope, signal)) return
     const finishedIds = selectFinishedResetSourceIds(
       resetTrackedIds,
-      (id) => sourceResetState(id),
+      (id) => resetStates.get(id) ?? 'resetting',
     )
     const failedIds = selectTerminalFailedResetSourceIds(
       resetTrackedIds,
-      (id) => sourceResetState(id),
+      (id) => resetStates.get(id) ?? 'resetting',
     )
     // Drop terminal failures immediately; keep finished ids tracked until the
     // pipeline refresh succeeds so an abort/failure can retry next poll.
@@ -4950,35 +4839,38 @@ function syncStep3AutoRefresh() {
 }
 
 watch(flowMainStep, syncStep3AutoRefresh)
-watch([step3SourceList, backupTaskRows, resetTaskRows, provisionTaskRows, restoreRecordRows], syncStep3AutoRefresh)
+watch([step3SourceList, backupTaskRows, resetTaskRows, restoreRecordRows, restoreRunningTotal], syncStep3AutoRefresh)
 
 
-const drawerFilteredRestoreTasks = computed(() => {
-  const sourceId = restoreDrawerSourceId.value
-  if (!sourceId) return []
-  return restoreRecordsForSource(sourceId)
-    .map((record) => restoreRecordToFlowTask(record))
-    .slice()
-    .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-})
+const drawerRunningRestoreTasks = computed(() => restoreRunningRecords.value.map((record) =>
+  restoreRecordToFlowTask(record, restoreTaskRows.value, true),
+))
+const drawerHistoryRestoreTasks = computed(() => restoreHistoryRecords.value.map((record) =>
+  restoreRecordToFlowTask(record, restoreTaskRows.value, true),
+))
+async function refreshRestoreDrawer() {
+  const source = drawerRestoreSource.value
+  const previousTotal = restoreRunningTotal.value
+  const previousIds = restoreRunningRecords.value.map((record) => record.id).join(',')
+  await loadRestoreRunning(true)
+  if (source === drawerRestoreSource.value && (previousTotal !== restoreRunningTotal.value
+    || previousIds !== restoreRunningRecords.value.map((record) => record.id).join(','))) {
+    await loadRestoreHistory(true)
+  }
+}
 
-const drawerRunningRestoreTasks = computed(() => drawerFilteredRestoreTasks.value.filter((row) => row.status === 'running'))
-const drawerHistoryRestoreTasks = computed(() => drawerFilteredRestoreTasks.value.filter((row) => row.status !== 'running'))
-const drawerPagedHistoryRestoreTasks = computed(() => {
-  const start = (restoreTaskPager.page - 1) * restoreTaskPager.pageSize
-  return drawerHistoryRestoreTasks.value.slice(start, start + restoreTaskPager.pageSize)
-})
-
-watch(drawerHistoryRestoreTasks, (rows) => {
-  const maxPage = Math.max(1, Math.ceil(rows.length / restoreTaskPager.pageSize))
-  if (restoreTaskPager.page > maxPage) restoreTaskPager.page = maxPage
-})
+watch(restoreTaskDrawerOpen, (open) => {
+  if (open) return
+  restoreDrawerSourceId.value = null
+}, { flush: 'sync' })
 
 function restoreRecordForTaskRow(row: DemoFlowTask) {
   const match = /^restore-(\d+)$/.exec(row.id)
   const recordId = match ? Number(match[1]) : 0
   if (!recordId) return null
-  return restoreRecordRows.value.find((record) => record.id === recordId) ?? null
+  return restoreRunningRecords.value.find((record) => record.id === recordId)
+    ?? restoreHistoryRecords.value.find((record) => record.id === recordId)
+    ?? restoreRecordRows.value.find((record) => record.id === recordId) ?? null
 }
 
 function openRestoreTaskDetail(row: DemoFlowTask) {
@@ -5529,11 +5421,9 @@ async function showBackupStartFailure(result: StartBackupTaskResultItem) {
   }
   let repositories: StorageRepository[] = []
   if (result.error_meta?.scope === 'organization' && result.error_meta.blocking_repository_ids?.length) {
-    try {
-      repositories = await listAllStorageRepositories({ page_size: 100 })
-    } catch {
-      repositories = []
-    }
+    const ids = [...new Set(result.error_meta.blocking_repository_ids)]
+    const resolved = await Promise.allSettled(ids.map((id) => getStorageRepository(id)))
+    repositories = resolved.flatMap((item) => item.status === 'fulfilled' ? [item.value] : [])
   }
   const details = backupQuotaUsageDetails(result, repositories, t)
   notifyWarning({
@@ -5569,7 +5459,7 @@ async function startSelectedBackupTasks() {
   }
   startBackupSubmitting.value = true
   try {
-    await refreshStep3State()
+    await refreshStep3State(sources.map((source) => source.id))
     if (sources.some((source) => sourceRuntimeHasActiveBackup(source.id))) {
       ElMessage.info({ message: t('protection.backupsPage.msgBackupActiveBlocksActions'), grouping: true })
       return
@@ -5582,7 +5472,7 @@ async function startSelectedBackupTasks() {
     const result = await startProtectionBackupTasks(startBackupTaskPayloadForSources(runnableSources))
     markBackupStartAwaitingRuntime(result.results)
     try {
-      await refreshStep3State()
+      await refreshStep3State(runnableSources.map((source) => source.id))
     } catch {
       ElMessage.warning({
         message: t('protection.backupsPage.msgStartBackupAcceptedRefreshFailed'),
@@ -5994,6 +5884,7 @@ const resetBackupConfigConfirmText = ref('')
 const pendingResetSources = ref<FlowSourceRow[]>([])
 /** Reset source ids queued this session — survives step3 pagination so completion can refresh pipeline. */
 const pendingResetPipelineSourceIds = ref<string[]>([])
+const resetTaskUuidBySource = new Map<string, string>()
 const resetSnapshotCountBySourceId = ref(new Map<string, number>())
 const resetSnapshotCountLoading = ref(false)
 let resetSnapshotCountRequestSeq = 0
@@ -6009,6 +5900,31 @@ function untrackResetPipelineSources(ids: string[]) {
   if (!ids.length) return
   const done = new Set(ids)
   pendingResetPipelineSourceIds.value = pendingResetPipelineSourceIds.value.filter((id) => !done.has(id))
+  for (const id of ids) resetTaskUuidBySource.delete(id)
+}
+
+async function refreshTrackedResetStates(ids: string[], signal: AbortSignal) {
+  const states = new Map<string, string>()
+  const tasks = new Map(resetTaskRows.value.map((task) => [task.task_uuid, task]))
+  const tracked = ids.map((id) => ({ id, uuid: resetTaskUuidBySource.get(id) || sourceResetConfigs(id).find((config) => config.reset_task_uuid)?.reset_task_uuid }))
+  const pending = [...new Set(tracked.flatMap(({ uuid }) => uuid && tasks.get(uuid)?.status !== 'success' ? [uuid] : []))]
+  const refreshed = new Set<string>()
+  for (let offset = 0; offset < pending.length && !signal.aborted; offset += 50) {
+    const chunk = pending.slice(offset, offset + 50)
+    const page = await listTasks({ task_uuids: chunk.join(','), page: 1, page_size: chunk.length }, { signal })
+    for (const task of page.results) {
+      tasks.set(task.task_uuid, task)
+      refreshed.add(task.task_uuid)
+    }
+  }
+  for (const { id, uuid } of tracked) {
+    if (!uuid) continue
+    const status = tasks.get(uuid)?.status
+    if (status === 'success') states.set(id, '')
+    if (refreshed.has(uuid) && status && ['failed', 'timeout', 'cancelled'].includes(status)) states.set(id, 'reset_failed')
+  }
+  if (!signal.aborted) resetTaskRows.value = [...tasks.values()]
+  return states
 }
 
 function collectResetTrackedIds() {
@@ -6105,7 +6021,10 @@ async function confirmResetBackupConfiguration() {
   try {
     const sourceIdList = sources.map((source) => source.id).filter(isBackupSelectableId)
     const result = await resetBackupConfigs(sourceIdList, BACKUP_SOURCE_RESET_CONFIRMATION)
-    trackResetPipelineSources(sourceIdList)
+    for (const item of result.results) {
+      if (item.task_uuid) resetTaskUuidBySource.set(item.source_id, item.task_uuid)
+    }
+    trackResetPipelineSources(sourceIdList.filter((id) => resetTaskUuidBySource.has(id)))
 
     if (activeFlowSource.value && sourceIds.has(activeFlowSource.value.id)) {
       flowSourceDetailOpen.value = false
@@ -6228,7 +6147,6 @@ async function onBackupSourcesDeleted(payload: {
       } else {
         await Promise.all([
           refreshPipelineCounts(),
-          refreshBackupConfigs(),
         ])
         if (flowMainStep.value === 0) await loadBackupSelectable()
       }
@@ -6282,7 +6200,6 @@ async function onBackupSourcesDeleted(payload: {
       await Promise.all([
         loadBackupSelectable({ silent: !!payload.pending_removals?.length }),
         refreshPipelineCounts(),
-        refreshBackupConfigs(),
         refreshTagFilterOptions(),
       ])
     }
@@ -6670,6 +6587,7 @@ async function initializeFixedSnapshotRestore() {
       backupConfigRows.value = [...backupConfigRows.value.filter((item) => item.id !== config.id), config]
     }
 
+    await ensureRepositoryDetailsForConfigs([config])
     backupSnapshotRows.value = mergeSnapshotListItems(backupSnapshotRows.value, [detail])
     syncRealBackupConfigsToDemoStore([...backupConfigDetailById.value.values()], backupSnapshotRows.value)
     const backupId = realBackupId(config.id)
@@ -11238,7 +11156,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                               @change="onTagFilterUntaggedChange"
                             />
                             <span class="source-tag-filter-label">{{ t('protection.tags.untagged') }}</span>
-                            <span class="source-tag-filter-count">{{ untaggedSourceCount }}</span>
+                            <span v-if="untaggedSourceCount !== null" class="source-tag-filter-count">{{ untaggedSourceCount }}</span>
                           </div>
                           <ElCheckboxGroup
                             :model-value="tagFilterDraftIds"
@@ -12982,7 +12900,6 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
           :size="drawerSize"
           destroy-on-close
           class="hfl-detail-drawer dp-restore-task-drawer"
-          @closed="onRestoreTaskDrawerClosed"
         >
           <template #header>
             <div class="flex w-full min-w-0 flex-col gap-1 pr-1">
@@ -12995,7 +12912,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
 
           <div class="hfl-detail-drawer__body space-y-4">
             <section
-              v-if="drawerRunningRestoreTasks.length > 0"
+              v-if="restoreRunningTotal > 0 || restoreRunningLoading || restoreRunningError"
               class="restore-task-section"
             >
               <div class="restore-task-section__head">
@@ -13005,12 +12922,13 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   type="warning"
                   effect="plain"
                 >
-                  {{ t('protection.backupsPage.restoreTaskRunningCount', { n: drawerRunningRestoreTasks.length }) }}
+                  {{ t('protection.backupsPage.restoreTaskRunningCount', { n: restoreRunningTotal }) }}
                 </el-tag>
               </div>
               <el-table
                 ref="runningRestoreTableRef"
                 v-table-overflow-title
+                v-loading="restoreRunningLoading"
                 :data="drawerRunningRestoreTasks"
                 :max-height="runningRestoreTableMaxHeight"
                 stripe
@@ -13046,7 +12964,25 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                     {{ fmtLocalTime(row.startedAt) }}
                   </template>
                 </el-table-column>
+                <template #empty>
+                  <el-empty
+                    v-if="restoreRunningError"
+                    :description="t('errors.generic.loadFailed')"
+                    :image-size="64"
+                  >
+                    <el-button size="small" @click="loadRestoreRunning()">{{ t('common.retry') }}</el-button>
+                  </el-empty>
+                </template>
               </el-table>
+              <div v-if="restoreRunningTotal > restoreRunningPager.pageSize" class="hfl-list-footer">
+                <HflPagination
+                  v-model:current-page="restoreRunningPager.page"
+                  :page-size="restoreRunningPager.pageSize"
+                  :total="restoreRunningTotal"
+                  class="hfl-list-footer__pagination"
+                  layout="prev, pager, next"
+                />
+              </div>
             </section>
 
             <section class="restore-task-section">
@@ -13056,13 +12992,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   size="small"
                   effect="plain"
                 >
-                  {{ t('protection.backupsPage.restoreTaskTotalCount', { n: drawerHistoryRestoreTasks.length }) }}
+                  {{ t('protection.backupsPage.restoreTaskTotalCount', { n: restoreHistoryTotal }) }}
                 </el-tag>
               </div>
               <el-table
                 ref="restoreHistoryTableRef"
                 v-table-overflow-title
-                :data="drawerPagedHistoryRestoreTasks"
+                v-loading="restoreHistoryLoading"
+                :data="drawerHistoryRestoreTasks"
                 :max-height="restoreHistoryTableMaxHeight"
                 stripe
                 class="hfl-list-table restore-task-drawer-table"
@@ -13113,6 +13050,14 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                 </el-table-column>
                 <template #empty>
                   <el-empty
+                    v-if="restoreHistoryError"
+                    :description="t('errors.generic.loadFailed')"
+                    :image-size="64"
+                  >
+                    <el-button size="small" @click="loadRestoreHistory()">{{ t('common.retry') }}</el-button>
+                  </el-empty>
+                  <el-empty
+                    v-else-if="!restoreHistoryLoading"
                     :description="t('protection.backupsPage.flowTaskEmptyRestore')"
                     :image-size="64"
                   />
@@ -13121,12 +13066,13 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
               <div class="hfl-list-footer">
                 <HflPagination
                   v-model:current-page="restoreTaskPager.page"
-                  v-model:page-size="restoreTaskPager.pageSize"
+                  :page-size="restoreTaskPager.pageSize"
                   class="hfl-list-footer__pagination"
                   :page-sizes="[5, 10, 20, 50]"
-                  :total="drawerHistoryRestoreTasks.length"
+                  :total="restoreHistoryTotal"
                   layout="total, sizes, prev, pager, next"
                   small
+                  @update:page-size="changeRestoreHistoryPageSize"
                 />
               </div>
             </section>
@@ -15305,7 +15251,9 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   :dir="nasDir"
                   :generated-dir="generatedNasDir"
                   :proxy-nodes="proxyNodes"
-                  :proxy-nodes-refreshing="proxyNodesRefreshing"
+                  :proxy-nodes-refreshing="proxyNodesRefreshing || proxyOptionsLoading"
+                  :proxy-search="searchProxyNodes"
+                  :proxy-load-more="loadMoreProxyNodes"
                   :busy="nasBusy"
                   @update:protocol="nasProtocol = $event"
                   @update:smb-server="nasSmbServer = $event"

@@ -738,6 +738,41 @@ class TaskApiTests(TestCase):
         rows = response.data["data"]["list"]
         self.assertNotIn(str(task.task_uuid), [row["task_uuid"] for row in rows])
 
+    def test_task_list_paginates_only_matching_backup_configuration(self):
+        matching = [
+            Task.objects.create(
+                organization_id=self.org.id, task_type=Task.Type.BACKUP,
+                display_name="Matching configuration", request_payload={"backup_config_id": value},
+            )
+            for value in (42, "42")
+        ]
+        Task.objects.create(
+            organization_id=self.org.id, task_type=Task.Type.BACKUP,
+            display_name="Other configuration", request_payload={"backup_config_id": 43},
+        )
+        found = []
+        for page in (1, 2):
+            response = self.client.get(
+                "/api/v1/tasks/",
+                {"task_type": "backup", "backup_config_id": 42, "page_size": 1, "page": page},
+                secure=True, **self._headers(),
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data["data"]["pagination"]["total"], 2)
+            found.extend(row["task_uuid"] for row in response.data["data"]["list"])
+        self.assertCountEqual(found, [str(task.task_uuid) for task in matching])
+
+    def test_task_list_exact_uuids_are_tenant_scoped(self):
+        other = Organization.objects.create(key="task-list-other-tenant", name="Other tenant")
+        own = Task.objects.create(organization_id=self.org.id, task_type=Task.Type.BACKUP)
+        foreign = Task.objects.create(organization_id=other.id, task_type=Task.Type.BACKUP)
+        response = self.client.get(
+            "/api/v1/tasks/", {"task_uuids": f"{own.task_uuid},{foreign.task_uuid}", "page_size": 2},
+            secure=True, **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([row["task_uuid"] for row in response.data["data"]["list"]], [str(own.task_uuid)])
+
     def test_task_list_search_field_filters_name_and_uuid(self):
         named_task = Task.objects.create(
             organization_id=self.org.id,

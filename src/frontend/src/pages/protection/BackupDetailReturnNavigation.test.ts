@@ -15,6 +15,7 @@ vi.mock('../../composables/useResourceCapabilities', () => ({
 }))
 vi.mock('../../lib/api', () => ({
   apiErrorMessage: (error: { message?: string }) => error?.message || 'Failed to load',
+  isAbortError: () => false,
 }))
 vi.mock('../../composables/useAuth', async () => {
   const { ref } = await import('vue')
@@ -27,7 +28,7 @@ vi.mock('../../lib/protectionBackupConfigApi', async load => ({
 }))
 vi.mock('../../lib/storageRepositoryApi', async load => ({
   ...await load<typeof import('../../lib/storageRepositoryApi')>(),
-  listAllStorageRepositories: vi.fn(async () => []),
+  getStorageRepository: vi.fn(async () => null),
 }))
 vi.mock('../../lib/protectionPolicyApi', async load => ({
   ...await load<typeof import('../../lib/protectionPolicyApi')>(),

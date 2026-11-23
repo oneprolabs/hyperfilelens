@@ -54,6 +54,28 @@ class SourceTagsTests(TestCase):
         self.assertTrue(Node.objects.filter(pk=self.agent.pk).exists())
         self.assertEqual(self.client.get(resource, **self.headers).data["results"], [])
 
+    def test_tag_options_and_untagged_statistics_can_be_loaded_independently(self):
+        base = "/api/v1/source/tags/"
+        tag_id = self.client.post(base, {"name": "Production"}, format="json", **self.headers).data["id"]
+        SourceTagAssignment.objects.create(organization=self.org, tag_id=tag_id, source_kind="agent", ref_id=self.agent.id)
+        legacy = self.client.get(base, **self.headers).data
+        with patch("apps.source.api.views.source_tag._untagged_source_count", side_effect=AssertionError):
+            options = self.client.get(f"{base}?view=options&page_size=1", **self.headers)
+            self.assertEqual(options.status_code, 200)
+            self.assertEqual(options.data, {
+                "results": [{"id": tag_id, "name": "Production", "description": "", "color": "neutral"}],
+                "count": 1,
+            })
+            filtered = self.client.get(f"{base}?view=filter", **self.headers)
+            self.assertEqual(filtered.status_code, 200)
+            self.assertEqual(filtered.data["results"][0]["source_count"], 1)
+            self.assertNotIn("untagged_source_count", filtered.data)
+        with patch("apps.source.api.views.source_tag._tag_list", side_effect=AssertionError):
+            stats = self.client.get(f"{base}?view=untagged", **self.headers)
+            self.assertEqual(stats.status_code, 200)
+            self.assertEqual(stats.data, {"untagged_source_count": legacy["untagged_source_count"]})
+            self.assertEqual(stats.data["untagged_source_count"], 1)
+
     @override_settings(SOURCE_BACKUP_SELECTABLE_QUERY_MODE="pipeline")
     def test_tag_filter_is_applied_before_pagination(self):
         ensure_pipeline_entry(organization_id=self.org.id, source_kind="agent", ref_id=self.agent.id, step=PipelineStep.READY)

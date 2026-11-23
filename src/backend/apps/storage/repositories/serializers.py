@@ -119,6 +119,35 @@ def normalize_s3_object_prefix(value: object) -> str:
     return cleaned + "/"
 
 
+def _associated_source_online_counts(organization_id, repository_ids):
+    counts = dict.fromkeys(repository_ids, 0)
+    configs = list(BackupConfig.objects.filter(
+        organization_id=organization_id,
+        repository_id__in=repository_ids,
+        status=BackupConfig.Status.ACTIVE,
+    ).values_list("repository_id", "source_type", "source_ref_id"))
+    nas_ids = {ref_id for _, kind, ref_id in configs if kind != "agent"}
+    nas = SourceResource.objects.filter(
+        organization_id=organization_id, resource_type=ResourceType.NAS,
+        is_deleted=False,
+    ).select_related("bound_node").in_bulk(nas_ids)
+    agent_ids = {ref_id for _, kind, ref_id in configs if kind == "agent"}
+    agents = Node.objects.filter(
+        organization_id=organization_id, role=NodeRole.AGENT, is_deleted=False,
+    ).in_bulk(agent_ids)
+    online_nodes = {}
+    for repository_id, kind, ref_id in configs:
+        resource = nas.get(ref_id) if kind != "agent" else None
+        node = agents.get(ref_id) if kind == "agent" else (resource.bound_node if resource else None)
+        if node is not None:
+            if node.pk not in online_nodes:
+                online_nodes[node.pk] = agent_connection_status(node) in {"online", "reconnecting"}
+            counts[repository_id] += int(online_nodes[node.pk])
+        elif resource is not None and resource.status == "active":
+            counts[repository_id] += 1
+    return counts
+
+
 class RepositoryListSerializer(serializers.ListSerializer):
     def to_representation(self, data):
         items = list(data)
@@ -128,6 +157,7 @@ class RepositoryListSerializer(serializers.ListSerializer):
         organization_id = self.context.get("organization_id") or (
             items[0].organization_id if items else None
         )
+        online_counts = _associated_source_online_counts(organization_id, [item.id for item in items])
         alerts = {}
         for alert in AlertRecord.objects.filter(
             organization_id=organization_id,
@@ -140,6 +170,7 @@ class RepositoryListSerializer(serializers.ListSerializer):
         for item in items:
             item._list_bind_node = nodes.get(item.bind_node_id)
             item._list_quota_alert = alerts.get(str(item.id))
+            item._list_associated_source_online_count = online_counts[item.id]
         return super().to_representation(items)
 
 
@@ -231,35 +262,9 @@ class RepositorySerializer(serializers.ModelSerializer):
         ]
 
     def get_associated_source_online_count(self, obj: Repository) -> int:
-        configs = BackupConfig.objects.filter(
-            organization_id=obj.organization_id,
-            repository_id=obj.id,
-            status=BackupConfig.Status.ACTIVE,
-        ).values("source_type", "source_ref_id")
-        online = 0
-        for config in configs:
-            if config["source_type"] == "agent":
-                node = Node.objects.filter(
-                    organization_id=obj.organization_id,
-                    id=config["source_ref_id"],
-                    role=NodeRole.AGENT,
-                    is_deleted=False,
-                ).first()
-                if node is not None and agent_connection_status(node) in {"online", "reconnecting"}:
-                    online += 1
-                continue
-            resource = SourceResource.objects.filter(
-                organization_id=obj.organization_id,
-                id=config["source_ref_id"],
-                resource_type=ResourceType.NAS,
-                is_deleted=False,
-            ).select_related("bound_node").first()
-            if resource is not None and resource.bound_node is not None:
-                if agent_connection_status(resource.bound_node) in {"online", "reconnecting"}:
-                    online += 1
-            elif resource is not None and resource.status == "active":
-                online += 1
-        return online
+        if hasattr(obj, "_list_associated_source_online_count"):
+            return obj._list_associated_source_online_count
+        return _associated_source_online_counts(obj.organization_id, [obj.id])[obj.id]
 
     def get_quota_alert(self, obj):
         alert = getattr(obj, "_list_quota_alert", None)

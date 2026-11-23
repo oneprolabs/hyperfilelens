@@ -3,9 +3,8 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import HostSourceDetailDrawer from '../../../components/HostSourceDetailDrawer.vue'
 import { apiErrorMessage } from '../../../lib/api'
-import { listAllNodes } from '../../../lib/nodeApi'
+import { useProxyNodeOptions } from '../../../composables/useProxyNodeOptions'
 import { getSourceResource, type SourceResource } from '../../../lib/sourceApi'
-import type { ApiNode } from '../../../types/node'
 import type { FlowSourceRow } from '../composables/useFlowSourceAggregate'
 import NasSourceDetailDrawer from './NasSourceDetailDrawer.vue'
 
@@ -13,7 +12,7 @@ const hostOpen = ref(false)
 const hostNodeId = ref<number | null>(null)
 const nasOpen = ref(false)
 const nasResource = ref<SourceResource | null>(null)
-const proxyNodes = ref<ApiNode[]>([])
+const { proxyNodes, proxyOptionsLoading, searchProxyNodes, loadMoreProxyNodes } = useProxyNodeOptions(() => nasResource.value?.bound_node ?? undefined, true)
 const loading = ref(false)
 
 async function open(source: FlowSourceRow) {
@@ -27,9 +26,8 @@ async function open(source: FlowSourceRow) {
   if (loading.value) return
   loading.value = true
   try {
-    const [resource, nodes] = await Promise.all([getSourceResource(refId), listAllNodes()])
-    nasResource.value = resource
-    proxyNodes.value = nodes.filter((node) => node.role === 'proxy')
+    nasResource.value = await getSourceResource(refId)
+    searchProxyNodes('')
     nasOpen.value = true
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err), grouping: true })
@@ -58,5 +56,8 @@ defineExpose({ open })
     v-model="nasOpen"
     :resource="nasResource"
     :proxy-nodes="proxyNodes"
+    :proxy-search="searchProxyNodes"
+    :proxy-load-more="loadMoreProxyNodes"
+    :proxy-loading="proxyOptionsLoading"
   />
 </template>

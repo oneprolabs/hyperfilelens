@@ -3,6 +3,7 @@
 import logging
 
 from django.db import IntegrityError, transaction
+from django.db.models import Count
 from django.http import JsonResponse
 from django.utils import timezone
 
@@ -36,10 +37,12 @@ from apps.node.selectors.internal.node_query import node_field_search_q, node_se
 from apps.monitor.services.internal.node_metrics import ingest_node_heartbeat_metrics
 from apps.node.services.internal.node_lifecycle import (
     LIFECYCLE_KIND_UPGRADE,
+    agent_lifecycles_for_list,
     enrich_node_row,
     start_node_remove,
     start_node_upgrade,
 )
+from apps.node.services.internal.node_workload import agent_workloads_for_list
 from apps.node.services.internal.node_naming import (
     is_auto_assigned_node_name,
     is_automatic_user_node_name,
@@ -190,6 +193,9 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
         status = (self.request.query_params.get("status") or "").strip()
         if status:
             queryset = queryset.filter(status=status)
+        availability = (self.request.query_params.get("availability") or "").strip()
+        if self.action == "list" and availability:
+            queryset = queryset.filter(availability=availability)
         queryset = filter_resource_queryset(
             self.request,
             queryset,
@@ -209,12 +215,17 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
 
         enrichments: dict[int, dict] = {}
         release_targets: dict[tuple[str, str, str, str], str] = {}
+        agent_ids = (
+            [node.id for node in nodes if node.role == NodeRole.AGENT and not node.is_deleted]
+            if self.action == "list" else []
+        )
+        lifecycles = agent_lifecycles_for_list(org=self.org, node_ids=agent_ids) if agent_ids else {}
+        workloads = agent_workloads_for_list(organization_id=self.org.id, node_ids=agent_ids) if agent_ids else {}
         for node in nodes:
-            enrichments[node.id] = enrich_node_row(
-                org=self.org,
-                node=node,
-                user=self.request.user,
-            )
+            if node.id in workloads:
+                enrichments[node.id] = {"lifecycle": lifecycles.get(node.id), "workload": workloads[node.id]}
+            else:
+                enrichments[node.id] = enrich_node_row(org=self.org, node=node, user=self.request.user)
             enrichments[node.id]["agent_release"] = node_agent_release_status(
                 node,
                 target_cache=release_targets,
@@ -272,6 +283,31 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
         self._node_enrichments = self._build_enrichments(nodes)
         serializer = self.get_serializer(nodes, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
+    def statistics(self, request):
+        queryset = self.filter_queryset(self.get_queryset())
+        grouped = queryset.values("role", "availability").annotate(count=Count("id"))
+        by_role: dict[str, int] = {}
+        online = 0
+        offline = 0
+        total = 0
+        for row in grouped:
+            count = int(row["count"])
+            role = str(row["role"])
+            availability = str(row["availability"])
+            by_role[role] = by_role.get(role, 0) + count
+            total += count
+            if availability == Node.Availability.ONLINE:
+                online += count
+            elif availability == Node.Availability.OFFLINE:
+                offline += count
+        return Response({
+            "total": total,
+            "online": online,
+            "offline": offline,
+            "by_role": by_role,
+        })
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()

@@ -1,15 +1,17 @@
 """Tests for node workload guards."""
 
 from django.test import TestCase
+from django.utils import timezone
 
 from apps.iam.models import Organization
-from apps.node.models import Node
+from apps.node.models import Node, NodeTask
+from apps.node import conf as node_conf
 from apps.node.models.base import NodeRole
-from apps.node.services.internal.node_lifecycle import enrich_node_row
-from apps.node.services.internal.node_workload import node_workload_payload
+from apps.node.services.internal.node_lifecycle import agent_lifecycles_for_list, compute_node_lifecycle, enrich_node_row
+from apps.node.services.internal.node_workload import agent_workloads_for_list, node_workload_payload
 from apps.restore.models import RestoreRecord, RestoreRecordItem
 from apps.storage.repositories.models import Repository
-from apps.task.models import Task
+from apps.task.models import Task, TaskResource
 
 
 class NodeWorkloadTests(TestCase):
@@ -27,6 +29,62 @@ class NodeWorkloadTests(TestCase):
     def test_proxy_workload_payload_does_not_query_missing_fields(self):
         payload = node_workload_payload(node=self.proxy)
         self.assertEqual(payload, {"blocked": False, "reasons": []})
+
+    def test_agent_list_workload_and_lifecycle_match_single_reads(self):
+        agents = Node.objects.bulk_create([
+            Node(organization=self.org, name=f"agent-{number}", role=NodeRole.AGENT)
+            for number in range(30)
+        ])
+        agent = agents[0]
+        backup = Task.objects.create(
+            organization_id=self.org.id, task_type=Task.Type.BACKUP, status=Task.Status.RUNNING,
+            request_payload={"source_type": "agent", "source_ref_id": str(agent.id)},
+        )
+        TaskResource.objects.create(
+            task=backup, resource_type=TaskResource.Type.BACKUP_SOURCE,
+            resource_subtype="agent", resource_id=agent.id,
+        )
+        NodeTask.objects.create(
+            organization=self.org, node=agent, kind="agent.uninstall", status=NodeTask.Status.FAILED,
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE, correlation_id=f"remove:{agent.id}",
+            watchdog_deadline_at=timezone.now(),
+        )
+        NodeTask.objects.create(
+            organization=self.org, node=agent, kind="execution", status=NodeTask.Status.RUNNING,
+            watchdog_deadline_at=timezone.now(),
+        )
+        ids = [node.id for node in agents]
+        expected_workload = node_workload_payload(node=agent)
+        expected_lifecycle = compute_node_lifecycle(org=self.org, node=agent)
+        with self.assertNumQueries(5):
+            workloads = agent_workloads_for_list(organization_id=self.org.id, node_ids=ids)
+        lifecycles = agent_lifecycles_for_list(org=self.org, node_ids=ids)
+        self.assertEqual(workloads[agent.id], expected_workload)
+        self.assertEqual(lifecycles[agent.id], expected_lifecycle)
+        self.assertEqual(workloads[agents[1].id], {"blocked": False, "reasons": []})
+        self.assertNotIn(agents[1].id, lifecycles)
+
+    def test_agent_list_only_reports_active_restore_tasks(self):
+        agent = Node.objects.create(
+            organization=self.org, name="restore-agent", role=NodeRole.AGENT,
+            status=Node.Status.ACTIVE, availability=Node.Availability.ONLINE,
+        )
+        for status in (Task.Status.RUNNING, Task.Status.SUCCESS):
+            task = Task.objects.create(
+                organization_id=self.org.id, task_type=Task.Type.RESTORE, status=status,
+            )
+            RestoreRecord.objects.create(
+                organization_id=self.org.id, requesting_organization_id=self.org.id,
+                target_execution_organization_id=self.org.id, target_execution_node_id=agent.id,
+                restore_uid=f"restore-{status}", source_mode=RestoreRecord.SourceMode.MANUAL,
+                task_id=task.id, task_uuid=task.task_uuid, source_type=RestoreRecord.EndpointType.AGENT,
+                source_ref_id=201, source_snapshot_id=301, target_type=RestoreRecord.EndpointType.AGENT,
+                target_ref_id=agent.id, target_path="/restore", scope=RestoreRecord.Scope.PATHS,
+                conflict_mode=RestoreRecord.ConflictMode.OVERWRITE,
+            )
+        workloads = agent_workloads_for_list(organization_id=self.org.id, node_ids=[agent.id])
+        self.assertEqual(workloads[agent.id], node_workload_payload(node=agent))
+        self.assertEqual([reason["code"] for reason in workloads[agent.id]["reasons"]], ["restore_running"])
 
     def test_proxy_enrich_row_succeeds(self):
         row = enrich_node_row(org=self.org, node=self.proxy)

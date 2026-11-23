@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
-from apps.node.selectors.internal.node_task_query import active_node_tasks_for_node
+from apps.node.selectors.internal.node_task_query import active_node_tasks_for_node, node_tasks_queryset
 from apps.node.services.internal.task_offline_reconcile import (
     product_task_blocks_cleanup,
 )
@@ -254,11 +255,70 @@ def get_node_remove_blockers(*, node: Node) -> list[NodeWorkloadBlocker]:
 
 
 def node_workload_payload(*, node: Node) -> dict[str, Any]:
-    reasons = get_node_workload_blockers(node=node)
+    return _workload_payload(get_node_workload_blockers(node=node))
+
+
+def _workload_payload(reasons: list[NodeWorkloadBlocker]) -> dict[str, Any]:
     return {
         "blocked": bool(reasons),
         "reasons": [item.to_payload() for item in reasons],
     }
+
+
+def agent_workloads_for_list(*, organization_id: int, node_ids: list[int]) -> dict[int, dict[str, Any]]:
+    from apps.restore.models import RestoreRecord
+
+    selected = set(node_ids)
+    blockers: dict[int, list[NodeWorkloadBlocker]] = defaultdict(list)
+    seen: dict[int, set[int]] = defaultdict(set)
+    blocking: dict[int, bool] = {}
+
+    def add_product_task(node_id: int, task: Task, code: str) -> None:
+        if task.pk in seen[node_id]:
+            return
+        seen[node_id].add(task.pk)
+        if task.pk not in blocking:
+            blocking[task.pk] = product_task_blocks_cleanup(task=task)
+        if blocking[task.pk]:
+            blockers[node_id].append(NodeWorkloadBlocker(code, str(task.task_uuid), str(task.task_type or ""), _task_label(task)))
+
+    backups = Task.objects.filter(
+        organization_id=organization_id, task_type=Task.Type.BACKUP, status__in=_ACTIVE_TASK_STATUSES,
+    )
+    for task in backups.filter(request_payload__source_type="agent").order_by("-created_at", "-id"):
+        try:
+            ref_id = int(task.request_payload.get("source_ref_id") or 0)
+        except (ValueError, TypeError, OverflowError):
+            continue
+        if ref_id in selected:
+            add_product_task(ref_id, task, "backup_running")
+    links = TaskResource.objects.filter(
+        task__in=backups, resource_type=TaskResource.Type.BACKUP_SOURCE,
+        resource_subtype="agent", resource_id__in=selected,
+    ).select_related("task").order_by("-task__created_at", "-task_id")
+    for link in links:
+        add_product_task(link.resource_id, link.task, "backup_running")
+
+    active_restores = Task.objects.filter(task_type__in=RESTORE_TASK_TYPES, status__in=_ACTIVE_TASK_STATUSES)
+    restore_nodes: dict[int, set[int]] = defaultdict(set)
+    for task_id, node_id in RestoreRecord.objects.filter(
+        target_execution_organization_id=organization_id, target_execution_node_id__in=selected,
+        task_id__in=active_restores.order_by().values("pk"),
+    ).order_by().values_list("task_id", "target_execution_node_id"):
+        restore_nodes[task_id].add(node_id)
+    restores = active_restores.filter(pk__in=restore_nodes).order_by("-created_at", "-id")
+    for task in restores:
+        for node_id in restore_nodes[task.pk]:
+            add_product_task(node_id, task, "restore_running")
+
+    execution_tasks = node_tasks_queryset(organization_id=organization_id, active_only=True).filter(
+        node_id__in=selected,
+    ).exclude(kind__in=_LIFECYCLE_NODE_TASK_KINDS)
+    for task in execution_tasks:
+        blockers[task.node_id].append(NodeWorkloadBlocker(
+            "node_task_running", str(task.id), str(task.kind or ""), str(task.kind or "node_task"),
+        ))
+    return {node_id: _workload_payload(blockers[node_id]) for node_id in node_ids}
 
 
 def assert_node_available_for_lifecycle(*, node: Node) -> None:

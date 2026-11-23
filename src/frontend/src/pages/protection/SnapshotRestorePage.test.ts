@@ -31,6 +31,12 @@ describe('SnapshotRestorePage shared wizard entry', () => {
     expect(sharedWizard).toContain('recStep > (isFixedSnapshotRestore ? 1 : 0)')
   })
 
+  it('loads the selected snapshot configuration without preloading the organization inventory', () => {
+    expect(sharedWizard).toMatch(/if \(isFixedSnapshotRestore\.value\) \{\s*(?:\/\/[^\n]*\n\s*)*await initializeFixedSnapshotRestore\(\)/)
+    expect(sharedWizard).toContain('await getBackupConfig(Number(detail.backup_config_id))')
+    expect(sharedWizard).toContain('await ensureRepositoryDetailsForConfigs([config])')
+  })
+
   it('returns to Start Backup after cancel, back, or successful submission', () => {
     expect(sharedWizard).toContain("router.replace({ path: '/protection/backups', query: { step: 'start-backup' } })")
     expect(sharedWizard).toContain('@click="closeRecoveryWizard"')

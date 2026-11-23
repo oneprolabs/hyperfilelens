@@ -117,6 +117,9 @@ export type BackupConfigListParams = {
   search?: string
   source_type?: string
   repository_id?: number
+  backup_policy_id?: number
+  file_filter_rule_id?: number
+  recovery_plan_enabled?: 'true' | 'false'
   ordering?: string
 }
 
@@ -245,6 +248,7 @@ export type BackupSourceSnapshotListParams = {
   snapshot_id?: number
   exclude_snapshot_id?: number
   snapshot_uid?: string
+  task_uuids?: string
   search?: string
   source_type?: string
   source_ref_id?: number

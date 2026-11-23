@@ -2,11 +2,12 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { effectScope, ref } from 'vue'
-import { transpile } from 'typescript'
+import { ScriptTarget, transpile } from 'typescript'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { listBackupSelectableSources, type BackupSelectableSource } from '../../lib/sourceApi'
 import { normalizeSourceIdList, isBackupSelectableId } from '../../composables/useDemoFlowStep2Sources'
 import { useRestoreTargetCatalog } from '../../composables/useRestoreTargetCatalog'
+import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { canViewProtectionSources } from '../../lib/protectionAccess'
 import { restorePlanTargetReferenceIsValid, savedRestoreTargetReference } from './lib/restorePlanEditReference'
 
@@ -19,7 +20,7 @@ function body(start: string, end: string) {
   const to = editor.indexOf(end, from + start.length)
   expect(from).toBeGreaterThan(-1)
   expect(to).toBeGreaterThan(from)
-  return transpile(editor.slice(from, to))
+  return transpile(editor.slice(from, to), { target: ScriptTarget.ES2022 })
 }
 
 it('never offers failed or unfinished managed repositories even with stale online health', () => {
@@ -38,25 +39,30 @@ it('never offers failed or unfinished managed repositories even with stale onlin
 })
 
 it('does not let an older empty selector response overwrite newly ready storage', async () => {
-  let oldResult!: (rows: unknown[]) => void
-  let newResult!: (rows: unknown[]) => void
+  type Page = { count: number; results: unknown[] }
+  let oldResult!: (page: Page) => void
+  let newResult!: (page: Page) => void
   const list = vi.fn().mockImplementationOnce(() => new Promise(resolve => { oldResult = resolve }))
     .mockImplementationOnce(() => new Promise(resolve => { newResult = resolve }))
   const targets = ref<unknown[]>([])
   const refreshing = ref(false)
+  const scope = effectScope()
+  scopes.push(scope)
+  const requests = scope.run(() => usePageRequestScope())!
   const refresh = new Function(
-    'hasTenantPermission', 'getEffectiveOrgKey', 'targetsRefreshing', 'listAllStorageRepositories',
+    'hasTenantPermission', 'getEffectiveOrgKey', 'targetsRefreshing', 'listStorageRepositories',
     'realTargets', 'mapRepository', 'ElMessage', 'apiErrorMessage', 'editorFailureText',
-    'let targetsGeneration = 0;\n'
-    + body('async function refreshWizardTargets()', 'async function refreshWizardPolicies()')
+    'cancelTargetSearch', 'targetRequests', 'targetPage', 'targetSearch', 'batchTargetPicker', 'visibleTargetIds', 'targetHasMore',
+    body('async function refreshWizardTargets(', 'async function refreshWizardPolicies(')
     + '\nreturn refreshWizardTargets;',
   )(() => true, () => 'personal', refreshing, list, targets, (row: unknown) => row,
-    { error: vi.fn() }, () => '', ref(''))
+    { error: vi.fn() }, () => '', ref(''), vi.fn(), requests, ref(0), ref(''), { repoType: '' }, ref([]), ref(false))
   const oldRequest = refresh()
   const newRequest = refresh()
-  newResult([{ id: 17, status: 'created' }])
+  expect(list.mock.calls[0]?.[1]?.signal.aborted).toBe(true)
+  newResult({ count: 1, results: [{ id: 17, status: 'created' }] })
   await newRequest
-  oldResult([])
+  oldResult({ count: 0, results: [] })
   await oldRequest
   expect(targets.value).toEqual([{ id: 17, status: 'created' }])
   expect(refreshing.value).toBe(false)

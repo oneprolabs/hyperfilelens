@@ -72,6 +72,10 @@ function render() {
     sourceEndpointTypeMap: ref<Record<string, string>>({ a: 'external', b: 'external', c: 'external' }),
     nasTargetModes: reactive<Record<string, string>>({}),
     targetsRefreshing: ref(false),
+    targetSearch: ref(''),
+    visibleTargetIds: undefined,
+    targetHasMore: false,
+    onTargetSearch: vi.fn(),
     refreshWizardTargets: vi.fn(async () => {}),
   }
   type Actions = {

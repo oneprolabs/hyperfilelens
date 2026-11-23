@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
   createStorageRepository: vi.fn(),
   preflightNasRepositoryCreate: vi.fn(),
   showNasDraftPreflightGuidance: vi.fn(),
-  listAllNodes: vi.fn(),
+  listNodesPaged: vi.fn(),
   routerPush: vi.fn(),
 }))
 
@@ -31,7 +31,8 @@ vi.mock('../../lib/storageRepositoryApi', () => ({
 }))
 
 vi.mock('../../lib/nodeApi', () => ({
-  listAllNodes: mocks.listAllNodes,
+  listNodesPaged: mocks.listNodesPaged,
+  getNode: vi.fn(),
 }))
 
 vi.mock('../../lib/nasDraftPreflight', () => ({
@@ -140,7 +141,7 @@ describe('AddNasRepository Proxy decision', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.listAllNodes.mockResolvedValue(proxyNodes)
+    mocks.listNodesPaged.mockResolvedValue({ count: proxyNodes.length, results: proxyNodes })
     mocks.createStorageRepository.mockResolvedValue({ id: 41, name: 'Primary NAS' })
     mocks.preflightNasRepositoryCreate.mockResolvedValue(undefined)
     mocks.showNasDraftPreflightGuidance.mockResolvedValue(false)

@@ -2836,6 +2836,76 @@ class RestoreApiTests(TestCase):
         self.assertFalse(RestoreRecord.objects.exists())
         self.assertFalse(Task.objects.filter(task_type=Task.Type.RESTORE).exists())
 
+    def test_restore_record_groups_filter_before_paginating(self):
+        create = self.client.post(
+            "/api/v1/restore/records/", self._manual_restore_payload(), format="json", **self._headers()
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED, create.content)
+        running = RestoreRecord.objects.get(pk=create.data["restore_record_id"])
+        terminal = Task.objects.create(
+            organization_id=running.organization_id,
+            task_type=Task.Type.RESTORE,
+            display_name="Completed restore",
+            status=Task.Status.SUCCESS,
+        )
+        RestoreRecord.objects.bulk_create([
+            RestoreRecord(
+                organization_id=running.organization_id,
+                requesting_organization_id=running.requesting_organization_id,
+                target_execution_organization_id=running.target_execution_organization_id,
+                target_execution_node_id=running.target_execution_node_id,
+                restore_uid=f"history-page-{index}",
+                source_mode=running.source_mode,
+                task_id=running.task_id if index == -1 else terminal.id,
+                task_uuid=running.task_uuid if index == -1 else terminal.task_uuid,
+                source_type=running.source_type,
+                source_ref_id=running.source_ref_id,
+                backup_config_id=(None if index == 0 else self.config.id if index < 101 else self.config.id + 1000),
+                source_snapshot_id=running.source_snapshot_id,
+                target_type=running.target_type,
+                target_ref_id=running.target_ref_id,
+                target_path=running.target_path,
+                scope=running.scope,
+                conflict_mode=running.conflict_mode,
+            )
+            for index in range(-1, 102)
+        ])
+        params = {
+            "source_type": running.source_type,
+            "source_ref_id": running.source_ref_id,
+            "backup_config_ids": self.config.id,
+            "history_only": "true",
+            "page_size": 100,
+        }
+        first = self.client.get("/api/v1/restore/records/", params, **self._headers())
+        second = self.client.get("/api/v1/restore/records/", {**params, "page": 2}, **self._headers())
+        self.assertEqual(first.status_code, status.HTTP_200_OK, first.content)
+        self.assertEqual(second.status_code, status.HTTP_200_OK, second.content)
+        self.assertEqual(first.data["count"], 101)
+        self.assertEqual(len(first.data["results"]), 100)
+        self.assertNotIn(running.id, [row["id"] for row in first.data["results"]])
+        self.assertEqual([row["restore_uid"] for row in second.data["results"]], ["history-page-0"])
+
+        active_params = {**params, "history_only": "false", "running_only": "true", "page_size": 1}
+        active_first = self.client.get("/api/v1/restore/records/", active_params, **self._headers())
+        active_second = self.client.get("/api/v1/restore/records/", {**active_params, "page": 2}, **self._headers())
+        self.assertEqual(active_first.status_code, status.HTTP_200_OK, active_first.content)
+        self.assertEqual(active_second.status_code, status.HTTP_200_OK, active_second.content)
+        self.assertEqual(active_first.data["count"], 2)
+        self.assertEqual([row["restore_uid"] for row in active_first.data["results"]], ["history-page--1"])
+        self.assertEqual([row["id"] for row in active_second.data["results"]], [running.id])
+
+        unfiltered = self.client.get("/api/v1/restore/records/", {
+            **params, "history_only": "false",
+        }, **self._headers())
+        self.assertEqual(unfiltered.status_code, status.HTTP_200_OK, unfiltered.content)
+        self.assertEqual(unfiltered.data["count"], 103)
+        self.assertNotIn(running.id, [row["id"] for row in unfiltered.data["results"]])
+
+        for value in ["true", "invalid"]:
+            invalid = self.client.get("/api/v1/restore/records/", {**params, "running_only": value}, **self._headers())
+            self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_restore_record_list_and_detail_include_task_summary(self):
         create = self.client.post(
             "/api/v1/restore/records/",

@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import type { SourceTag } from './sourceApi'
-import { applyBulkTagChanges, bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges } from './sourceTagBulk'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { listSourceTagAssignments, listSourceTagOptions, type SourceTag } from './sourceApi'
+import { applyBulkTagChanges, bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges, loadBulkTagChoices } from './sourceTagBulk'
+
+vi.mock('./sourceApi', () => ({ listSourceTagAssignments: vi.fn(), listSourceTagOptions: vi.fn() }))
 
 const tags = [
   { id: 1, name: 'Keep' },
@@ -9,6 +11,27 @@ const tags = [
 ] as SourceTag[]
 const sources = ['agent:1', 'nas:2']
 const assignments = { 'agent:1': [tags[0], tags[1]], 'nas:2': [tags[0]] }
+
+describe('bulk tag dialog loading', () => {
+  beforeEach(() => vi.resetAllMocks())
+
+  it('requests the lightweight catalog and selected-source assignments when binding', async () => {
+    vi.mocked(listSourceTagOptions).mockResolvedValue(tags)
+    vi.mocked(listSourceTagAssignments).mockResolvedValue(assignments)
+
+    await expect(loadBulkTagChoices('add', sources)).resolves.toEqual({ catalog: tags, assignments })
+    expect(listSourceTagOptions).toHaveBeenCalledExactlyOnceWith('options')
+    expect(listSourceTagAssignments).toHaveBeenCalledExactlyOnceWith(sources)
+  })
+
+  it('requests only selected-source assignments and deduplicates tags when unbinding', async () => {
+    vi.mocked(listSourceTagAssignments).mockResolvedValue(assignments)
+
+    await expect(loadBulkTagChoices('remove', sources)).resolves.toEqual({ catalog: [tags[1], tags[0]], assignments })
+    expect(listSourceTagOptions).not.toHaveBeenCalled()
+    expect(listSourceTagAssignments).toHaveBeenCalledExactlyOnceWith(sources)
+  })
+})
 
 describe('bulk tag changes', () => {
   it('only disables unbind when every selected source is known to have no tags', () => {

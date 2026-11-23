@@ -14,13 +14,12 @@ import {
   type StorageRepository,
   type StorageRepositoryCreatePayload,
 } from '../../lib/storageRepositoryApi'
-import { listAllNodes } from '../../lib/nodeApi'
+import { useProxyNodeOptions } from '../../composables/useProxyNodeOptions'
 import { SMB_MOUNT_OPTION_EXAMPLES } from '../../lib/nasMountTroubleshooting'
 import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { buildNasRepositoryName } from '../../lib/nasRepositoryName'
 import { preflightNasRepositoryCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
-import type { ApiNode } from '../../types/node'
 import NasProxyTopology from './NasProxyTopology.vue'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import {
@@ -59,7 +58,6 @@ const busy = ref(false)
 const pageRef = ref<HTMLElement | null>(null)
 const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const proxyNodesRefreshing = ref(false)
-const proxyNodes = ref<ApiNode[]>([])
 
 const protocol = ref<NasProtocol>('smb')
 
@@ -102,6 +100,7 @@ const quotaUnit = ref<RepositoryQuotaUnit>('GB')
 const enableQuotaAlert = ref(false)
 const quotaAlertThreshold = ref<number | undefined>(undefined)
 const proxyNodeId = ref<number | undefined>(undefined)
+const { proxyNodes, proxyOptionsLoading, loadProxyNodes, searchProxyNodes, loadMoreProxyNodes } = useProxyNodeOptions(() => proxyNodeId.value)
 
 watch(protocol, (nextProtocol, previousProtocol) => {
   if (previousProtocol && mountOptions.value === defaultNasMountOptions(previousProtocol)) {
@@ -236,9 +235,6 @@ function handleBack() {
   router.push({ path: '/node/repositories', query: { tab: 'nas' } })
 }
 
-async function loadProxyNodes() {
-  proxyNodes.value = await listAllNodes().catch(() => [])
-}
 
 async function refreshProxyNodesManually() {
   proxyNodesRefreshing.value = true
@@ -255,7 +251,7 @@ function clearProxySelection() {
 }
 
 onMounted(() => {
-  void loadProxyNodes()
+  searchProxyNodes('')
 })
 
 function openProxyDeploy() {
@@ -611,6 +607,10 @@ watch(enableQuotaAlert, (enabled) => {
                             class="add-nas-select-row__select"
                             clearable
                             filterable
+                            remote
+                            :remote-method="searchProxyNodes"
+                            @end-reached="loadMoreProxyNodes"
+                            :loading="proxyOptionsLoading"
                             :placeholder="t('addNasRepo.phSourceProxyNode')"
                             @clear="clearProxySelection(); clearFieldError('proxyNode')"
                             @change="clearFieldError('proxyNode')"

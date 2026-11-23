@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db.models import Exists, OuterRef
+
 from apps.node.models import Node
 from apps.node.models.base import NodeRole
 from apps.node.services.internal.agent_release import latest_published_agent_version
@@ -201,6 +203,29 @@ def sync_agent_source_hosts_for_org(*, organization_id: int) -> None:
         role=NodeRole.AGENT,
         is_deleted=False,
     ):
+        try:
+            sync_agent_source_host(node=node)
+        except Exception:
+            continue
+
+
+def sync_missing_agent_source_hosts_for_org(
+    *, organization_id: int, node_ids: list[int] | None = None,
+) -> None:
+    """Ensure only Agents without an active local source projection are synced."""
+    existing_sources = SourceResource.objects.filter(
+        organization_id=organization_id,
+        bound_node_id=OuterRef("pk"),
+        resource_type=ResourceType.LOCAL,
+    )
+    nodes = Node.objects.filter(
+        organization_id=organization_id,
+        role=NodeRole.AGENT,
+        is_deleted=False,
+    ).annotate(has_source=Exists(existing_sources)).filter(has_source=False)
+    if node_ids is not None:
+        nodes = nodes.filter(pk__in=node_ids)
+    for node in nodes:
         try:
             sync_agent_source_host(node=node)
         except Exception:

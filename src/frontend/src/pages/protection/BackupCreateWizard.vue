@@ -118,6 +118,8 @@ import { resolveRestoreResultPaths, type RestoreResultPathInput } from '../../li
 import {
   createBackupPolicy,
   createFileFilterRule,
+  getBackupPolicy,
+  getFileFilterRule,
   listBackupPolicies,
   listFileFilterRules,
   type BackupPolicy,
@@ -125,9 +127,13 @@ import {
 } from '../../lib/protectionPolicyApi'
 import {
   createStorageRepository,
-  listAllStorageRepositories,
+  getStorageRepository,
+  listStorageRepositories,
   type StorageRepository,
+  type StorageRepositoryType,
 } from '../../lib/storageRepositoryApi'
+import { useDebouncedAction } from '../../composables/useDebouncedAction'
+import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import {
   defaultS3UrlStyle,
   S3_PROVIDER_OPTIONS,
@@ -145,7 +151,8 @@ import {
   useProtectionDemoStore,
   type DemoDirTreeItem,
 } from '../../composables/useProtectionDemoStore'
-import { listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
+import { type EnrollmentOs } from '../../lib/nodeApi'
+import { useProxyNodeOptions } from '../../composables/useProxyNodeOptions'
 import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
 import {
   backupTargetIncompatibilityReason,
@@ -169,7 +176,6 @@ import {
   type FileFilterRuleForm,
   type MessageLocale,
 } from '../../lib/protectionPolicyFormModel'
-import type { ApiNode } from '../../types/node'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { buildNasRepairMountOptionsPath, isSmbMountNegotiationError } from '../../lib/nasMountTroubleshooting'
 import TargetRepositoryPicker from './components/TargetRepositoryPicker.vue'
@@ -340,12 +346,24 @@ const recoveryTargetLoadingMore = restoreTargetCatalog.loadingMore
 const recoveryTargetError = restoreTargetCatalog.error
 const realPolicies = ref<WizardPolicy[]>([])
 const realFilters = ref<WizardFilter[]>([])
+const wizardReferencePageSize = 30
+const policyOptionsPage = ref(1)
+const filterOptionsPage = ref(1)
+const policyOptionsMore = ref(false)
+const filterOptionsMore = ref(false)
+const knownPolicies = reactive(new Map<string, WizardPolicy>())
+const knownFilters = reactive(new Map<string, WizardFilter>())
+const wizardReferenceRequests = usePageRequestScope()
 const realTargets = ref<WizardTarget[]>([])
 const policiesRefreshing = ref(false)
 const filtersRefreshing = ref(false)
 const targetsRefreshing = ref(false)
-let targetsGeneration = 0
-onUnmounted(() => { targetsGeneration++ })
+const targetRequests = usePageRequestScope()
+const targetSearch = ref('')
+const targetPage = ref(0)
+const targetHasMore = ref(false)
+const visibleTargetIds = ref<string[]>([])
+const { schedule: scheduleTargetSearch, cancel: cancelTargetSearch } = useDebouncedAction(() => void refreshWizardTargets(), 300)
 
 function isBackupSelectableSourceId(id: string) {
   return /^agent:\d+$/.test(id) || /^nas:\d+$/.test(id)
@@ -490,11 +508,11 @@ function endpointSummaryForGroup(group: WizardSourceGroup) {
 }
 
 function getRealPolicy(id: string | undefined) {
-  return realPolicies.value.find((policy) => policy.id === id)
+  return realPolicies.value.find((policy) => policy.id === id) ?? knownPolicies.get(id)
 }
 
 function getRealFilter(id: string | undefined) {
-  return realFilters.value.find((filter) => filter.id === id)
+  return realFilters.value.find((filter) => filter.id === id) ?? knownFilters.get(id)
 }
 
 function getSourceName(sourceId: string) {
@@ -671,25 +689,21 @@ const addSourceOpen = ref(false)
 const addSourceShellRef = ref<HTMLElement | null>(null)
 type AddSourceType = 'hostFileSystem' | 'nas'
 const addSourceType = ref<AddSourceType>('hostFileSystem')
-const proxyNodes = ref<ApiNode[]>([])
+const { proxyNodes, loadProxyNodes: loadProxyOptions, searchProxyNodes, proxyOptionsLoading, loadMoreProxyNodes } = useProxyNodeOptions(
+  () => createNasDetailOpen.value ? createNasDetailResource.value?.bound_node ?? undefined : nasBindNodeId.value, true,
+)
 const proxyNodesRefreshing = ref(false)
 const createHostDetailOpen = ref(false)
 const createHostDetailNodeId = ref<number | null>(null)
 const createNasDetailOpen = ref(false)
 const createNasDetailResource = ref<SourceResource | null>(null)
 const createSourceDetailLoading = ref(false)
-const MOCK_PROXY_NODES: ApiNode[] = [
-  { id: -101, organization: 0, name: 'Proxy-GW-01', role: 'proxy', status: 'online' },
-  { id: -102, organization: 0, name: 'Proxy-GW-02', role: 'proxy', status: 'online' },
-]
 
 async function loadProxyNodes() {
   try {
-    const all = await listAllNodes()
-    const proxies = all.filter(node => node.role === 'proxy')
-    proxyNodes.value = proxies.length > 0 ? proxies : [...MOCK_PROXY_NODES]
+    await loadProxyOptions()
   } catch {
-    proxyNodes.value = [...MOCK_PROXY_NODES]
+    proxyNodes.value = []
   }
 }
 
@@ -1089,6 +1103,9 @@ const batchNasTargetMode = ref<NasTargetMode>('per_directory_repo')
 const batchRepositoryEndpointType = ref<RepositoryEndpointType | ''>('')
 type TargetAssignDialogMode = 'single' | 'batch'
 const targetAssignDialogOpen = ref(false)
+watch(() => batchTargetPicker.repoType, () => {
+  if (targetAssignDialogOpen.value) onTargetSearch(targetSearch.value)
+})
 const targetAssignDialogMode = ref<TargetAssignDialogMode>('batch')
 const targetAssignActiveGroupKey = ref('')
 const filterPolicyAssignmentCheckedGroupKeys = ref<string[]>([])
@@ -3130,51 +3147,81 @@ watch(restoreTargetCatalog.allRecords, (records) => {
   realSourceById.value = next
 }, { flush: 'sync' })
 
-async function refreshWizardTargets() {
+async function refreshWizardTargets(append = false) {
   if (![
     'protection.object_storage_repositories.view',
     'protection.target_nas_repositories.view',
     'protection.local_disk_repositories.view',
   ].some((key) => hasTenantPermission(key))) return
+  cancelTargetSearch()
   const org = getEffectiveOrgKey()
-  const token = ++targetsGeneration
+  const signal = targetRequests.nextSignal('wizard-targets')
+  const page = append ? targetPage.value + 1 : 1
   targetsRefreshing.value = true
   try {
-    const repos = await listAllStorageRepositories({ page_size: 10 })
-    if (token !== targetsGeneration || org !== getEffectiveOrgKey()) return
-    realTargets.value = repos.map(mapRepository)
+    const result = await listStorageRepositories({
+      page, page_size: 30,
+      search: targetSearch.value.trim() || undefined,
+      repo_type: (batchTargetPicker.repoType.toLowerCase() || undefined) as StorageRepositoryType | undefined,
+    }, { signal })
+    if (signal.aborted || org !== getEffectiveOrgKey()) return
+    const targets = result.results.map(mapRepository)
+    const cache = new Map(realTargets.value.map((target) => [target.id, target]))
+    for (const target of targets) cache.set(target.id, target)
+    realTargets.value = [...cache.values()]
+    visibleTargetIds.value = [...new Set([...(append ? visibleTargetIds.value : []), ...targets.map((target) => target.id)])]
+    targetPage.value = page
+    targetHasMore.value = page * 30 < result.count
   } catch (err) {
-    if (token === targetsGeneration && org === getEffectiveOrgKey()) {
-      ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
-    }
+    if (signal.aborted || org !== getEffectiveOrgKey()) return
+    ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
   } finally {
-    if (token === targetsGeneration) targetsRefreshing.value = false
+    targetRequests.releaseSignal('wizard-targets', signal)
+    if (!signal.aborted) targetsRefreshing.value = false
   }
 }
 
-async function refreshWizardPolicies() {
+async function refreshWizardPolicies(search = '', nextPage = 1) {
   if (!hasTenantPermission('protection.backup_policies.view')) return
+  const signal = wizardReferenceRequests.nextSignal('policies')
+  policySearch.value = search
   policiesRefreshing.value = true
   try {
-    const policies = await listBackupPolicies({ page: 1, page_size: 500 })
-    realPolicies.value = policies.results.map(mapPolicy)
+    const policies = await listBackupPolicies({ page: nextPage, page_size: wizardReferencePageSize, search: search.trim() || undefined }, { signal })
+    if (signal.aborted) return
+    const rows = policies.results.map(mapPolicy)
+    rows.forEach((row) => knownPolicies.set(row.id, row))
+    realPolicies.value = nextPage === 1 ? rows : [...realPolicies.value, ...rows.filter((row) => !realPolicies.value.some((item) => item.id === row.id))]
+    policyOptionsPage.value = nextPage
+    policyOptionsMore.value = nextPage * wizardReferencePageSize < policies.count
   } catch (err) {
+    if (signal.aborted) return
     ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
   } finally {
-    policiesRefreshing.value = false
+    wizardReferenceRequests.releaseSignal('policies', signal)
+    if (!signal.aborted) policiesRefreshing.value = false
   }
 }
 
-async function refreshWizardFilters() {
+async function refreshWizardFilters(search = '', nextPage = 1) {
   if (!hasTenantPermission('protection.file_filters.view')) return
+  const signal = wizardReferenceRequests.nextSignal('filters')
+  filterSearch.value = search
   filtersRefreshing.value = true
   try {
-    const filters = await listFileFilterRules({ page: 1, page_size: 500 })
-    realFilters.value = filters.results.map(mapFilter)
+    const filters = await listFileFilterRules({ page: nextPage, page_size: wizardReferencePageSize, search: search.trim() || undefined }, { signal })
+    if (signal.aborted) return
+    const rows = filters.results.map(mapFilter)
+    rows.forEach((row) => knownFilters.set(row.id, row))
+    realFilters.value = nextPage === 1 ? rows : [...realFilters.value, ...rows.filter((row) => !realFilters.value.some((item) => item.id === row.id))]
+    filterOptionsPage.value = nextPage
+    filterOptionsMore.value = nextPage * wizardReferencePageSize < filters.count
   } catch (err) {
+    if (signal.aborted) return
     ElMessage.error({ message: apiErrorMessage(err, editorFailureText.value), grouping: true })
   } finally {
-    filtersRefreshing.value = false
+    wizardReferenceRequests.releaseSignal('filters', signal)
+    if (!signal.aborted) filtersRefreshing.value = false
   }
 }
 
@@ -3347,6 +3394,24 @@ function applyEditConfigToWizard(config: BackupConfigDetail, section: BackupConf
 
 async function openEditConfigs(configIds: number[], section: BackupConfigEditSection) {
   const configs = await Promise.all(configIds.map((configId) => getBackupConfig(configId)))
+  const policyIds = [...new Set(configs.flatMap((config) => config.backup_policy_id ? [config.backup_policy_id] : []))]
+  const filterIds = [...new Set(configs.flatMap((config) => config.file_filter_rule_id ? [config.file_filter_rule_id] : []))]
+  const [repos] = await Promise.all([
+    Promise.all([...new Set(configs.map((config) => config.repository_id))].map((id) => getStorageRepository(id).catch(() => null))),
+    Promise.all(policyIds.filter((id) => !getRealPolicy(String(id))).map(async (id) => {
+      const policy = await getBackupPolicy(id).catch(() => null)
+      if (policy) knownPolicies.set(String(id), mapPolicy(policy))
+    })),
+    Promise.all(filterIds.filter((id) => !getRealFilter(String(id))).map(async (id) => {
+      const filter = await getFileFilterRule(id).catch(() => null)
+      if (filter) knownFilters.set(String(id), mapFilter(filter))
+    })),
+  ])
+  for (const repo of repos) {
+    if (!repo) continue
+    const target = mapRepository(repo)
+    realTargets.value = [target, ...realTargets.value.filter((item) => item.id !== target.id)]
+  }
   editConfigs.value = configs
   editSection.value = section
   const sourceIds = [...new Set(configs.map(sourceIdFromConfig))]
@@ -4095,6 +4160,7 @@ async function openCreateSourceDetail(row: CreateSourceRow) {
   try {
     createNasDetailResource.value = await getSourceResource(refId)
     createNasDetailOpen.value = true
+    searchProxyNodes('')
   } catch (err) {
     ElMessage.error({ message: apiErrorMessage(err), grouping: true })
   } finally {
@@ -4785,6 +4851,14 @@ function targetOptionsForBatch() {
   return targetOptionsForCheckedGroups()
 }
 
+function onTargetSearch(value: string) {
+  targetSearch.value = value
+  targetRequests.abortScope('wizard-targets')
+  targetsRefreshing.value = true
+  targetHasMore.value = false
+  scheduleTargetSearch()
+}
+
 const targetAssignmentValid = computed(() => {
   const target = targetOptionsForBatch().find((item) => item.id === batchTargetPicker.targetId)
   return Boolean(target && !target.disabled && isSelectableTarget(target))
@@ -4832,6 +4906,8 @@ function onTargetPickerTargetChange(value: string) {
 }
 
 async function openBatchTargetDialog() {
+  targetSearch.value = ''
+  batchTargetPicker.repoType = ''
   await refreshWizardTargets()
   targetAssignDialogMode.value = 'batch'
   targetAssignActiveGroupKey.value = ''
@@ -4840,6 +4916,8 @@ async function openBatchTargetDialog() {
 }
 
 async function openSingleTargetDialog(group: WizardSourceGroup) {
+  targetSearch.value = ''
+  batchTargetPicker.repoType = ''
   await refreshWizardTargets()
   targetAssignDialogMode.value = 'single'
   targetAssignActiveGroupKey.value = group.key
@@ -6838,6 +6916,8 @@ function preserveShallowestPathOrder(paths: string[]) {
                   <el-select
                     v-if="activeFilterPolicyBatchOperation === 'policy'"
                     v-model="batchPolicyId"
+                    remote
+                    :remote-method="refreshWizardPolicies"
                     filterable
                     clearable
                     :placeholder="t('protection.backupsPage.phPolicyForDir')"
@@ -6846,6 +6926,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                     popper-class="create-policy-select-popper"
                     @visible-change="handleOptionSelectVisibleChange"
                   >
+                    <template v-if="policyOptionsMore" #footer>
+                      <ElButton text :loading="policiesRefreshing" @click="refreshWizardPolicies(policySearch, policyOptionsPage + 1)">
+                        {{ t('protection.backupsPage.snapshotBrowserLoadMore') }}
+                      </ElButton>
+                    </template>
                     <el-option
                       v-for="pol in realPolicies"
                       :key="pol.id"
@@ -6969,6 +7054,8 @@ function preserveShallowestPathOrder(paths: string[]) {
                     v-else-if="activeFilterPolicyBatchOperation === 'filter'"
                     ref="batchFilterSelectRef"
                     v-model="batchFilterIds"
+                    remote
+                    :remote-method="refreshWizardFilters"
                     multiple
                     filterable
                     clearable
@@ -6982,6 +7069,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                     @change="closeBatchFilterSelect"
                     @visible-change="handleOptionSelectVisibleChange"
                   >
+                    <template v-if="filterOptionsMore" #footer>
+                      <ElButton text :loading="filtersRefreshing" @click="refreshWizardFilters(filterSearch, filterOptionsPage + 1)">
+                        {{ t('protection.backupsPage.snapshotBrowserLoadMore') }}
+                      </ElButton>
+                    </template>
                     <el-option
                       v-for="gf in realFilters"
                       :key="gf.id"
@@ -7240,6 +7332,8 @@ function preserveShallowestPathOrder(paths: string[]) {
                         <div class="create-config-select-hover-target hfl-table-no-tooltip">
                           <el-select
                             :model-value="groupPolicyId(group)"
+                            remote
+                            :remote-method="refreshWizardPolicies"
                             filterable
                             clearable
                             :placeholder="t('protection.backupsPage.phPolicyForDir')"
@@ -7249,6 +7343,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                             @update:model-value="setGroupPolicyId(group, String($event ?? ''))"
                             @visible-change="handleConfigSelectVisibleChange"
                           >
+                            <template v-if="policyOptionsMore" #footer>
+                              <ElButton text :loading="policiesRefreshing" @click="refreshWizardPolicies(policySearch, policyOptionsPage + 1)">
+                                {{ t('protection.backupsPage.snapshotBrowserLoadMore') }}
+                              </ElButton>
+                            </template>
                             <el-option
                               v-for="pol in realPolicies"
                               :key="pol.id"
@@ -7381,7 +7480,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                           :title="t('common.refresh')"
                           :aria-label="t('common.refresh')"
                           :disabled="policiesRefreshing"
-                          @click.stop="refreshWizardPolicies"
+                          @click.stop="refreshWizardPolicies(policySearch)"
                         >
                           <RefreshCw
                             :size="15"
@@ -7513,6 +7612,8 @@ function preserveShallowestPathOrder(paths: string[]) {
                         <div class="create-config-select-hover-target hfl-table-no-tooltip">
                           <el-select
                             :model-value="groupFilterId(group)"
+                            remote
+                            :remote-method="refreshWizardFilters"
                             filterable
                             clearable
                             fit-input-width
@@ -7523,6 +7624,11 @@ function preserveShallowestPathOrder(paths: string[]) {
                             @update:model-value="(value) => setGroupFilterId(group, String(value || ''))"
                             @visible-change="handleConfigSelectVisibleChange"
                           >
+                            <template v-if="filterOptionsMore" #footer>
+                              <ElButton text :loading="filtersRefreshing" @click="refreshWizardFilters(filterSearch, filterOptionsPage + 1)">
+                                {{ t('protection.backupsPage.snapshotBrowserLoadMore') }}
+                              </ElButton>
+                            </template>
                             <el-option
                               v-for="gf in realFilters"
                               :key="gf.id"
@@ -7654,7 +7760,7 @@ function preserveShallowestPathOrder(paths: string[]) {
                           :title="t('common.refresh')"
                           :aria-label="t('common.refresh')"
                           :disabled="filtersRefreshing"
-                          @click.stop="refreshWizardFilters"
+                          @click.stop="refreshWizardFilters(filterSearch)"
                         >
                           <RefreshCw
                             :size="15"
@@ -7971,6 +8077,8 @@ function preserveShallowestPathOrder(paths: string[]) {
                   v-model:nas-mode="batchNasTargetMode"
                   :model-value="batchTargetPicker.targetId"
                   :targets="targetOptionsForBatch()"
+                  :visible-target-ids="visibleTargetIds"
+                  :has-more="targetHasMore"
                   :selected-target="batchSelectedTarget"
                   :target-placeholder="t('protection.backupsPage.phSearchTargets')"
                   :repo-type-placeholder="t('protection.backupsPage.phAllRepoTypes')"
@@ -7979,7 +8087,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                   :refreshing="targetsRefreshing"
                   :refresh-title="t('common.refresh')"
                   @update:model-value="onTargetPickerTargetChange"
-                  @refresh="refreshWizardTargets"
+                  @refresh="refreshWizardTargets()"
+                  @search="onTargetSearch"
+                  @load-more="refreshWizardTargets(true)"
                 >
                   <template #selection-options>
                     <ElFormItem
@@ -10939,7 +11049,9 @@ function preserveShallowestPathOrder(paths: string[]) {
                   :dir="nasDir"
                   :generated-dir="generatedNasDir"
                   :proxy-nodes="proxyNodes"
-                  :proxy-nodes-refreshing="proxyNodesRefreshing"
+                  :proxy-nodes-refreshing="proxyNodesRefreshing || proxyOptionsLoading"
+                  :proxy-search="searchProxyNodes"
+                  :proxy-load-more="loadMoreProxyNodes"
                   :busy="nasBusy"
                   @update:protocol="nasProtocol = $event"
                   @update:smb-server="nasSmbServer = $event"
@@ -10981,6 +11093,9 @@ function preserveShallowestPathOrder(paths: string[]) {
       v-model="createNasDetailOpen"
       :resource="createNasDetailResource"
       :proxy-nodes="proxyNodes"
+      :proxy-search="searchProxyNodes"
+      :proxy-load-more="loadMoreProxyNodes"
+      :proxy-loading="proxyOptionsLoading"
     />
   </component>
 </template>

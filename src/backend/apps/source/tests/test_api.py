@@ -26,7 +26,10 @@ from apps.protection.models import (
 from apps.restore.models import RestorePlan, RestoreRecord
 from apps.source.constants import PipelineStep
 from apps.source.models import SourceBackupPipelineEntry, SourceResource
-from apps.source.services.internal.agent_host_sync import sync_agent_source_host
+from apps.source.services.internal.agent_host_sync import (
+    sync_agent_source_host,
+    sync_missing_agent_source_hosts_for_org,
+)
 from apps.source.services.internal.source_credentials import resolve_source_credentials
 from apps.source.tasks.connection_probe import (
     project_source_connection_probe,
@@ -1593,6 +1596,66 @@ class SourceResourceApiTests(TestCase):
 
         self.assertIsNotNone(resource)
         self.assertEqual(resource.config["platform"], "macos")
+
+    @patch("apps.source.services.internal.agent_host_sync.sync_agent_source_host")
+    def test_sync_missing_agent_source_hosts_only_syncs_agents_without_projection(
+        self, sync_source_host
+    ):
+        existing = Node.objects.create(
+            organization=self.org,
+            name="agent-with-source",
+            role=Node.Role.AGENT,
+        )
+        missing = Node.objects.create(
+            organization=self.org,
+            name="agent-without-source",
+            role=Node.Role.AGENT,
+        )
+        SourceResource.objects.create(
+            organization=self.org,
+            name="agent-with-source",
+            resource_type="local",
+            bound_node=existing,
+        )
+
+        sync_missing_agent_source_hosts_for_org(organization_id=self.org.id)
+
+        sync_source_host.assert_called_once_with(node=missing)
+
+    @patch("apps.source.services.internal.agent_host_sync.sync_agent_source_host")
+    def test_local_resource_list_limits_projection_and_results_to_requested_nodes(
+        self, sync_source_host
+    ):
+        agents = [
+            Node.objects.create(organization=self.org, name=name, role=Node.Role.AGENT)
+            for name in ("bound-agent", "requested-missing", "unrequested-missing", "unrequested-bound")
+        ]
+        for agent in (agents[0], agents[3]):
+            SourceResource.objects.create(
+                organization=self.org, name=agent.name, resource_type="local", bound_node=agent,
+            )
+        other_org = Organization.objects.create(key="other-source-org", name="Other Source Org")
+        other_agent = Node.objects.create(organization=other_org, name="other-agent", role=Node.Role.AGENT)
+        SourceResource.objects.create(
+            organization=other_org, name=other_agent.name, resource_type="local", bound_node=other_agent,
+        )
+        response = self.client.get(
+            "/api/v1/source/resources/",
+            {"resource_type": "local", "bound_node_ids": f"{agents[0].id},{agents[1].id},{other_agent.id}"},
+            secure=True,
+            **self._headers(),
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([row["name"] for row in response.data["results"]], [agents[0].name])
+        sync_source_host.assert_called_once_with(node=agents[1])
+
+    def test_resource_list_rejects_invalid_bound_node_ids(self):
+        for value in ("", "0", "2,invalid", "9223372036854775808", ",".join(["1"] * 101)):
+            with self.subTest(value=value):
+                response = self.client.get(
+                    "/api/v1/source/resources/", {"bound_node_ids": value}, secure=True, **self._headers(),
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_sync_user_agents_keep_principal_in_source_host_name(self):
         resources = []

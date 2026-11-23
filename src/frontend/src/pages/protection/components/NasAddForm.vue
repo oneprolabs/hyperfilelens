@@ -27,6 +27,8 @@ const props = defineProps<{
   generatedDir: string
   proxyNodes: ApiNode[]
   proxyNodesRefreshing: boolean
+  proxySearch?: (search: string) => void
+  proxyLoadMore?: (direction: string) => void
   busy: boolean
   validationErrors?: Record<string, string>
 }>()
@@ -356,9 +358,12 @@ defineExpose({
                       class="add-nas-select-row__select"
                       :class="{ 'is-error': !!bindNodeError }"
                       :placeholder="t('protection.sourceResources.selectSourceProxy')"
-                      :disabled="onlineProxyNodes.length === 0"
+                      :disabled="!proxySearch && onlineProxyNodes.length === 0"
                       :loading="proxyNodesRefreshing"
                       filterable
+                      :remote="Boolean(proxySearch)"
+                      :remote-method="proxySearch"
+                      @end-reached="proxyLoadMore?.($event)"
                       fit-input-width
                       popper-class="nas-add-proxy-select-popper"
                       @update:model-value="emit('update:bindNodeId', $event as number); emit('clearValidationError', 'bindNode')"

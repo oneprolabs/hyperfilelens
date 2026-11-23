@@ -329,15 +329,16 @@ const relatedBackupPage = ref(1)
 const relatedBackupPageSize = ref(10)
 const filterRelatedBackupPage = ref(1)
 const filterRelatedBackupPageSize = ref(10)
+const relatedBackupTotal = ref(0)
+const filterRelatedBackupTotal = ref(0)
+const pagedRelatedBackupConfigs = relatedBackupConfigs
+const pagedFilterRelatedBackupConfigs = filterRelatedBackupConfigs
 
-const pagedRelatedBackupConfigs = computed(() => {
-  const start = (relatedBackupPage.value - 1) * relatedBackupPageSize.value
-  return relatedBackupConfigs.value.slice(start, start + relatedBackupPageSize.value)
+watch([relatedBackupPage, relatedBackupPageSize], () => {
+  if (activePolicy.value) void loadRelatedBackupConfigs(activePolicy.value)
 })
-
-const pagedFilterRelatedBackupConfigs = computed(() => {
-  const start = (filterRelatedBackupPage.value - 1) * filterRelatedBackupPageSize.value
-  return filterRelatedBackupConfigs.value.slice(start, start + filterRelatedBackupPageSize.value)
+watch([filterRelatedBackupPage, filterRelatedBackupPageSize], () => {
+  if (activeFilter.value) void loadFilterRelatedBackupConfigs(activeFilter.value)
 })
 
 function formFromPolicyApi(policy: BackupPolicy): BackupPolicyForm {
@@ -536,14 +537,15 @@ async function refreshPoliciesList() {
 function openPolicyDetail(row: PolicyRow) {
   activePolicy.value = row
   policyDetailTab.value = 'basic'
-  relatedBackupPage.value = 1
   detailDrawerOpen.value = true
-  void loadRelatedBackupConfigs(row)
+  if (relatedBackupPage.value === 1) void loadRelatedBackupConfigs(row)
+  else relatedBackupPage.value = 1
 }
 
 function onPolicyDetailClosed() {
   activePolicy.value = null
   relatedBackupConfigs.value = []
+  relatedBackupTotal.value = 0
   relatedBackupConfigsError.value = ''
   relatedBackupPage.value = 1
 }
@@ -733,9 +735,10 @@ async function loadRelatedBackupConfigs(policy: PolicyRow) {
   relatedBackupConfigsLoading.value = true
   relatedBackupConfigsError.value = ''
   try {
-    const result = await listBackupConfigs({ page: 1, page_size: 500, ordering: '-created_at' }, { signal })
+    const result = await listBackupConfigs({ page: relatedBackupPage.value, page_size: relatedBackupPageSize.value, backup_policy_id: policy.apiId, ordering: '-created_at' }, { signal })
     if (seq !== relatedBackupConfigRequestSeq) return
-    relatedBackupConfigs.value = result.results.filter((config) => config.backup_policy_id === policy.apiId)
+    relatedBackupConfigs.value = result.results
+    relatedBackupTotal.value = result.count
     await loadRelatedSources(relatedBackupConfigs.value, signal)
   } catch (err) {
     if (pageRequests.isAbortError(err)) return
@@ -753,9 +756,10 @@ async function loadFilterRelatedBackupConfigs(rule: FilterRow) {
   filterRelatedBackupConfigsLoading.value = true
   filterRelatedBackupConfigsError.value = ''
   try {
-    const result = await listBackupConfigs({ page: 1, page_size: 500, ordering: '-created_at' }, { signal })
+    const result = await listBackupConfigs({ page: filterRelatedBackupPage.value, page_size: filterRelatedBackupPageSize.value, file_filter_rule_id: rule.apiId, ordering: '-created_at' }, { signal })
     if (seq !== filterRelatedBackupConfigRequestSeq) return
-    filterRelatedBackupConfigs.value = result.results.filter((config) => config.file_filter_rule_id === rule.apiId)
+    filterRelatedBackupConfigs.value = result.results
+    filterRelatedBackupTotal.value = result.count
     await loadRelatedSources(filterRelatedBackupConfigs.value, signal)
   } catch (err) {
     if (pageRequests.isAbortError(err)) return
@@ -946,14 +950,15 @@ function filterRowClassName({ row }: { row: FilterRow }) {
 function openFilterDetail(row: FilterRow) {
   activeFilter.value = row
   filterDetailTab.value = 'basic'
-  filterRelatedBackupPage.value = 1
   filterDetailDrawerOpen.value = true
-  void loadFilterRelatedBackupConfigs(row)
+  if (filterRelatedBackupPage.value === 1) void loadFilterRelatedBackupConfigs(row)
+  else filterRelatedBackupPage.value = 1
 }
 
 function onFilterDetailClosed() {
   activeFilter.value = null
   filterRelatedBackupConfigs.value = []
+  filterRelatedBackupTotal.value = 0
   filterRelatedBackupConfigsError.value = ''
   filterRelatedBackupPage.value = 1
 }
@@ -1760,13 +1765,13 @@ function onMoreDisable() {
                 </template>
               </el-table>
               <div
-                v-if="relatedBackupConfigs.length > 0"
+                v-if="relatedBackupTotal > 0"
                 class="policy-related-backup-footer"
               >
                 <HflPagination
                   v-model:current-page="relatedBackupPage"
                   v-model:page-size="relatedBackupPageSize"
-                  :total="relatedBackupConfigs.length"
+                  :total="relatedBackupTotal"
                   @update:page-size="relatedBackupPage = 1"
                 />
               </div>
@@ -1927,13 +1932,13 @@ function onMoreDisable() {
                 </template>
               </el-table>
               <div
-                v-if="filterRelatedBackupConfigs.length > 0"
+                v-if="filterRelatedBackupTotal > 0"
                 class="policy-related-backup-footer"
               >
                 <HflPagination
                   v-model:current-page="filterRelatedBackupPage"
                   v-model:page-size="filterRelatedBackupPageSize"
-                  :total="filterRelatedBackupConfigs.length"
+                  :total="filterRelatedBackupTotal"
                   @update:page-size="filterRelatedBackupPage = 1"
                 />
               </div>
