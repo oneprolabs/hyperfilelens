@@ -1,7 +1,19 @@
-import type { SourceTag } from './sourceApi'
+import { listSourceTagAssignments, listSourceTagOptions, type SourceTag } from './sourceApi'
 
 export type SourceTagBulkOperation = 'add' | 'remove'
 type Assignments = Record<string, SourceTag[]>
+
+export async function loadBulkTagChoices(operation: SourceTagBulkOperation, sourceIds: string[]) {
+  const assignmentsRequest = listSourceTagAssignments(sourceIds)
+  if (operation === 'add') {
+    const [catalog, assignments] = await Promise.all([listSourceTagOptions('options'), assignmentsRequest])
+    return { catalog, assignments }
+  }
+  const assignments = await assignmentsRequest
+  const catalog = [...new Map(Object.values(assignments).flat().map((tag) => [tag.id, tag])).values()]
+    .sort((left, right) => left.name.localeCompare(right.name) || left.id - right.id)
+  return { catalog, assignments }
+}
 
 /** An unknown source stays actionable until its assignments can be refreshed. */
 export function canUnbindSelectedSources(sourceIds: string[], assignments: Assignments): boolean {

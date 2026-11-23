@@ -1,4 +1,5 @@
 from io import StringIO
+from unittest.mock import patch
 
 from django.core.management import call_command
 from django.db import connection
@@ -53,6 +54,13 @@ class BackupSelectablePipelineQueryTests(TestCase):
             entry.step = PipelineStep.READY
             entry.save(update_fields=["step", "updated_at"])
 
+    @override_settings(SOURCE_BACKUP_SELECTABLE_QUERY_MODE="auto")
+    def test_auto_uses_sql_pagination_for_a_complete_projection(self):
+        with patch("apps.source.services.internal.backup_selectable._build_catalog", side_effect=AssertionError):
+            rows, count = list_backup_selectable_sources(organization_id=self.org.id, page=1, page_size=1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(count, 2)
+
     def ids(self, **params):
         results, count = list_backup_selectable_sources(
             organization_id=self.org.id,
@@ -61,6 +69,24 @@ class BackupSelectablePipelineQueryTests(TestCase):
             **params,
         )
         return [row["id"] for row in results], count
+
+    def test_ready_page_includes_configured_source_with_stale_step(self):
+        SourceBackupPipelineEntry.objects.filter(
+            organization=self.org, source_kind="agent", ref_id=self.agent.id,
+        ).update(step=PipelineStep.SOURCE_POOL)
+        BackupConfig.objects.create(
+            organization_id=self.org.id, source_type="agent", source_ref_id=self.agent.id,
+            name="Already configured", repository_id=1,
+        )
+        for mode in ("legacy", "pipeline", "auto"):
+            with self.subTest(mode=mode), override_settings(SOURCE_BACKUP_SELECTABLE_QUERY_MODE=mode):
+                rows, total = list_backup_selectable_sources(
+                    organization_id=self.org.id, pipeline_step=PipelineStep.READY,
+                    source_type="host", page=1, page_size=1,
+                )
+                self.assertEqual(total, 1)
+                self.assertEqual([row["id"] for row in rows], [f"agent:{self.agent.id}"])
+                self.assertEqual(rows[0]["pipeline_step"], PipelineStep.READY)
 
     def test_selected_search_field_uses_projected_proxy_identity_for_nas(self):
         ids, count = self.ids(search="NAS Proxy", search_field="source_hostname", pipeline_step=3)
@@ -170,6 +196,9 @@ class BackupSelectablePipelineQueryTests(TestCase):
         self.assertEqual(count, 1)
 
     def test_backup_config_exists_is_tenant_scoped(self):
+        SourceBackupPipelineEntry.objects.filter(
+            organization=self.org, source_kind="agent", ref_id=self.agent.id,
+        ).update(step=PipelineStep.CONFIG)
         BackupConfig.objects.create(
             organization_id=self.other_org.id,
             name="foreign-config",
@@ -183,25 +212,9 @@ class BackupSelectablePipelineQueryTests(TestCase):
         self.assertEqual(ids, [])
         self.assertEqual(count, 0)
 
-    def test_step_three_does_not_fall_back_to_backup_config_exists(self):
-        entry = SourceBackupPipelineEntry.objects.get(
-            organization_id=self.org.id,
-            source_kind="agent",
-            ref_id=self.agent.id,
-        )
-        entry.step = PipelineStep.CONFIG
-        entry.save(update_fields=["step", "updated_at"])
-        BackupConfig.objects.create(
-            organization_id=self.org.id,
-            name="configured-at-step-two",
-            source_type="agent",
-            source_ref_id=self.agent.id,
-            repository_id=77,
-        )
-
         ids, count = self.ids(pipeline_step=3)
 
-        self.assertNotIn(f"agent:{self.agent.id}", ids)
+        self.assertEqual(ids, [f"nas:{self.nas.id}"])
         self.assertEqual(count, 1)
 
     @override_settings(SOURCE_BACKUP_SELECTABLE_QUERY_MODE="legacy")
@@ -353,6 +366,7 @@ class BackupSelectablePipelineScaleTests(TestCase):
 
         report = output.getvalue()
         self.assertIn("sources=10000", report)
-        self.assertIn("query_count_max=", report)
+        query_count = next(field for field in report.split() if field.startswith("query_count_max="))
+        self.assertLessEqual(int(query_count.split("=")[1]), 3)
         self.assertIn("latency_ms_avg=", report)
-        self.assertIn("src_pipe_org_step_ord_idx", report)
+        self.assertIn("Execution Time:", report)

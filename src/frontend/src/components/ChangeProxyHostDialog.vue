@@ -14,6 +14,8 @@ const props = defineProps<{
   proxyNodesRefreshing: boolean
   onlineProxyNodes: ApiNode[]
   nodeId: number | undefined
+  proxySearch?: (search: string) => void
+  proxyLoadMore?: (direction: string) => void
   saving?: boolean
 }>()
 
@@ -106,9 +108,12 @@ function save() {
             v-model="selectedNodeId"
             class="hfl-flow-action-dialog__proxy-select-row__select"
             filterable
+            :remote="Boolean(proxySearch)"
+            :remote-method="proxySearch"
+            @end-reached="proxyLoadMore?.($event)"
             fit-input-width
             :loading="proxyNodesRefreshing"
-            :disabled="onlineProxyNodes.length === 0"
+            :disabled="!proxySearch && onlineProxyNodes.length === 0"
             popper-class="hfl-flow-action-dialog__proxy-select-popper"
             :placeholder="t('protection.sourceResources.selectSourceProxy')"
           >

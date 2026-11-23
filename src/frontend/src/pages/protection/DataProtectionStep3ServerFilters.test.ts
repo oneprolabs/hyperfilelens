@@ -204,7 +204,7 @@ describe('Backup Wizard Step 3 server filters', () => {
   })
 
   it('refreshes the tag catalog on open and save, limits selection, and offers retry on failure', () => {
-    expect(sourceBetween('function openTagFilter()', 'function onTagFilterDraftChange')).toContain('void refreshTagFilterOptions()')
+    expect(page).toContain('useSourceTagFilter(step3TagIds, tagFilterDraftIds, tagFilterOpen)')
     expect(sourceBetween('async function saveWizardTagAction(', 'let syncingStep3Selection')).toContain('await refreshTagFilterOptions()')
     expect(page).toContain('v-model="wizardTagUnbindOpen"')
     expect(page).toContain('@confirm="saveWizardTagAction(true)"')

@@ -1,28 +1,14 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { RefreshCw } from 'lucide-vue-next'
-import { api } from '../../lib/api'
+import { listBackupSourceSnapshots, type BackupSourceSnapshot } from '../../lib/protectionBackupConfigApi'
+import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { formatLocalDateTime } from '../../lib/dateTime'
-import { asList } from '../../lib/parse'
+import ErrorState from '../../components/errors/ErrorState.vue'
 import ModulePage from '../../components/ModulePage.vue'
 import SnapshotStatusTag from '../../components/SnapshotStatusTag.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
-
-type SourceSnapshot = {
-  id: number
-  snapshot_uid: string
-  source_display_name?: string
-  backup_config_name?: string
-  repository_display_name?: string
-  status?: string
-  finished_at?: string | null
-  created_at?: string | null
-  directory_count?: number
-  successful_directory_count?: number
-  failed_directory_count?: number
-  total_size_bytes?: number
-}
 
 function fmtBytes(n?: number | null) {
   if (!n || n <= 0) return '0 B'
@@ -40,23 +26,35 @@ function formatDate(value?: string | null) {
   return formatLocalDateTime(value, '—')
 }
 
-const rows = ref<SourceSnapshot[]>([])
+const rows = ref<BackupSourceSnapshot[]>([])
 const busy = ref(false)
+const page = ref(1)
+const pageSize = 30
+const count = ref(0)
+const loadError = ref<unknown>(null)
+const requests = usePageRequestScope()
 
 const { t } = useI18n()
 const protectionMenus = useProtectionSideNav()
 
 async function load() {
+  const signal = requests.nextSignal('snapshots')
   busy.value = true
+  loadError.value = null
   try {
-    const data = await api<unknown>(`/api/v1/protection/backup-source-snapshots/?page=1&page_size=100`)
-    rows.value = asList<SourceSnapshot>(data)
+    const result = await listBackupSourceSnapshots({ page: page.value, page_size: pageSize }, { signal })
+    if (signal.aborted) return
+    rows.value = result.results
+    count.value = result.count
+  } catch (error) {
+    if (!signal.aborted) loadError.value = error
   } finally {
-    busy.value = false
+    requests.releaseSignal('snapshots', signal)
+    if (!signal.aborted) busy.value = false
   }
 }
 
-function progressLabel(row: SourceSnapshot) {
+function progressLabel(row: BackupSourceSnapshot) {
   const total = Number(row.directory_count || 0)
   if (!total) return '0/0'
   const success = Number(row.successful_directory_count || 0)
@@ -64,11 +62,7 @@ function progressLabel(row: SourceSnapshot) {
   return `${success}/${total}${failed ? ` (${failed} failed)` : ''}`
 }
 
-onMounted(() => {
-  load().catch(() => {
-    rows.value = []
-  })
-})
+watch(page, load, { immediate: true })
 </script>
 
 <template>
@@ -83,11 +77,12 @@ onMounted(() => {
     </template>
 
     <div class="hfl-list-panel">
+      <ErrorState v-if="loadError" :error="loadError" @retry="load" />
       <el-table
         v-table-column-resize="'node.snapshots'"
         :data="rows"
         stripe
-        :loading="busy"
+        v-loading="busy"
       >
         <el-table-column
           prop="id"
@@ -169,6 +164,15 @@ onMounted(() => {
           />
         </template>
       </el-table>
+      <div class="hfl-list-footer">
+        <ElPagination
+          v-model:current-page="page"
+          class="hfl-list-footer__pagination"
+          :total="count"
+          :page-size="pageSize"
+          layout="total, prev, pager, next"
+        />
+      </div>
     </div>
   </ModulePage>
 </template>

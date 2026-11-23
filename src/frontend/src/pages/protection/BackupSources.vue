@@ -43,7 +43,7 @@ import { useListSearch } from '../../composables/useListSearch'
 import { sourceAgentSidebarIcon, nasMountProtocolIcon } from '../../lib/resourceIcons'
 import { usePageRequestScope } from '../../composables/usePageRequestScope'
 import { getEffectiveOrgKey } from '../../composables/useAuth'
-import { applyBulkTagChanges, bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges } from '../../lib/sourceTagBulk'
+import { applyBulkTagChanges, bulkTagOptions, canUnbindSelectedSources, countBulkTagChanges, loadBulkTagChoices } from '../../lib/sourceTagBulk'
 import { apiErrorMessage, isAbortError } from '../../lib/api'
 import { formatAppDateTime } from '../../lib/dateTime'
 import { copyTextToClipboard } from '../../lib/clipboard'
@@ -69,11 +69,12 @@ import {
 } from '../../lib/unregisterFailureDetails'
 import { LIST_ROUTE_REFRESH_KEY, stripListRefreshQuery } from '../../lib/listRouteRefresh'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
-import { hasNasSourceNameConflict, resolveNasSubmitName } from '../../lib/nasSourceNaming'
+import { resolveNasSubmitName } from '../../lib/nasSourceNaming'
 import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
 import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { preflightSourceNasCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
-import { listNodes, listNodesPaged, updateNode, fetchLatestAgentVersion, type EnrollmentOs } from '../../lib/nodeApi'
+import { listNodesPaged, updateNode, fetchLatestAgentVersion, type EnrollmentOs } from '../../lib/nodeApi'
+import { useProxyNodeOptions } from '../../composables/useProxyNodeOptions'
 import { canRemoteAgentUpgrade } from '../../lib/agentVersion'
 import { backupSourceLifecycleDisplay } from '../../lib/backupSourceLifecycleDisplay'
 import type { ApiNode } from '../../types/node'
@@ -81,7 +82,6 @@ import {
   createSourceResource,
   getSourceResource,
   listSourceResources,
-  sourceStatistics,
   testSourceConnection,
   SOURCE_CONNECTION_TEST_TIMEOUT_MS,
   SOURCE_CONNECTION_TEST_MIN_FEEDBACK_MS,
@@ -89,9 +89,8 @@ import {
   updateSourceResource,
   type BackupSourceDeleteResult,
   type SourceResource,
-  type SourceStats,
 } from '../../lib/sourceApi'
-import { bulkUpdateSourceTags, listSourceTagAssignments, listSourceTags, type SourceTag } from '../../lib/sourceApi'
+import { bulkUpdateSourceTags, listSourceTagAssignments, type SourceTag } from '../../lib/sourceApi'
 import {
   nasMountProtocol,
   nasPathKindLabelKey,
@@ -148,7 +147,6 @@ const listSearchPlaceholder = computed(() => t('protection.listSearch.placeholde
 const busy = ref(false)
 const rows = ref<SourceResource[]>([])
 const latestAgentVersion = ref<string | null>(null)
-const stats = ref<SourceStats | null>(null)
 const agentNodes = ref<ApiNode[]>([])
 const tagCatalog = ref<SourceTag[]>([])
 const sourceTags = ref<Record<string, SourceTag[]>>({})
@@ -202,10 +200,7 @@ async function openTagAction(action: 'add' | 'remove') {
   tagActionOpen.value = true
   const request = ++tagActionRequest
   try {
-    const [catalog, assignments] = await Promise.all([
-      listSourceTags(),
-      listSourceTagAssignments(selected.map((source) => source.id)),
-    ])
+    const { catalog, assignments } = await loadBulkTagChoices(action, selected.map((source) => source.id))
     if (!tagActionOpen.value || request !== tagActionRequest) return
     tagCatalog.value = catalog
     tagActionAssignments.value = assignments
@@ -267,7 +262,9 @@ async function saveTagAction(confirmed = false) {
 /** Published agent release from media/agent-releases (upgrade target). */
 /** Local source rows keyed by agent node — enrichment only (capacity), not host list data. */
 const hostSourceRows = ref<SourceResource[]>([])
-const proxyNodes = ref<ApiNode[]>([])
+const { proxyNodes, loadProxyNodes: loadProxyOptions, searchProxyNodes, proxyOptionsLoading, loadMoreProxyNodes } = useProxyNodeOptions(
+  () => nasAddOpen.value ? nasBindNodeId.value : (rebindDialogOpen.value ? rebindNodeId.value ?? sharedNasBoundNodeId() : detail.value?.bound_node ?? undefined), true,
+)
 const proxyNodesRefreshing = ref(false)
 const shouldRefreshProxyNodesOnReturn = ref(false)
 const sourceTabLoaded = reactive<Record<SourceViewTab, boolean>>({
@@ -358,7 +355,7 @@ async function refreshSourceTagRows(ids: string[]) {
   }
 }
 
-watch(() => [...pagedHostAgents.value.map((row) => hostSelectableId(row)), ...nasRows.value.map((row) => nasSelectableId(row))].join(','), (keys) => {
+watch(() => (activeTab.value === 'nas' ? nasRows.value.map(nasSelectableId) : pagedHostAgents.value.map(hostSelectableId)).join(','), (keys) => {
   void refreshSourceTagRows(keys.split(',').filter(Boolean))
 }, { immediate: true })
 
@@ -463,6 +460,7 @@ const { loading: nasRouteDetailLoading } = useRouteResourceDetail({
     if (resource.resource_type !== 'nas') return
     detail.value = resource
     detailOpen.value = true
+    searchProxyNodes('')
   },
 })
 
@@ -513,6 +511,7 @@ async function openDetail(row: SourceResource) {
     detail.value = row
   }
   detailOpen.value = true
+  if (row.resource_type === 'nas') searchProxyNodes('')
 }
 
 async function saveForm() {
@@ -540,22 +539,6 @@ async function saveForm() {
 }
 
 /* ---------- actions ---------- */
-async function loadAgentNodes(signal?: AbortSignal) {
-  if (!hasTenantPermission('protection.source_hosts.view')) return
-  try {
-    const prev = agentNodes.value
-    const next = await listNodes({ role: 'agent' }, { signal })
-    agentNodes.value = lifecycleOps.mergeNodeListDuringLifecycleBatch(
-      next,
-      prev,
-      lifecycleOps.activeBatchNodeIds.value,
-    )
-  } catch (e) {
-    if (pageRequests.isAbortError(e)) throw e
-    agentNodes.value = []
-  }
-}
-
 async function loadHostAgentPage(signal?: AbortSignal) {
   const result = await listNodesPaged(
     {
@@ -567,18 +550,26 @@ async function loadHostAgentPage(signal?: AbortSignal) {
     },
     { signal },
   )
+  if (signal?.aborted) return []
   agentNodes.value = lifecycleOps.mergeNodeListDuringLifecycleBatch(
     result.results,
     agentNodes.value,
     lifecycleOps.activeBatchNodeIds.value,
   )
   pagination.count = result.count
+  return result.results.map((node) => node.id)
 }
 
-async function loadHostSourceEnrichment(signal?: AbortSignal) {
+async function loadHostSourceEnrichment(nodeIds: number[], signal?: AbortSignal) {
+  if (!nodeIds.length) {
+    hostSourceRows.value = []
+    return
+  }
   try {
-    const list = await listSourceResources({ resource_type: 'local', page: 1, page_size: 500 }, { signal })
-    hostSourceRows.value = list.results
+    const list = await listSourceResources({
+      resource_type: 'local', bound_node_ids: nodeIds.join(','), page: 1, page_size: nodeIds.length,
+    }, { signal })
+    if (!signal?.aborted) hostSourceRows.value = list.results
   } catch (e) {
     if (pageRequests.isAbortError(e)) throw e
     hostSourceRows.value = []
@@ -596,9 +587,9 @@ async function loadLatestAgentVersion(signal?: AbortSignal) {
 
 async function loadHostTab(signal?: AbortSignal) {
   await Promise.all([
-    loadHostAgentPage(signal),
-    loadHostSourceEnrichment(signal),
-    loadProxyNodes(signal),
+    loadHostAgentPage(signal).then((ids) => {
+      if (!signal?.aborted) return loadHostSourceEnrichment(ids, signal)
+    }),
     loadLatestAgentVersion(signal),
   ])
 }
@@ -634,10 +625,10 @@ function resolveBackupSourceLifecycleStatus(node: ApiNode) {
   return backupSourceLifecycleDisplay(lifecycleOps.resolveDisplayStatus(node))
 }
 
-async function loadProxyNodes(signal?: AbortSignal) {
+async function loadProxyNodes() {
   if (!hasTenantPermission('protection.proxy_hosts.view')) return
   try {
-    proxyNodes.value = await listNodes({ role: 'proxy' }, { signal })
+    await loadProxyOptions()
   } catch (e) {
     if (pageRequests.isAbortError(e)) throw e
     proxyNodes.value = []
@@ -675,14 +666,10 @@ async function loadNasTab(signal?: AbortSignal) {
   if (appliedSearch.value.trim()) params.search = appliedSearch.value.trim()
   if (appliedSearch.value.trim()) params.search_field = filters.search_field === 'server' ? 'server' : 'name'
   if (filters.status) params.status = filters.status
-  const [list, st] = await Promise.all([
-    listSourceResources(params, { signal }),
-    sourceStatistics({ signal }),
-    loadProxyNodes(signal),
-  ])
+  const list = await listSourceResources(params, { signal })
+  if (signal?.aborted) return
   rows.value = list.results
   pagination.count = list.count
-  stats.value = st
 }
 
 function nasShouldRefreshCapacity(row: SourceResource) {
@@ -731,7 +718,6 @@ async function syncNasCapacities(list: SourceResource[], signal?: AbortSignal) {
       (row) => targetIds.has(row.id) && nasShouldRefreshCapacity(row),
     )
     if (!pending) {
-      stats.value = await sourceStatistics({ signal })
       return
     }
   }
@@ -744,25 +730,21 @@ async function load() {
   try {
     if (loadingTab === 'hostFileSystem') {
       await loadHostTab(signal)
-      await refreshSourceTagRows(agentNodes.value.map(hostSelectableId))
       return
     }
     await loadNasTab(signal)
-    await refreshSourceTagRows(nasRows.value.map(nasSelectableId))
   } catch (e) {
     if (pageRequests.isAbortError(e)) return
     pagination.page = 1
     if (activeTab.value === 'nas') {
       rows.value = []
       pagination.count = 0
-      stats.value = null
       ElMessage.error({ message: apiErrorMessage(e), grouping: true })
     } else {
       rows.value = []
       hostSourceRows.value = []
       agentNodes.value = []
       pagination.count = 0
-      stats.value = null
       ElMessage.error({ message: apiErrorMessage(e), grouping: true })
     }
   } finally {
@@ -977,7 +959,7 @@ function sourceNodeName(row: SourceResource) {
 }
 
 function sourceNodeIp(row: SourceResource) {
-  return proxyNodeStackIpLine(boundNodeForRow(row), sourceConfigValue(row, 'host_ip')) || '—'
+  return proxyNodeStackIpLine(boundNodeForRow(row), row.bound_node_ip || sourceConfigValue(row, 'host_ip')) || '—'
 }
 
 function sourceNodeOnlineStatus(row: SourceResource): 'online' | 'reconnecting' | 'offline' {
@@ -1966,7 +1948,7 @@ const nasBindNodeId = ref<number | undefined>(undefined)
 const nasBindNodeError = ref('')
 const nasName = ref('')
 const nasNameTouched = ref(false)
-const existingNasNamesForAdd = ref<string[]>([])
+const conflictingNasName = ref('')
 const nasDir = ref('')
 const nasDirTouched = ref(false)
 
@@ -2011,18 +1993,28 @@ const nasEffectiveName = computed(() =>
 const nasNameConflictMessage = computed(() => {
   const candidate = nasEffectiveName.value
   if (!candidate) return ''
-  if (!hasNasSourceNameConflict(existingNasNamesForAdd.value, candidate)) return ''
+  if (conflictingNasName.value !== candidate) return ''
   return t('protection.sourceResources.nasWarnNameExists', { name: candidate })
 })
 
-async function loadExistingNasNamesForAdd() {
-  try {
-    const page = await listSourceResources({ resource_type: 'nas', page_size: 500 })
-    existingNasNamesForAdd.value = page.results.map((row) => row.name)
-  } catch {
-    existingNasNamesForAdd.value = nasRows.value.map((row) => row.name)
-  }
+async function nasNameExists(name: string, signal?: AbortSignal) {
+  const page = await listSourceResources({ resource_type: 'nas', name, page: 1, page_size: 1 }, { signal })
+  return page.count > 0
 }
+
+watch([nasAddOpen, nasEffectiveName], ([open, name], _, onCleanup) => {
+  conflictingNasName.value = ''
+  if (!open || !name) return
+  const controller = new AbortController()
+  const timer = setTimeout(async () => {
+    try {
+      if (await nasNameExists(name, controller.signal) && !controller.signal.aborted) conflictingNasName.value = name
+    } catch {
+      return
+    }
+  }, 300)
+  onCleanup(() => { clearTimeout(timer); controller.abort() })
+})
 
 function clearNasBindNodeError() {
   nasBindNodeError.value = ''
@@ -2069,7 +2061,6 @@ function openNasAdd() {
   nasNfsExport.value = ''
   nasNfsOptions.value = defaultNasMountOptions('smb')
   void loadProxyNodes()
-  void loadExistingNasNamesForAdd()
   void nextTick(() => nasAddShellRef.value?.focus())
 }
 
@@ -2123,13 +2114,14 @@ async function nasSubmit() {
   if (!nasDir.value.trim() || !nasDirTouched.value) {
     nasDir.value = generatedNasDir.value
   }
-  if (hasNasSourceNameConflict(existingNasNamesForAdd.value, nasName.value)) {
-    ElMessage.warning({ message: t('protection.sourceResources.nasErrNameExists', { name: nasName.value }), grouping: true })
-    return
-  }
   if (!validateNasForm()) return
   nasBusy.value = true
   try {
+    if (await nasNameExists(nasName.value.trim())) {
+      conflictingNasName.value = nasName.value.trim()
+      ElMessage.warning({ message: t('protection.sourceResources.nasErrNameExists', { name: nasName.value }), grouping: true })
+      return
+    }
     const payload = buildNasSourceCreatePayload({
       name: nasName.value.trim(),
       protocol: nasProtocol.value,
@@ -2285,15 +2277,6 @@ onMounted(async () => {
     document.addEventListener('visibilitychange', handleProxyDeployReturnVisibility)
   }
 
-  const signal = pageRequests.nextSignal('source-init')
-  try {
-    await Promise.all([loadProxyNodes(signal), loadAgentNodes(signal)])
-  } catch (e) {
-    if (!pageRequests.isAbortError(e)) throw e
-  } finally {
-    pageRequests.releaseSignal('source-init', signal)
-  }
-  if (signal.aborted) return
   await load()
   lifecycleOps.restorePersisted()
   refreshPendingSourceOps()
@@ -3248,7 +3231,9 @@ onUnmounted(() => {
       v-model:node-id="rebindNodeId"
       :selected-count="selectedNas.length"
       :offline-proxy-count="offlineProxyNodeCount"
-      :proxy-nodes-refreshing="proxyNodesRefreshing"
+      :proxy-nodes-refreshing="proxyNodesRefreshing || proxyOptionsLoading"
+      :proxy-search="searchProxyNodes"
+      :proxy-load-more="loadMoreProxyNodes"
       :online-proxy-nodes="onlineProxyNodes"
       :saving="nasRebindBusy"
       @refresh="refreshProxyNodesManually"
@@ -3273,6 +3258,9 @@ onUnmounted(() => {
       v-model="detailOpen"
       :resource="detail"
       :proxy-nodes="proxyNodes"
+      :proxy-search="searchProxyNodes"
+      :proxy-load-more="loadMoreProxyNodes"
+      :proxy-loading="proxyOptionsLoading"
       @updated="onNasDetailUpdated"
     />
 
@@ -3386,7 +3374,9 @@ onUnmounted(() => {
                 :dir="nasDir"
                 :generated-dir="generatedNasDir"
                 :proxy-nodes="proxyNodes"
-                :proxy-nodes-refreshing="proxyNodesRefreshing"
+                :proxy-nodes-refreshing="proxyNodesRefreshing || proxyOptionsLoading"
+                :proxy-search="searchProxyNodes"
+                :proxy-load-more="loadMoreProxyNodes"
                 :busy="nasBusy"
                 @update:protocol="nasProtocol = $event"
                 @update:smb-server="nasSmbServer = $event"

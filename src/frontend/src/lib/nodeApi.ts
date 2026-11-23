@@ -9,7 +9,7 @@ import type {
   NodeOperationBatchStartResult,
   NodeOperationStartResult,
 } from '../types/nodeLifecycle'
-import type { ApiNode, ApiNodeToken, CreateNodeTokenBody, NodeInstallationMode, NodeRole, NodeStatus, UpdateNodeBody } from '../types/node'
+import type { ApiNode, ApiNodeToken, Availability, CreateNodeTokenBody, NodeInstallationMode, NodeRole, NodeStatus, UpdateNodeBody } from '../types/node'
 
 const API_BASE = import.meta.env.VITE_API_BASE?.toString() || ''
 
@@ -45,10 +45,22 @@ export async function listAllNodes(
   return asList<ApiNode>(data)
 }
 
+export type NodeStatistics = {
+  total: number
+  online: number
+  offline: number
+  by_role: Record<string, number>
+}
+
+export async function getNodeStatistics(init?: RequestInit): Promise<NodeStatistics> {
+  return unwrapApiPayload<NodeStatistics>(await api<unknown>('/api/v1/node/nodes/statistics/', init))
+}
+
 export async function listNodesPaged(
   params: {
     role?: NodeRole
     status?: NodeStatus
+    availability?: Availability
     page?: number
     page_size?: number
     search?: string
@@ -59,6 +71,7 @@ export async function listNodesPaged(
   const qs = new URLSearchParams()
   if (params.role) qs.set('role', params.role)
   if (params.status) qs.set('status', params.status)
+  if (params.availability) qs.set('availability', params.availability)
   if (params.search?.trim()) qs.set('search', params.search.trim())
   if (params.search_field?.trim()) qs.set('search_field', params.search_field.trim())
   qs.set('page', String(params.page ?? 1))

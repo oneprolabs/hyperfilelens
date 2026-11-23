@@ -72,6 +72,7 @@ export type SourceResource = {
   /** Bound node lifecycle state; use bound_node_availability for connectivity. */
   bound_node_status?: string | null
   bound_node_availability?: 'online' | 'offline' | null
+  bound_node_ip?: string | null
   mount_status?: string
   mount_point?: string
   status?: string
@@ -280,18 +281,20 @@ export async function listSourceTagPage(page: number, pageSize: number, init?: R
   }))
 }
 
-export async function listSourceTagFilterOptions(init?: RequestInit): Promise<{
-  tags: SourceTag[]
-  untaggedSourceCount: number
-}> {
-  const data = unwrapApiPayload<{
-    results: SourceTag[]
-    untagged_source_count?: number
-  }>(await api<unknown>(`${tagsBase}/`, { ...init, headers: orgHeaders() }))
-  return {
-    tags: data.results,
-    untaggedSourceCount: data.untagged_source_count || 0,
-  }
+export async function listSourceTagOptions(
+  view: 'options' | 'filter', init?: RequestInit,
+): Promise<SourceTag[]> {
+  const data = unwrapApiPayload<{ results: SourceTag[] }>(
+    await api<unknown>(`${tagsBase}/?view=${view}`, { ...init, headers: orgHeaders() }),
+  )
+  return data.results
+}
+
+export async function getUntaggedSourceCount(init?: RequestInit): Promise<number> {
+  const data = unwrapApiPayload<{ untagged_source_count: number }>(
+    await api<unknown>(`${tagsBase}/?view=untagged`, { ...init, headers: orgHeaders() }),
+  )
+  return data.untagged_source_count
 }
 
 export async function createSourceTag(input: SourceTagInput): Promise<SourceTag> {

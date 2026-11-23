@@ -14,9 +14,8 @@ import {
 } from '../../lib/storageRepositoryApi'
 import { listBackupSourceDirectories, type BackupSourceDirectoryEntry, type BackupSourceDirectoryList } from '../../lib/sourceApi'
 import { shouldAutoExpandRefreshedDirectory } from '../../lib/backupSourceDirectoryTree'
-import { listAllNodes } from '../../lib/nodeApi'
+import { useProxyNodeOptions } from '../../composables/useProxyNodeOptions'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
-import type { ApiNode } from '../../types/node'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
 import {
   REPOSITORY_QUOTA_UNITS,
@@ -41,6 +40,7 @@ const busy = ref(false)
 const pageRef = ref<HTMLElement | null>(null)
 const { clear: clearFieldError, errors, validate: validateInline } = useInlineFormValidation(pageRef)
 const proxyNodeId = ref<number | undefined>(undefined)
+const { proxyNodes, proxyOptionsLoading, loadProxyNodes, searchProxyNodes, loadMoreProxyNodes } = useProxyNodeOptions(() => proxyNodeId.value, true)
 const proxyNodeDir = ref('')
 const repoName = ref('')
 const quota = ref(0)
@@ -50,7 +50,6 @@ const quotaAlertThreshold = ref<number | undefined>(undefined)
 const useTreeSelect = ref(true)
 const proxyDirTreeRef = ref<InstanceType<typeof ElTree>>()
 const proxyNodesRefreshing = ref(false)
-const proxyNodes = ref<ApiNode[]>([])
 
 const availableProxyNodes = computed(() =>
   proxyNodes.value.filter((node) => node.role === 'proxy' && node.availability === 'online'),
@@ -402,10 +401,6 @@ async function refreshProxyDirectory(data: TreeNode) {
   }
 }
 
-async function loadProxyNodes() {
-  proxyNodes.value = await listAllNodes({ role: 'proxy' }).catch(() => [])
-}
-
 async function refreshProxyNodesManually() {
   proxyNodesRefreshing.value = true
   try {
@@ -417,7 +412,7 @@ async function refreshProxyNodesManually() {
 }
 
 onMounted(() => {
-  void loadProxyNodes()
+  searchProxyNodes('')
 })
 
 /* ---------- validation ---------- */
@@ -686,6 +681,10 @@ watch(enableQuotaAlert, (enabled) => {
                       class="add-proxy-fs-select-row__select"
                       :placeholder="t('repositoriesPage.phProxyNode')"
                       filterable
+                      remote
+                      :remote-method="searchProxyNodes"
+                      @end-reached="loadMoreProxyNodes"
+                      :loading="proxyOptionsLoading"
                       @change="clearFieldError('proxyNode')"
                     >
                       <ElOption

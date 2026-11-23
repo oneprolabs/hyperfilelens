@@ -159,6 +159,16 @@ class SnapshotBrowserApiTests(TestCase):
     def _headers(self):
         return {"HTTP_X_ORG_KEY": self.org.key}
 
+    def test_snapshot_search_matches_source_repository_and_directory_names(self):
+        for term in (self.agent.name, self.repository.name, "/data/projects"):
+            with self.subTest(term=term):
+                response = self.client.get(
+                    "/api/v1/protection/backup-source-snapshots/",
+                    {"search": term, "page_size": 1}, secure=True, **self._headers(),
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual([row["id"] for row in response.data["results"]], [self.snapshot.id])
+
     def test_snapshot_list_source_address_requires_staff_access(self):
         self.agent.ip_address = "192.0.2.10"
         self.agent.save(update_fields=["ip_address", "updated_at"])

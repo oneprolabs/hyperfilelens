@@ -7,7 +7,8 @@ import {
   listBackupSelectableSources,
   setBackupSourcePipelineStep,
   listSourcesForTag,
-  listSourceTagFilterOptions,
+  listSourceTagOptions,
+  getUntaggedSourceCount,
   listSourceTagPage,
   createSourceTag,
   bulkUpdateSourceTags,
@@ -60,16 +61,17 @@ describe('source tag editing', () => {
   })
 
   it('loads tag totals and the visible untagged source count for filters', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      results: [{ id: 2, name: 'Production', description: '', color: 'blue', source_count: 5 }],
-      untagged_source_count: 12,
-    }), { headers: { 'Content-Type': 'application/json' } }))
+    const tags = [{ id: 2, name: 'Production', description: '', color: 'blue', source_count: 5 }]
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(
+      url.endsWith('view=untagged') ? { untagged_source_count: 12 } : { results: tags },
+    ), { headers: { 'Content-Type': 'application/json' } }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(listSourceTagFilterOptions()).resolves.toEqual({
-      tags: [{ id: 2, name: 'Production', description: '', color: 'blue', source_count: 5 }],
-      untaggedSourceCount: 12,
-    })
+    await expect(listSourceTagOptions('filter')).resolves.toEqual(tags)
+    await expect(getUntaggedSourceCount()).resolves.toBe(12)
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/v1/source/tags/?view=filter', '/api/v1/source/tags/?view=untagged',
+    ])
   })
 
   it('submits name, description, and palette color in both add and edit', async () => {

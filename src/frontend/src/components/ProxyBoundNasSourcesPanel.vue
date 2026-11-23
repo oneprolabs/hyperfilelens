@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { getSourceResource, listSourceResources, type SourceResource } from '../lib/sourceApi'
-import { listAllNodes } from '../lib/nodeApi'
+import { getNode } from '../lib/nodeApi'
+import { useProxyNodeOptions } from '../composables/useProxyNodeOptions'
 import { usePageRequestScope } from '../composables/usePageRequestScope'
 import { useDrawerTableMaxHeight } from '../composables/useDrawerTableMaxHeight'
 import type { ApiNode } from '../types/node'
 import NasSourceListTable from './NasSourceListTable.vue'
+import HflPagination from './HflPagination.vue'
 import NasSourceDetailDrawer from '../pages/protection/components/NasSourceDetailDrawer.vue'
 
 const props = defineProps<{
@@ -15,17 +17,22 @@ const props = defineProps<{
 
 const requests = usePageRequestScope()
 const rows = ref<SourceResource[]>([])
-const proxyNodes = ref<ApiNode[]>([])
+const page = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const boundProxy = ref<ApiNode[]>([])
 const loading = ref(false)
 const detailOpen = ref(false)
 const detail = ref<SourceResource | null>(null)
+const { proxyNodes, proxyOptionsLoading, searchProxyNodes, loadMoreProxyNodes } = useProxyNodeOptions(() => detail.value?.bound_node ?? undefined, true)
 const { tableMaxHeight, containerRef: tableRef } = useDrawerTableMaxHeight()
 
 async function loadProxyNodes(signal?: AbortSignal) {
   try {
-    proxyNodes.value = await listAllNodes({ role: 'proxy' }, { signal })
+    const node = await getNode(props.nodeId, { signal })
+    if (!signal?.aborted) boundProxy.value = [node]
   } catch {
-    proxyNodes.value = []
+    if (!signal?.aborted) boundProxy.value = []
   }
 }
 
@@ -34,12 +41,15 @@ async function loadRows(signal?: AbortSignal) {
     {
       bound_node_id: props.nodeId,
       resource_type: 'nas',
-      page: 1,
-      page_size: 500,
+      page: page.value,
+      page_size: pageSize.value,
     },
     { signal },
   )
-  rows.value = list.results
+  if (!signal?.aborted) {
+    rows.value = list.results
+    total.value = list.count
+  }
 }
 
 async function refresh() {
@@ -67,6 +77,7 @@ async function openDetail(row: SourceResource) {
     detail.value = row
   }
   detailOpen.value = true
+  searchProxyNodes('')
 }
 
 function onDetailUpdated(resource: SourceResource) {
@@ -75,10 +86,14 @@ function onDetailUpdated(resource: SourceResource) {
 }
 
 watch(
-  () => [props.active, props.nodeId] as const,
-  ([active, nodeId]) => {
+  () => [props.active, props.nodeId, page.value, pageSize.value] as const,
+  ([active, nodeId], previous) => {
     if (!active || nodeId <= 0) {
       requests.abortScope('proxy-bound-nas')
+      return
+    }
+    if (previous && previous[1] !== nodeId && page.value !== 1) {
+      page.value = 1
       return
     }
     void refresh()
@@ -92,16 +107,26 @@ watch(
     <NasSourceListTable
       ref="tableRef"
       :rows="rows"
-      :proxy-nodes="proxyNodes"
+      :proxy-nodes="boundProxy"
       :loading="loading"
       :max-height="tableMaxHeight"
       @row-click="openDetail"
+    />
+    <HflPagination
+      v-if="total > 0"
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      @update:page-size="page = 1"
     />
     <NasSourceDetailDrawer
       v-if="detailOpen"
       v-model="detailOpen"
       :resource="detail"
       :proxy-nodes="proxyNodes"
+      :proxy-search="searchProxyNodes"
+      :proxy-load-more="loadMoreProxyNodes"
+      :proxy-loading="proxyOptionsLoading"
       @updated="onDetailUpdated"
     />
   </div>

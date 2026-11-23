@@ -19,6 +19,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
     )
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     bound_node_name = serializers.CharField(source="bound_node.name", read_only=True, allow_null=True)
+    bound_node_ip = serializers.CharField(source="bound_node.ip_address", read_only=True, allow_null=True)
     bound_node_status = serializers.SerializerMethodField()
     bound_node_availability = serializers.SerializerMethodField()
     requires_mount = serializers.SerializerMethodField()
@@ -42,6 +43,7 @@ class SourceResourceSerializer(serializers.ModelSerializer):
             "credentials",
             "bound_node",
             "bound_node_name",
+            "bound_node_ip",
             "bound_node_status",
             "bound_node_availability",
             "mount_status",
@@ -150,6 +152,7 @@ class SourceResourceListSerializer(SourceResourceSerializer):
             "config",
             "bound_node",
             "bound_node_name",
+            "bound_node_ip",
             "bound_node_status",
             "bound_node_availability",
             "mount_status",

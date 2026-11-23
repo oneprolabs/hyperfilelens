@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from uuid import UUID
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Q
 from django.http import JsonResponse
 from django.utils.dateparse import parse_datetime
 from rest_framework import status, viewsets
@@ -78,7 +80,25 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {"resource_id": "resource_id must be an integer."}
             ) from exc
         raw_details = None
-        if (params.get("search") or "").strip() and not getattr(
+        raw_uuids = params.get("task_uuids", "") if self.action == "list" else ""
+        task_uuids = []
+        if raw_uuids:
+            values = raw_uuids.split(",")
+            if len(values) > 100:
+                raise ValidationError({"task_uuids": "Provide at most 100 task UUIDs."})
+            try:
+                task_uuids = [UUID(value.strip()) for value in values]
+            except ValueError as exc:
+                raise ValidationError({"task_uuids": "Expected valid task UUIDs."}) from exc
+        config_id = None
+        if self.action == "list" and "backup_config_id" in params:
+            try:
+                config_id = int(params["backup_config_id"])
+                if not 0 < config_id <= 2**63 - 1:
+                    raise ValueError
+            except ValueError as exc:
+                raise ValidationError({"backup_config_id": "Provide a positive configuration ID."}) from exc
+        if ((params.get("search") or "").strip() or config_id is not None) and not getattr(
             self.request, "hfl_support_readonly", False,
         ):
             from apps.iam.query_authorization import request_authorization
@@ -113,11 +133,21 @@ class TaskViewSet(viewsets.ModelViewSet):
             terminal_only=(params.get("terminal_only") or "").strip().lower() == "true",
             collapse_replacements=(
                 self.action == "list"
+                and not task_uuids
                 and not params.get("finished_after")
                 and not params.get("finished_before")
                 and (params.get("terminal_only") or "").strip().lower() != "true"
             ),
         )
+        if task_uuids:
+            queryset = queryset.filter(task_uuid__in=task_uuids)
+        if config_id is not None:
+            queryset = queryset.filter(
+                Q(request_payload__backup_config_id=config_id)
+                | Q(request_payload__backup_config_id=str(config_id))
+            )
+            if raw_details is not None:
+                queryset = queryset.filter(pk__in=raw_details.order_by().values("pk"))
         return filter_task_queryset(self.request, queryset)
 
     def get_object(self):

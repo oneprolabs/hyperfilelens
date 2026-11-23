@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Exists, OuterRef, Q
 from django.utils.dateparse import parse_datetime
@@ -310,6 +312,14 @@ class BackupSourceSnapshotViewSet(
             ordering=params.get("ordering") or None,
         )
         snapshot_id = _int_query_param(params.get("snapshot_id"), "snapshot_id")
+        task_uuids = _csv_query_param(params.get("task_uuids"))
+        if task_uuids:
+            if len(task_uuids) > 100:
+                raise ValidationError({"task_uuids": "Provide at most 100 task UUIDs."})
+            try:
+                queryset = queryset.filter(task_uuid__in=[UUID(value) for value in task_uuids])
+            except ValueError as exc:
+                raise ValidationError({"task_uuids": "Expected valid task UUIDs."}) from exc
         if snapshot_id is not None:
             queryset = queryset.filter(id=snapshot_id)
         exclude_snapshot_id = _int_query_param(

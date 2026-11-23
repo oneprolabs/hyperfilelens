@@ -2,7 +2,9 @@ import copy
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from types import SimpleNamespace
 from unittest import mock
@@ -2378,6 +2380,44 @@ class StorageRepositoryApiTests(TestCase):
         rows = response.data["data"]["list"]
         row = next(item for item in rows if item["id"] == repo.id)
         self.assertEqual(row["associated_source_count"], 2)
+
+    def test_dashboard_summary_counts_shared_storage_once(self):
+        Repository.objects.bulk_create([
+            Repository(organization_id=self.org.id, name=name, repo_type=Repository.Type.NAS,
+                       storage_pool_key="shared", storage_total_bytes=100,
+                       storage_used_bytes=used, storage_available_bytes=100 - used,
+                       estimated_usage_bytes=10)
+            for name, used in (("first", 40), ("second", 50))
+        ])
+        response = self.client.get("/api/v1/storage/repositories/dashboard-summary/", **self._headers())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        summary = response.data
+        self.assertEqual(summary["capacityBytes"], 100)
+        self.assertEqual(summary["storageUsedBytes"], 50)
+        self.assertEqual(summary["availableBytes"], 50)
+        self.assertEqual(summary["usedBytes"], 20)
+        self.assertEqual(summary["repoCount"], 2)
+
+    def test_associated_online_counts_batch_1200_source_nodes(self):
+        from apps.storage.repositories.serializers import _associated_source_online_counts
+
+        repo = Repository.objects.create(
+            organization_id=self.org.id, name="batch-online", repo_type=Repository.Type.NAS,
+        )
+        nodes = Node.objects.bulk_create([
+            Node(organization=self.org, role=Node.Role.AGENT, name=f"batch-agent-{index}")
+            for index in range(1200)
+        ])
+        BackupConfig.objects.bulk_create([
+            BackupConfig(organization_id=self.org.id, repository_id=repo.id, name=node.name,
+                         source_type="agent", source_ref_id=node.id)
+            for node in nodes
+        ])
+        with mock.patch("apps.storage.repositories.serializers.agent_connection_status", return_value="online"):
+            with CaptureQueriesContext(connection) as queries:
+                counts = _associated_source_online_counts(self.org.id, [repo.id])
+        self.assertEqual(counts[repo.id], 1200)
+        self.assertEqual(len(queries), 2)
 
     def test_delete_repository_with_backup_configs_is_rejected(self):
         repo = Repository.objects.create(

@@ -83,7 +83,7 @@ _SEARCH_FIELDS = {
     "source_hostname": "source_hostname",
     "source_ip": "source_ip",
 }
-_QUERY_MODES = {"legacy", "shadow", "pipeline"}
+_QUERY_MODES = {"auto", "legacy", "shadow", "pipeline"}
 logger = logging.getLogger(__name__)
 
 
@@ -1444,7 +1444,14 @@ def _pipeline_queryset(
             Q(source_kind="agent", ref_id__in=allowed_source_ids["agent"])
             | Q(source_kind="nas", ref_id__in=allowed_source_ids["nas"])
         )
-    if pipeline_step in PipelineStep.VALID:
+    if pipeline_step == PipelineStep.READY:
+        configured = BackupConfig.objects.filter(
+            organization_id=organization_id,
+            source_type=OuterRef("source_kind"),
+            source_ref_id=OuterRef("ref_id"),
+        )
+        queryset = queryset.filter(Q(step=PipelineStep.READY) | Exists(configured))
+    elif pipeline_step in PipelineStep.VALID:
         queryset = queryset.filter(step=pipeline_step)
     if source_type:
         source_kind = (
@@ -1646,6 +1653,9 @@ def _list_pipeline_backup_selectable_sources(
         queryset, fields=("id", "source_kind", "ref_id", "step"),
         page=page, page_size=page_size,
     )
+    if filters.get("pipeline_step") == PipelineStep.READY:
+        for row in rows:
+            row["step"] = PipelineStep.READY
     entries = [SimpleNamespace(**row) for row in rows]
     return _materialize_pipeline_page(
         organization_id=organization_id,
@@ -1800,9 +1810,29 @@ def _list_legacy_backup_selectable_sources(
 
 def _query_mode() -> str:
     mode = str(
-        getattr(settings, "SOURCE_BACKUP_SELECTABLE_QUERY_MODE", "legacy") or "legacy"
+        getattr(settings, "SOURCE_BACKUP_SELECTABLE_QUERY_MODE", "auto") or "auto"
     ).lower()
     return mode if mode in _QUERY_MODES else "legacy"
+
+
+def _pipeline_has_live_source_coverage(organization_id: int) -> bool:
+    entries = SourceBackupPipelineEntry.objects.filter(
+        organization_id=organization_id, is_deleted=False,
+    )
+    live_agents = Node.objects.filter(
+        organization_id=organization_id, role=NodeRole.AGENT, is_deleted=False,
+    )
+    live_nas = SourceResource.objects.filter(
+        organization_id=organization_id, resource_type=ResourceType.NAS, is_deleted=False,
+    )
+    return not (
+        live_agents.filter(~Exists(entries.filter(source_kind="agent", ref_id=OuterRef("pk")))).exists()
+        or live_nas.filter(~Exists(entries.filter(source_kind="nas", ref_id=OuterRef("pk")))).exists()
+        or entries.filter(
+            Q(source_kind="agent") & ~Exists(live_agents.filter(pk=OuterRef("ref_id")))
+            | Q(source_kind="nas") & ~Exists(live_nas.filter(pk=OuterRef("ref_id")))
+        ).exists()
+    )
 
 
 def _ordered_id_digest(items: list[dict[str, Any]]) -> str:
@@ -1872,6 +1902,8 @@ def list_backup_selectable_sources(
         "config_scope": config_scope,
     }
     mode = _query_mode()
+    if mode == "auto":
+        mode = "pipeline" if _pipeline_has_live_source_coverage(organization_id) else "legacy"
     BACKUP_SELECTABLE_QUERY_REQUESTS.labels(mode=mode).inc()
     if mode == "pipeline":
         started = time.monotonic()

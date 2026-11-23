@@ -8,6 +8,8 @@ from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import CharField, Q, Value
+from django.db.models.functions import Cast, Concat
 from django.utils import timezone
 
 from apps.audit.constants import AuditResult
@@ -1534,6 +1536,10 @@ def compute_node_lifecycle(*, org: Organization | None, node: Node) -> dict[str,
     remove_task = _latest_lifecycle_task(org=org, node=node, kind=LIFECYCLE_KIND_REMOVE)
     upgrade_task = _latest_lifecycle_task(org=org, node=node, kind=LIFECYCLE_KIND_UPGRADE)
     candidates = [task for task in (remove_task, upgrade_task) if task is not None]
+    return _lifecycle_from_tasks(org=org, node=node, candidates=candidates)
+
+
+def _lifecycle_from_tasks(*, org: Organization | None, node: Node, candidates: list[NodeTask]) -> dict[str, Any] | None:
     if not candidates:
         return None
 
@@ -1546,6 +1552,24 @@ def compute_node_lifecycle(*, org: Organization | None, node: Node) -> dict[str,
     if latest.kind == _LIFECYCLE_TASK_KINDS[LIFECYCLE_KIND_REMOVE]:
         return _remove_lifecycle_payload(node=node, task=latest)
     return _upgrade_lifecycle_payload(org=org, node=node, task=latest)
+
+
+def agent_lifecycles_for_list(*, org: Organization, node_ids: list[int]) -> dict[int, dict[str, Any] | None]:
+    nodes = NodeTask.objects.filter(
+        organization_id=owner_id(org), node_id__in=node_ids,
+        correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+    ).select_related("parent_task", "node")
+    matching = Q()
+    for kind, task_kind in _LIFECYCLE_TASK_KINDS.items():
+        matching |= Q(kind=task_kind, correlation_id=Concat(Value(f"{kind}:"), Cast("node_id", CharField())))
+    latest = nodes.filter(matching).order_by("node_id", "kind", "-created_at", "-id").distinct("node_id", "kind")
+    by_node: dict[int, list[NodeTask]] = {}
+    for task in latest:
+        by_node.setdefault(task.node_id, []).append(task)
+    return {
+        node_id: _lifecycle_from_tasks(org=org, node=tasks[0].node, candidates=tasks)
+        for node_id, tasks in by_node.items()
+    }
 
 
 def advance_node_lifecycle(

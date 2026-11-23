@@ -119,10 +119,10 @@ describe('backup configuration fast transition', () => {
   })
 
   it('preserves successful state when background reconciliation fails', () => {
-    const refresh = sourceBetween(page, 'async function refreshBackupConfigs(', 'function displayNameForSource')
+    const refresh = sourceBetween(page, 'async function refreshSelectedBackupConfigs(', 'function displayNameForSource')
     const reconcile = sourceBetween(page, 'function reconcileCreatedBackupConfigs', 'function finishCreateAndGoToStep3')
 
-    expect(refresh).toContain('if (!options.preserveOnError)')
+    expect(refresh.indexOf('await listBackupSelectableSources')).toBeLessThan(refresh.indexOf('backupConfigRows.value = details'))
     expect(reconcile).toContain('preserveExpandedState: true')
   })
 
@@ -160,17 +160,16 @@ describe('backup configuration fast transition', () => {
   it('self-heals an empty Step 3 after a cancelled or failed first load', () => {
     expect(page).toContain('const step3InitialLoadPending = ref(initialFlowMainStep === 2)')
     expect(page).toContain('if (step3InitialLoadPending.value) return true')
-    expect(page).toContain('if (step3SelectableRows.value.length === 0)')
+    expect(page).toContain('if (step3SelectableRows.value.length === 0 || resetTrackedIds.length || provisionTracked)')
     expect(page).toContain('await loadStep3Selectable({ signal })')
     expect(page).toContain('syncStep3AutoRefresh()')
   })
 
   it('does not erase repository metadata when an auxiliary refresh fails', () => {
-    const refresh = sourceBetween(page, 'async function refreshBackupConfigs(', 'function displayNameForSource')
-
+    const refresh = sourceBetween(page, 'async function ensureRepositoryDetailsForConfigs(', 'function backupSelectableRequestParams')
     expect(refresh).toContain('return null')
-    expect(refresh).toContain('if (repositories)')
-    expect(page).toContain('refreshBackupConfigs(signal, { preserveOnError: true })')
+    expect(refresh).toContain('new Map(repositoryById.value)')
+    expect(refresh).toContain('if (repo) next.set(repo.id, repo)')
   })
 
   it('waits for created repository and binding details before entering Step 3', () => {

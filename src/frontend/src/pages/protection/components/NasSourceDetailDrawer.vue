@@ -63,6 +63,9 @@ const props = defineProps<{
   modelValue: boolean
   resource: SourceResource | null
   proxyNodes: ApiNode[]
+  proxySearch?: (search: string) => void
+  proxyLoadMore?: (direction: string) => void
+  proxyLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -932,8 +935,12 @@ onUnmounted(() => {
                         size="small"
                         class="hfl-detail-inline-edit__input"
                         filterable
+                        :remote="Boolean(proxySearch)"
+                        :remote-method="proxySearch"
+                        @end-reached="proxyLoadMore?.($event)"
+                        :loading="proxyLoading"
                         fit-input-width
-                        :disabled="saving || onlineProxyNodes.length === 0"
+                        :disabled="saving || (!proxySearch && onlineProxyNodes.length === 0)"
                         popper-class="nas-detail-proxy-select-popper"
                         :placeholder="t('protection.sourceResources.selectSourceProxy')"
                       >

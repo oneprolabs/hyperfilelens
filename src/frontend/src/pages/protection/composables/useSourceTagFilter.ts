@@ -1,15 +1,16 @@
-import { onMounted, onUnmounted, ref, type Ref } from 'vue'
-import { listSourceTagFilterOptions, type SourceTag } from '../../../lib/sourceApi'
+import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
+import { getUntaggedSourceCount, listSourceTagOptions, type SourceTag } from '../../../lib/sourceApi'
 
 export const SOURCE_TAG_FILTER_LIMIT = 50
 
 /** Keep the filter catalog authoritative without accepting stale requests. */
-export function useSourceTagFilter(selectedIds: Ref<number[]>, draftIds: Ref<number[]>) {
+export function useSourceTagFilter(selectedIds: Ref<number[]>, draftIds: Ref<number[]>, open: Ref<boolean>) {
   const availableSourceTags = ref<SourceTag[]>([])
-  const untaggedSourceCount = ref(0)
+  const untaggedSourceCount = ref<number | null>(null)
   const tagFilterLoading = ref(false)
   const tagFilterError = ref(false)
   let controller: AbortController | null = null
+  let countController: AbortController | null = null
   let requestId = 0
   let disposed = false
 
@@ -25,7 +26,8 @@ export function useSourceTagFilter(selectedIds: Ref<number[]>, draftIds: Ref<num
   }
 
   async function refreshTagFilterOptions() {
-    if (disposed) return
+    if (disposed || (!open.value && !selectedIds.value.length)) return
+    if (open.value) void refreshUntaggedCount()
     const request = ++requestId
     controller?.abort()
     controller = new AbortController()
@@ -33,11 +35,10 @@ export function useSourceTagFilter(selectedIds: Ref<number[]>, draftIds: Ref<num
     tagFilterLoading.value = true
     tagFilterError.value = false
     try {
-      const result = await listSourceTagFilterOptions({ signal })
+      const tags = await listSourceTagOptions('filter', { signal })
       if (disposed || request !== requestId) return
-      availableSourceTags.value = result.tags
-      untaggedSourceCount.value = result.untaggedSourceCount
-      const validIds = new Set(result.tags.map((tag) => tag.id))
+      availableSourceTags.value = tags
+      const validIds = new Set(tags.map((tag) => tag.id))
       const selected = selectedIds.value.filter((id) => validIds.has(id))
       // Avoid triggering source reloads when the selection did not change.
       if (selected.length !== selectedIds.value.length) selectedIds.value = selected
@@ -49,13 +50,35 @@ export function useSourceTagFilter(selectedIds: Ref<number[]>, draftIds: Ref<num
     }
   }
 
-  function onVisibilityChange() {
-    if (document.visibilityState === 'visible') void refreshTagFilterOptions()
-  }
-  function onFocus() {
-    void refreshTagFilterOptions()
+  async function refreshUntaggedCount() {
+    countController?.abort()
+    countController = new AbortController()
+    const { signal } = countController
+    try {
+      const count = await getUntaggedSourceCount({ signal })
+      if (!signal.aborted) untaggedSourceCount.value = count
+    } catch {
+      if (!signal.aborted) untaggedSourceCount.value = null
+    } finally {
+      if (countController?.signal === signal) countController = null
+    }
   }
 
+  function onVisibilityChange() {
+    if (document.visibilityState === 'visible') onFocus()
+  }
+  function onFocus() {
+    if (!tagFilterLoading.value && !countController) void refreshTagFilterOptions()
+  }
+
+  watch(open, (visible) => {
+    if (visible) void refreshTagFilterOptions()
+    else {
+      countController?.abort()
+      countController = null
+      untaggedSourceCount.value = null
+    }
+  })
   onMounted(() => {
     void refreshTagFilterOptions()
     window.addEventListener('focus', onFocus)
@@ -65,6 +88,7 @@ export function useSourceTagFilter(selectedIds: Ref<number[]>, draftIds: Ref<num
     disposed = true
     requestId += 1
     controller?.abort()
+    countController?.abort()
     window.removeEventListener('focus', onFocus)
     document.removeEventListener('visibilitychange', onVisibilityChange)
   })

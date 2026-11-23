@@ -5,11 +5,14 @@ from collections.abc import Iterable
 from django.db.models import Q, QuerySet
 from django.db.models.functions import Coalesce
 
+from apps.node.models import Node
 from apps.protection.models import (
     BackupConfig,
     BackupSourceSnapshot,
     BackupSourceSnapshotDirectory,
 )
+from apps.source.models import SourceResource
+from apps.storage.repositories.models import Repository
 
 ALLOWED_ORDERING = {
     "created_at",
@@ -112,21 +115,20 @@ def _apply_search(
     query = str(search or "").strip()
     if not query:
         return queryset
-    config_ids = list(
-        BackupConfig.objects.filter(
-            organization_id=organization_id,
-            name__icontains=query,
-        ).values_list("id", flat=True)[:500]
-    )
-    snapshot_ids = list(
-        BackupSourceSnapshotDirectory.objects.filter(
-            organization_id=organization_id,
-            source_path__icontains=query,
-        ).values_list("source_snapshot_id", flat=True)[:500]
-    )
+    named = {"organization_id": organization_id, "name__icontains": query}
+    config_ids = BackupConfig.objects.filter(**named).order_by().values("pk")
+    agent_ids = Node.objects.filter(**named).order_by().values("pk")
+    nas_ids = SourceResource.objects.filter(**named).order_by().values("pk")
+    repository_ids = Repository.objects.filter(**named).order_by().values("pk")
+    snapshot_ids = BackupSourceSnapshotDirectory.objects.filter(
+        organization_id=organization_id, source_path__icontains=query,
+    ).order_by().values("source_snapshot_id")
     return queryset.filter(
         Q(snapshot_uid__icontains=query)
         | Q(backup_config_id__in=config_ids)
+        | Q(repository_id__in=repository_ids)
+        | Q(source_type="agent", source_ref_id__in=agent_ids)
+        | Q(source_type="nas", source_ref_id__in=nas_ids)
         | Q(id__in=snapshot_ids)
     )
 

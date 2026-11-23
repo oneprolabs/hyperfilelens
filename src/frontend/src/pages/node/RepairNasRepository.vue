@@ -15,13 +15,12 @@ import {
   type StorageRepositoryBindingPreflight,
   type StorageRepository,
 } from '../../lib/storageRepositoryApi'
-import { listAllNodes } from '../../lib/nodeApi'
+import { useProxyNodeOptions } from '../../composables/useProxyNodeOptions'
 import {
   NAS_MOUNT_OPTIONS_FOCUS_QUERY,
   SMB_MOUNT_OPTION_EXAMPLES,
 } from '../../lib/nasMountTroubleshooting'
 import { proxyAgentsRoute } from '../../lib/nodeDeployRoutes'
-import type { ApiNode } from '../../types/node'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import NasProxyTopology from './NasProxyTopology.vue'
 import { useInlineFormValidation } from '../../composables/useInlineFormValidation'
@@ -50,7 +49,6 @@ const { clear: clearFieldError, errors, validate: validateInline } = useInlineFo
 const loading = ref(true)
 const loadError = ref('')
 const original = ref<StorageRepository | null>(null)
-const proxyNodes = ref<ApiNode[]>([])
 const proxyNodesRefreshing = ref(false)
 const associatedSourcesCount = ref(0)
 const associatedSourcesLoading = ref(false)
@@ -79,6 +77,7 @@ const quotaAlertEnabled = ref(false)
 const quotaAlertThreshold = ref<number | undefined>(80)
 
 const proxyNodeId = ref<number | undefined>(undefined)
+const { proxyNodes, proxyOptionsLoading, loadProxyNodes, searchProxyNodes, loadMoreProxyNodes } = useProxyNodeOptions(() => proxyNodeId.value, true)
 const initialProxyNodeId = ref<number | null>(null)
 const busyWithBackups = ref(false)
 const bindingPreflight = ref<StorageRepositoryBindingPreflight | null>(null)
@@ -192,13 +191,6 @@ async function loadRepository() {
   }
 }
 
-async function loadProxyNodes() {
-  try {
-    proxyNodes.value = await listAllNodes()
-  } catch {
-    proxyNodes.value = []
-  }
-}
 
 async function loadAssociatedSourceCount() {
   associatedSourcesLoading.value = true
@@ -490,7 +482,7 @@ onBeforeUnmount(() => {
 
 onMounted(async () => {
   attachLeaveGuard()
-  await Promise.all([loadRepository(), loadProxyNodes(), loadAssociatedSourceCount()])
+  await Promise.all([loadRepository().then(() => loadProxyNodes()).catch(() => undefined), loadAssociatedSourceCount()])
   if (shouldFocusMountOptions()) void focusMountOptions()
 })
 </script>
@@ -907,6 +899,10 @@ onMounted(async () => {
                           class="add-nas-select-row__select"
                           :clearable="!isCurrentlyBound"
                           filterable
+                          remote
+                          :remote-method="searchProxyNodes"
+                          @end-reached="loadMoreProxyNodes"
+                          :loading="proxyOptionsLoading"
                           :disabled="proxyBindingBlocked || associatedSourcesLoading"
                           :placeholder="t('repairNasRepo.phBindProxy')"
                         >

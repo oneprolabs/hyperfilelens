@@ -615,7 +615,7 @@ export const en = {
     sideInsight: 'Insights',
     refresh: 'Refresh',
     searchPlaceholder: 'Keywords: ID / name / status / type / severity…',
-    searchHint: 'Lightweight global search: loads lists then filters in the browser. A unified backend search endpoint may follow.',
+    searchHint: 'Searches tasks, nodes, repositories, snapshots, and alerts on the server with paginated results.',
     sectionTasks: 'Tasks',
     sectionNodes: 'Nodes',
     sectionRepos: 'Repositories',

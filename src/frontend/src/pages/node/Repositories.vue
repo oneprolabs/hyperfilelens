@@ -9,7 +9,7 @@ import type { ElTable } from 'element-plus'
 import { api, apiErrorMessage } from '../../lib/api'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import { formatAppDateTime, formatAppTime, parseLocalDateTime } from '../../lib/dateTime'
-import { listAllNodes, type EnrollmentOs } from '../../lib/nodeApi'
+import { type EnrollmentOs } from '../../lib/nodeApi'
 import Modal from '../../components/Modal.vue'
 import ModulePage from '../../components/ModulePage.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
@@ -2260,14 +2260,6 @@ function resetForm() {
   }
 }
 
-async function ensureSourceNodes(signal?: AbortSignal) {
-  if (sourceNodes.value.length > 0) return
-  sourceNodes.value = await listAllNodes(undefined, { signal }).catch((e) => {
-    if (pageRequests.isAbortError(e)) throw e
-    return []
-  })
-}
-
 function goEditS3(row: RepositoryRow) {
   if (!repositoryWritable(row)) return
   drawerDetailOpen.value = false
@@ -2564,8 +2556,6 @@ async function load() {
   busy.value = true
   repositoryListError.value = null
   try {
-    await ensureSourceNodes(signal)
-    if (signal.aborted) return
     const list = await listStorageRepositories({
       origin: 'direct',
       repo_type: repoType,
