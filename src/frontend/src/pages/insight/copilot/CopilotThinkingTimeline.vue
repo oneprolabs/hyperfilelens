@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CheckCircle, Circle, Clock, Loader2, Search, Sparkles, Wrench, XCircle } from 'lucide-vue-next'
@@ -7,6 +7,8 @@ import { formatThinkingStepLabel } from '../../../lib/copilotStreamLabels'
 import type { ThinkingStep } from '../../../composables/useLensRunStream'
 import type { LensChatThinkingStep } from '../../../lib/lensApi'
 import { summarizeThinkingSteps } from './copilotThinkingActivities'
+import { planDuration, recordPlanTiming, type PlanTiming } from './copilotPlanTimings'
+import { copilotExecutionScope } from '../../../lib/copilotExecutionScope'
 
 export type TimelineStep = ThinkingStep | LensChatThinkingStep
 
@@ -16,6 +18,17 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const now = ref(Date.now())
+let timer: ReturnType<typeof setInterval> | undefined
+watch(() => props.live, (live) => {
+  if (timer) clearInterval(timer)
+  timer = undefined
+  if (live) {
+    now.value = Date.now()
+    timer = setInterval(() => { now.value = Date.now() }, 1000)
+  }
+}, { immediate: true })
+onUnmounted(() => { if (timer) clearInterval(timer) })
 
 function stepLabel(step: TimelineStep): string {
   if ('displayMessage' in step && step.displayMessage) {
@@ -128,8 +141,12 @@ const items = computed(() =>
 )
 
 type RuntimeStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped'
-type RuntimeCardItem = { id: string; title: string; detail: string; status: RuntimeStatus; parentId?: string }
-type RuntimeCardRow = RuntimeCardItem & { depth: number }
+type RuntimeCardItem = { id: string; title: string; detail: string; status: RuntimeStatus; parentId?: string; timing?: PlanTiming }
+type RuntimeCardRow = RuntimeCardItem & { depth: number; number: string }
+
+function runtimePlanDuration(item: RuntimeCardItem): string {
+  return planDuration(item.timing, Boolean(props.live) && item.status === 'in_progress', now.value)
+}
 
 function payloadId(payload: Record<string, unknown>, fallback: string) {
   return String(payload.id || payload.uuid || payload.step_id || payload.task_id || fallback)
@@ -151,13 +168,15 @@ function runtimeRows(items: RuntimeCardItem[]): RuntimeCardRow[] {
     byParent.set(parent, bucket)
   }
   const rows: RuntimeCardRow[] = []
-  const visit = (item: RuntimeCardItem, depth: number, path: Set<string>) => {
+  const visit = (item: RuntimeCardItem, depth: number, path: Set<string>, number: string) => {
     if (path.has(item.id)) return
-    rows.push({ ...item, depth })
+    rows.push({ ...item, depth, number })
     const nextPath = new Set(path).add(item.id)
-    for (const child of byParent.get(item.id) || []) visit(child, depth + 1, nextPath)
+    for (const [index, child] of (byParent.get(item.id) || []).entries()) {
+      visit(child, depth + 1, nextPath, `${number}.${index + 1}`)
+    }
   }
-  for (const item of byParent.get(undefined) || []) visit(item, 0, new Set())
+  for (const [index, item] of (byParent.get(undefined) || []).entries()) visit(item, 0, new Set(), String(index + 1))
   return rows
 }
 
@@ -167,6 +186,7 @@ const runtimeCard = computed(() => {
   const activities: RuntimeCardItem[] = []
   const delegated: RuntimeCardItem[] = []
   const outcomes: string[] = []
+  const planRevisions = new Map<string, number>()
   const upsert = (target: RuntimeCardItem[], item: RuntimeCardItem) => {
     const index = target.findIndex((existing) => existing.id === item.id)
     if (index < 0) target.push(item)
@@ -184,18 +204,27 @@ const runtimeCard = computed(() => {
       : ('parentId' in item.step ? item.step.parentId : undefined)
     const isEvent = (name: string) => category === name || category.endsWith(`.${name}`)
     const planItems = payload.steps || payload.items || payload.tasks
+    const scope = copilotExecutionScope(item.step)
     if (isEvent('plan.updated') && Array.isArray(planItems)) {
+      const revision = Number(payload.revision) || 0
+      if (revision < (planRevisions.get(scope) || 0)) continue
+      planRevisions.set(scope, revision)
       for (const [index, raw] of planItems.entries()) {
         if (!raw || typeof raw !== 'object') continue
         const step = raw as Record<string, unknown>
         const title = String(step.title || '').trim()
         if (!title) continue
+        const id = JSON.stringify([scope, payloadId(step, `plan-${index + 1}`)])
+        const parentId = payloadParentId(step)
+        const status = normalizeRuntimeStatus(step.status) || 'pending'
+        const timestamp = 'observedAt' in item.step ? item.step.observedAt : ('ts' in item.step ? item.step.ts : undefined)
         upsert(plan, {
-          id: payloadId(step, `plan-${index + 1}`),
-          parentId: payloadParentId(step),
+          id,
+          parentId: parentId == null ? undefined : JSON.stringify([scope, parentId]),
           title,
           detail: String(step.summary || step.description || ''),
-          status: normalizeRuntimeStatus(step.status) || 'pending',
+          status,
+          timing: recordPlanTiming(plan.find((existing) => existing.id === id)?.timing, status, timestamp),
         })
       }
     } else if (isEvent('stage.updated') || isEvent('stage.started') || isEvent('stage.completed')) {
@@ -217,9 +246,10 @@ const runtimeCard = computed(() => {
         status: normalizeRuntimeStatus(payload.status) || status,
       })
     } else if (item.step.plan || /plan|workflow|task/i.test(category)) {
+      const parentId = stepParentId || payloadParentId(payload)
       upsert(plan, {
-        id: `${item.title}-${item.time || items.value.indexOf(item)}`,
-        parentId: stepParentId || payloadParentId(payload),
+        id: JSON.stringify([scope, `${item.title}-${item.time || items.value.indexOf(item)}`]),
+        parentId: parentId == null ? undefined : JSON.stringify([scope, parentId]),
         title: item.title,
         detail,
         status,
@@ -305,7 +335,7 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
         <div
           v-for="item in runtimeCard.rows.plan"
           :key="`plan-${item.id}`"
-          class="copilot-runtime-card__row"
+          class="copilot-runtime-card__row copilot-runtime-card__row--plan"
           :style="{ '--runtime-depth': item.depth }"
         >
           <span
@@ -313,7 +343,11 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
             :class="`is-${item.status}`"
             aria-hidden="true"
           >{{ runtimeStatusGlyph(item.status) }}</span>
-          <span class="copilot-runtime-card__content"><strong>{{ item.title }}</strong><small v-if="item.detail">{{ item.detail }}</small></span>
+          <span class="copilot-runtime-card__content"><strong><span class="copilot-runtime-card__number">{{ item.number }}.</span> {{ item.title }}</strong><small v-if="item.detail">{{ item.detail }}</small></span>
+          <span
+            v-if="runtimePlanDuration(item)"
+            class="copilot-timeline-time"
+          >{{ runtimePlanDuration(item) }}</span>
         </div>
       </div>
       <div
@@ -469,6 +503,8 @@ function runtimeStatusGlyph(status: RuntimeStatus): string {
 .copilot-runtime-card__status.is-failed { background: var(--el-color-danger); }
 .copilot-runtime-card__content { min-width: 0; display: flex; flex-direction: column; gap: 2px; color: var(--el-text-color-primary); font-size: 12px; }
 .copilot-runtime-card__content small { color: var(--el-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.copilot-runtime-card__row--plan .copilot-runtime-card__content { flex: 1; overflow-wrap: anywhere; }
+.copilot-runtime-card__number { font-variant-numeric: tabular-nums; }
 .copilot-runtime-card__outcome p { margin: 0; color: var(--el-text-color-regular); font-size: 12px; line-height: 1.5; }
 .copilot-runtime-card__outcome p + p { margin-top: 4px; }
 

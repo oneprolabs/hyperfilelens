@@ -115,6 +115,7 @@ jobs:
       - name: Check SourceLens runtime contract
         run: |
           ./tools/quality/test-sourcelens-runtime-contract.sh
+          ./tools/quality/test-sourcelens-build-images.sh
           ./tools/sourcelens/update-runtime-contract.sh --check
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:

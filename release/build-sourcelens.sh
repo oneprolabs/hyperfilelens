@@ -259,9 +259,9 @@ stage_runtime_tree() {
 	backend_ref="$(sourcelens_backend_image_ref)"
 	frontend_ref="$(sourcelens_frontend_image_ref)"
 	lensnode_ref="$(sourcelens_lensnode_image_ref)"
-	upstream_backend_ref="$(sourcelens_upstream_image_ref backend)"
-	upstream_frontend_ref="$(sourcelens_upstream_image_ref frontend)"
-	upstream_lensnode_ref="$(sourcelens_upstream_image_ref lensnode)"
+	upstream_backend_ref="$(sourcelens_build_image_ref backend)"
+	upstream_frontend_ref="$(sourcelens_build_image_ref frontend)"
+	upstream_lensnode_ref="$(sourcelens_build_image_ref lensnode)"
 
 	mkdir -p "${sl_root}/deploy/nginx/certs" "${sl_root}/deploy/nginx/hfl-maintenance" \
 		"${sl_root}/deploy/postgresql/initdb.d" \

@@ -71,6 +71,132 @@ describe('Copilot local submission feedback', () => {
     expect(state.isStreaming).toBe(false)
   })
 
+  it('shows a readable upstream model-stream failure without retrying in HFL', async () => {
+    mocks.streamCopilotRun.mockImplementation(async (_sessionId, _runUuid, emit) => {
+      emit({ type: 'error', error: 'MODEL_STREAM_ERROR' })
+    })
+    await consumeSessionStream(sessionId, 'run-stream-failure')
+    expect(getSessionRunStream(sessionId).streamError).toBe(
+      'The AI model response was interrupted. Try again or choose a different model.',
+    )
+    expect(mocks.streamCopilotRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps upstream live step timestamps without timing a reconnect snapshot', async () => {
+    mocks.streamCopilotRun.mockImplementation(async (_sessionId, _runUuid, emit) => {
+      const event = { event_type: 'plan.updated', payload: { steps: [{ id: 'one', title: 'Search', status: 'in_progress' }] } }
+      emit({ type: 'sync', ts: '2026-11-23T00:00:10Z', steps: [
+        { sequence: 1, detail: { events: [event] } },
+      ] })
+      emit({ type: 'step', ts: '2026-11-23T00:00:15Z', sequence: 2, detail: {
+        events: [{ ...event, payload: { ...event.payload, revision: 2 } }],
+      } })
+    })
+    await consumeSessionStream(sessionId, 'run-timing')
+    const steps = getSessionRunStream(sessionId).thinkingSteps
+    expect(steps).toHaveLength(2)
+    expect(steps[0].observedAt).toBeUndefined()
+    expect(steps[1].observedAt).toBe('2026-11-23T00:00:15Z')
+    const snapshot = steps.map((step) => ({
+      message: step.message, event_type: step.eventType, payload: step.payload,
+    }))
+    applySessionActiveRun(sessionId, 'run-timing', 'running', '', snapshot)
+    expect(getSessionRunStream(sessionId).thinkingSteps[1].observedAt).toBe('2026-11-23T00:00:15Z')
+    applySessionActiveRun(sessionId, 'other-run', 'running', '', snapshot)
+    expect(getSessionRunStream(sessionId).thinkingSteps.every((step) => step.observedAt == null)).toBe(true)
+  })
+
+  it('isolates plan event deduplication, sequence counters and snapshot observations by delegated Run', async () => {
+    const plan = (status: string, revision: number) => ({
+      event_type: 'plan.updated',
+      payload: { revision, steps: [{ id: 'step-1', title: 'Search', status }] },
+    })
+    const source = (run?: string) => run ? {
+      delegated_run_uuid: run, assistant_name: 'Reader', delegated_task: 'Same task',
+    } : {}
+    mocks.streamCopilotRun.mockImplementation(async (_sessionId, _runUuid, emit) => {
+      for (const [run, second] of [[undefined, '00'], ['child-one', '05'], ['child-two', '06']]) {
+        emit({
+          type: 'step', sequence: 1, ...source(run), ts: `2026-11-23T00:00:${second}Z`,
+          detail: { events: [plan('in_progress', 1)] },
+        })
+      }
+      const finished = []
+      for (const [run, second] of [['child-one', '08'], ['child-two', '09'], [undefined, '20']]) {
+        const step = {
+          sequence: 1, ...source(run), ts: `2026-11-23T00:00:${second}Z`,
+          detail: { events: [plan('in_progress', 1), plan('completed', 2)] },
+        }
+        emit({ ...step, type: 'step' })
+        finished.push(step)
+      }
+      emit({ type: 'sync', steps: finished })
+    })
+    await consumeSessionStream(sessionId, 'run-scopes')
+    const steps = getSessionRunStream(sessionId).thinkingSteps
+    expect(steps.map((step) => step.delegatedRunUuid)).toEqual([
+      undefined, 'child-one', 'child-two', 'child-one', 'child-two', undefined,
+    ])
+    expect(steps.map((step) => step.observedAt)).toEqual(
+      ['00', '05', '06', '08', '09', '20'].map((second) => `2026-11-23T00:00:${second}Z`),
+    )
+    const snapshot = steps.map((step) => ({
+      message: step.message, event_type: step.eventType, payload: step.payload,
+      assistant_name: step.assistantName, delegated_task: step.delegatedTask,
+      delegated_run_uuid: step.delegatedRunUuid,
+    }))
+    applySessionActiveRun(sessionId, 'run-scopes', 'running', '', snapshot)
+    expect(getSessionRunStream(sessionId).thinkingSteps.map((step) => step.observedAt))
+      .toEqual(steps.map((step) => step.observedAt))
+    const flattenedHistory = snapshot.map((step) => ({ ...step, delegated_run_uuid: undefined }))
+    applySessionActiveRun(sessionId, 'run-scopes', 'running', '', flattenedHistory)
+    const restored = getSessionRunStream(sessionId).thinkingSteps
+    expect(restored[0].observedAt).toBe('2026-11-23T00:00:00Z')
+    expect(restored.slice(1, 5).every((step) => step.observedAt == null && step.delegatedRunUuid == null)).toBe(true)
+  })
+
+  it('restores delegated identity from flattened history only when the assistant/task match is unambiguous', async () => {
+    mocks.streamCopilotRun.mockImplementation(async (_sessionId, _runUuid, emit) => {
+      for (const [run, task, second] of [['child-one', 'First task', '00'], ['child-two', 'Second task', '05']]) {
+        emit({
+          type: 'step', sequence: 1, delegated_run_uuid: run,
+          assistant_name: 'Reader', delegated_task: task, ts: `2026-11-23T00:00:${second}Z`,
+          detail: { events: [{
+            event_type: 'plan.updated',
+            payload: { revision: 1, steps: [{ id: 'step-1', title: 'Search', status: 'in_progress' }] },
+          }] },
+        })
+      }
+    })
+    await consumeSessionStream(sessionId, 'run-history')
+    const steps = getSessionRunStream(sessionId).thinkingSteps
+    const snapshot = steps.map((step) => ({
+      message: step.message, event_type: step.eventType, payload: step.payload,
+      assistant_name: step.assistantName, delegated_task: step.delegatedTask,
+    }))
+    applySessionActiveRun(sessionId, 'run-history', 'running', '', snapshot)
+    expect(getSessionRunStream(sessionId).thinkingSteps.map((step) => [step.delegatedRunUuid, step.observedAt]))
+      .toEqual(steps.map((step) => [step.delegatedRunUuid, step.observedAt]))
+    applySessionActiveRun(sessionId, 'run-history', 'running', '', [
+      ...snapshot,
+      { ...snapshot[0], payload: { revision: 2, steps: [{ id: 'step-1', title: 'Search', status: 'completed' }] } },
+    ])
+    const completed = getSessionRunStream(sessionId).thinkingSteps[2]
+    expect(completed.delegatedRunUuid).toBe('child-one')
+    expect(completed.observedAt).toBeUndefined()
+    // The incoming history can contain another indistinguishable Run which
+    // this browser never observed. One known candidate must not identify both.
+    applySessionActiveRun(sessionId, 'run-history', 'running', '', [
+      { ...snapshot[0], delegated_run_uuid: 'child-one' },
+      snapshot[0], snapshot[1],
+    ])
+    const restored = getSessionRunStream(sessionId).thinkingSteps
+    expect(restored[0].delegatedRunUuid).toBe('child-one')
+    expect(restored[1].delegatedRunUuid).toBeUndefined()
+    expect(restored[1].observedAt).toBeUndefined()
+    expect(restored[2].delegatedRunUuid).toBe('child-two')
+  })
+
   it('clears provisional feedback when run creation fails', () => {
     beginSessionRunSubmission(sessionId)
     clearSessionRunSubmission(sessionId)

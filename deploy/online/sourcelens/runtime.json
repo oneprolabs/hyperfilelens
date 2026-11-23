@@ -1,31 +1,31 @@
 {
-  "git_commit": "38f2a80583ef977531b41c75c1ef1501016fe5db",
-  "git_ref": "v0.63.4",
+  "git_commit": "f252b5d69c5b13cd1ac5f1ca9f0b0f1265ad9a98",
+  "git_ref": "v0.63.8",
   "images": {
     "backend": {
-      "digest": "sha256:d27eda5549473bc9e24bb1f6b5cc88df193557b29145d2958f0c70f430959f9c",
-      "local_ref": "oneprolabs/sourcelens-backend:0.63.4",
+      "digest": "sha256:69239bf746f9d141f2fd16e53f6fced789e126fab76d50b6ddb93c1e2a3e3ef3",
+      "local_ref": "oneprolabs/sourcelens-backend:0.63.8",
       "sources": {
-        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-backend:0.63.4",
-        "global": "docker.io/oneprolabs/sourcelens-backend:0.63.4"
+        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-backend:0.63.8",
+        "global": "docker.io/oneprolabs/sourcelens-backend:0.63.8"
       }
     },
     "frontend": {
-      "digest": "sha256:ae37a971d4b20a94fc94db915bdfaa5b08994977e20a1fe1382f47ad27a558fa",
-      "local_ref": "oneprolabs/sourcelens-frontend:0.63.4",
+      "digest": "sha256:e19fca71f089636a4b3559a2368740c726e67fc0ded6e62349d516fcfe101fd2",
+      "local_ref": "oneprolabs/sourcelens-frontend:0.63.8",
       "sources": {
-        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-frontend:0.63.4",
-        "global": "docker.io/oneprolabs/sourcelens-frontend:0.63.4"
+        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-frontend:0.63.8",
+        "global": "docker.io/oneprolabs/sourcelens-frontend:0.63.8"
       }
     },
     "lensnode": {
-      "digest": "sha256:f69385e119c33ea037e3edd653680ea0be00f9454b50b1cf6d6041308e8fab40",
-      "local_ref": "oneprolabs/sourcelens-lensnode:0.63.4",
+      "digest": "sha256:a6e67dc89a4e728904106e444427e21090989a27e6b93d58078562bf340a9e03",
+      "local_ref": "oneprolabs/sourcelens-lensnode:0.63.8",
       "sources": {
-        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-lensnode:0.63.4",
-        "global": "docker.io/oneprolabs/sourcelens-lensnode:0.63.4"
+        "cn": "registry.cn-beijing.aliyuncs.com/oneprolabs/sourcelens-lensnode:0.63.8",
+        "global": "docker.io/oneprolabs/sourcelens-lensnode:0.63.8"
       }
     }
   },
-  "version": "0.63.4"
+  "version": "0.63.8"
 }
