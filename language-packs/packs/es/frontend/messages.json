@@ -533,7 +533,7 @@
     "sideInsight": "Insights",
     "refresh": "Actualizar",
     "searchPlaceholder": "Palabras clave: ID / nombre / estado / tipo / gravedad...",
-    "searchHint": "Búsqueda global ligera: carga las listas y aplica los filtros en el navegador. Más adelante se podrá incorporar un endpoint de búsqueda unificado en el backend.",
+    "searchHint": "Busca tareas, nodos, repositorios, instantáneas y alertas en el servidor, con resultados paginados.",
     "sectionTasks": "Tareas",
     "sectionNodes": "Nodos",
     "sectionRepos": "Repositorios",

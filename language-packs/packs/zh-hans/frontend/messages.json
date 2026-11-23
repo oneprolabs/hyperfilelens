@@ -533,7 +533,7 @@
     "sideInsight": "洞察",
     "refresh": "刷新",
     "searchPlaceholder": "输入关键词：ID / 名称 / 状态 / 类型 / 严重级别...",
-    "searchHint": "当前为「轻量全局检索」：先拉取列表，再在浏览器端过滤；后续可升级为后端统一 search endpoint。",
+    "searchHint": "在服务器端搜索任务、节点、仓库、快照和告警，结果分页显示。",
     "sectionTasks": "任务",
     "sectionNodes": "节点",
     "sectionRepos": "存储仓库",

@@ -176,7 +176,6 @@ import {
   type FileFilterRuleForm,
   type MessageLocale,
 } from '../../lib/protectionPolicyFormModel'
-import type { ApiNode } from '../../types/node'
 import { buildGeneratedNasMountDir, buildGeneratedNasName } from '../../lib/nasMountPath'
 import { buildNasRepairMountOptionsPath, isSmbMountNegotiationError } from '../../lib/nasMountTroubleshooting'
 import TargetRepositoryPicker from './components/TargetRepositoryPicker.vue'
@@ -699,10 +698,6 @@ const createHostDetailNodeId = ref<number | null>(null)
 const createNasDetailOpen = ref(false)
 const createNasDetailResource = ref<SourceResource | null>(null)
 const createSourceDetailLoading = ref(false)
-const MOCK_PROXY_NODES: ApiNode[] = [
-  { id: -101, organization: 0, name: 'Proxy-GW-01', role: 'proxy', status: 'online' },
-  { id: -102, organization: 0, name: 'Proxy-GW-02', role: 'proxy', status: 'online' },
-]
 
 async function loadProxyNodes() {
   try {
