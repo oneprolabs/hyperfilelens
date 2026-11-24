@@ -10727,7 +10727,7 @@
     "provision": {
       "title": "Aprovisionar repositorios faltantes",
       "confirm": "Provisionar repositorios",
-      "description": "Crea un repositorio de respaldo administrado para cada miembro de Personal Edition que aún no tenga uno.",
+      "description": "Cree un repositorio de copias de seguridad administrado para cada miembro de Personal Edition que aún no tenga uno.",
       "defaultConnection": "Almacenamiento de objetos predeterminado",
       "defaultRequired": "Configura y habilita una conexión de Object Storage predeterminada antes de aprovisionar.",
       "skipNotice": "Los propietarios quedan excluidos. Los repositorios existentes, fallidos y eliminados anteriormente no se recrean automáticamente.",
@@ -10761,7 +10761,7 @@
         "worker_failed": "El aprovisionamiento se ha detenido. Se conserva el trabajo completado. Actualice la vista previa para aprovisionar los miembros restantes."
       },
       "lastResult": "Última solicitud: {created} creados, {skipped} omitidos, {failed} fallidos.",
-      "defaultConnectionHint": "Se utilizará para crear nuevos repositorios de respaldo administrados.",
+      "defaultConnectionHint": "Se utilizará para crear nuevos repositorios de copias de seguridad administrados.",
       "defaultReady": "Configurado",
       "defaultNotConfigured": "No configurado",
       "summaryTitle": "Estado de miembros y repositorios",
