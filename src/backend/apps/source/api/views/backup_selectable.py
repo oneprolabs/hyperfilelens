@@ -755,7 +755,11 @@ class BackupSelectableDirectoryView(ScopedSelectableView):
             return Response(
                 {"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST
             )
-        _assert_selectable_access(request, [source_id], action="resources.view")
+        # Directory browsing is a source-resource operation.  Do not use the
+        # organization inventory permission here: Personal Members can browse
+        # their own Host through ``protection.source_hosts.view`` without
+        # receiving Configuration > Organization Resources access.
+        _assert_selectable_access(request, [source_id], action="resource.view")
 
         path = (request.query_params.get("path") or "").strip()
         try:
@@ -936,7 +940,10 @@ class BackupSelectablePathInfoView(ScopedSelectableView):
             return Response(
                 {"detail": "source_id is required."}, status=status.HTTP_400_BAD_REQUEST
             )
-        _assert_selectable_access(request, [source_id], action="resources.view")
+        # Keep manual path validation consistent with directory browsing and
+        # the source list: it is governed by the selected Host/NAS view grant,
+        # not by the separate organization resource-inventory permission.
+        _assert_selectable_access(request, [source_id], action="resource.view")
 
         path = (request.query_params.get("path") or "").strip()
         if not path:

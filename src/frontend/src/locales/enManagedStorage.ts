@@ -92,8 +92,9 @@ export const enManagedStorage = {
   urlStyleHint: "Defines how bucket requests are addressed.",
   tlsHint: "Managed Object Storage connections use HTTPS.",
   namePlaceholder: "e.g. Primary Object Storage",
-  nameHint: "A recognizable name for this Object Storage connection.",
-  basePrefixHint: "Repositories use sub-prefixes under this path; leave it unchanged unless required.",
+  nameHint: "Auto-filled from the platform and bucket name. You can edit it.",
+  bucketHint: "Use an existing bucket. Recommended name: hfl-backups-prod. You can customize it for your environment.",
+  basePrefixHint: "Recommended: personal/. Repository path: {path}. You can customize the prefix before the connection is used.",
   credentialsConfigured: "Configured",
 
   "title": "Managed Storage",
