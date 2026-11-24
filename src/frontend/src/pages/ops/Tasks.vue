@@ -14,7 +14,7 @@ import HflDateTimeRangePicker from '../../components/HflDateTimeRangePicker.vue'
 import ResourceNameSummaryCell from '../../components/ResourceNameSummaryCell.vue'
 import TaskStatusTag from '../../components/TaskStatusTag.vue'
 import TaskTypeLabel from '../../components/TaskTypeLabel.vue'
-import TaskDetailDrawer from '../protection/components/TaskDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import FlowSourceSummaryCell from '../protection/components/FlowSourceSummaryCell.vue'
 import FlowSourceConnectionCell from '../protection/components/FlowSourceConnectionCell.vue'
 import { useOpsMenus } from '../../composables/useOpsMenus'
@@ -140,6 +140,10 @@ const stats = ref<TaskStatistics>({
 })
 
 const detailOpen = ref(false)
+const TaskDetailDrawer = defineLazyDrawer(() => import('../protection/components/TaskDetailDrawer.vue'), {
+  titleKey: 'ops.task.detailTitle', loadingLayout: 'task',
+})
+const detailMounted = useDrawerMounted(() => detailOpen.value)
 const detailTaskUuid = ref('')
 const activeTask = ref<TaskRow | null>(null)
 const cleanupDetailsExpanded = ref(false)
@@ -2210,6 +2214,7 @@ watch(
     </ElDrawer>
 
     <TaskDetailDrawer
+      v-if="detailMounted"
       v-model="detailOpen"
       :task-uuid="detailTaskUuid"
       :drawer-size="drawerSize"

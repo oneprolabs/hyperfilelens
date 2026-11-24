@@ -5,7 +5,7 @@ import { Search } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import ModulePage from '../../components/ModulePage.vue'
 import HflPagination from '../../components/HflPagination.vue'
-import InsightUsageRequestDrawer from './InsightUsageRequestDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import { useInsightSideNav } from '../../composables/useInsightSideNav'
 import { apiErrorMessage } from '../../lib/api'
 import { formatLocalDateTime } from '../../lib/dateTime'
@@ -19,6 +19,8 @@ const { t } = useI18n()
 const insightMenus = useInsightSideNav()
 const loading = ref(false)
 const drawerOpen = ref(false)
+const InsightUsageRequestDrawer = defineLazyDrawer(() => import('./InsightUsageRequestDrawer.vue'))
+const drawerMounted = useDrawerMounted(() => drawerOpen.value)
 const selectedRequest = ref<LensCopilotUsageItem | null>(null)
 const usage = ref<LensCopilotUsageOverview | null>(null)
 const periodPreset = ref<'today' | '7d' | '30d' | 'month' | 'custom'>('today')
@@ -337,6 +339,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <InsightUsageRequestDrawer
+      v-if="drawerMounted"
       v-model="drawerOpen"
       :row="selectedRequest"
     />

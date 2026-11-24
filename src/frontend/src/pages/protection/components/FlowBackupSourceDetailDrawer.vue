@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LazyDrawerFrame } from '../../../components/feedback/LazyDrawerFrame'
 import { backupFailureMetadata } from '../../../lib/backupFailureDisplay'
 import { nasRepositoryFailureMessage } from '../../../lib/nasMountTroubleshooting'
 import { computed, nextTick, onUnmounted, reactive, ref, toRef, watch } from 'vue'
@@ -44,7 +45,7 @@ import HflHelpTip from '../../../components/HflHelpTip.vue'
 import HflPopover from '../../../components/HflPopover.vue'
 import HflPagination from '../../../components/HflPagination.vue'
 import SnapshotPointDetailPanel from './SnapshotPointDetailPanel.vue'
-import TaskDetailDrawer from './TaskDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../../composables/useLazyDrawer'
 import { useDrawerTableMaxHeight } from '../../../composables/useDrawerTableMaxHeight'
 import { apiErrorMessage } from '../../../lib/api'
 import { copyTextToClipboard } from '../../../lib/clipboard'
@@ -358,6 +359,10 @@ const snapshotPagination = reactive({ page: 1, pageSize: DETAIL_PAGE_SIZE, count
 const restoreRecordPagination = reactive({ page: 1, pageSize: DETAIL_PAGE_SIZE, count: 0 })
 const taskPagination = reactive({ page: 1, pageSize: DETAIL_PAGE_SIZE })
 const taskDetailOpen = ref(false)
+const TaskDetailDrawer = defineLazyDrawer(() => import('./TaskDetailDrawer.vue'), {
+  titleKey: 'ops.task.detailTitle', loadingLayout: 'task',
+})
+const taskDetailMounted = useDrawerMounted(() => taskDetailOpen.value)
 const activeTask = ref<TaskRow | null>(null)
 const { drawerScrollAnchorRef, resetDrawerScroll } = useDrawerScrollReset()
 const activeTaskLoading = ref(false)
@@ -2719,7 +2724,7 @@ function onClosed() {
 </script>
 
 <template>
-  <el-drawer
+  <LazyDrawerFrame
     v-model="drawerOpen"
     direction="rtl"
     :size="drawerSize"
@@ -4682,7 +4687,7 @@ function onClosed() {
         </el-tab-pane>
       </el-tabs>
     </div>
-  </el-drawer>
+  </LazyDrawerFrame>
 
   <ElDrawer
     v-model="taskAdvancedFilterOpen"
@@ -5388,6 +5393,7 @@ function onClosed() {
   </ElDrawer>
 
   <TaskDetailDrawer
+    v-if="taskDetailMounted"
     v-model="taskDetailOpen"
     :task-uuid="activeTask?.task_uuid || ''"
     :drawer-size="taskDetailDrawerSize"

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LazyDrawerFrame } from '../../components/feedback/LazyDrawerFrame'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Copy } from 'lucide-vue-next'
@@ -194,13 +195,14 @@ watch(
       capabilityLabels.value = {}
     }
   },
+  { immediate: true },
 )
 
 watch(open, (isOpen) => {
   if (isOpen) {
     void nextTick(() => requestAnimationFrame(() => updateDrawerWidth()))
   }
-})
+}, { immediate: true })
 
 onUnmounted(() => {
   unbindDrawerResize()
@@ -208,7 +210,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ElDrawer
+  <LazyDrawerFrame
     v-model="open"
     direction="rtl"
     destroy-on-close
@@ -378,7 +380,7 @@ onUnmounted(() => {
         </ElButton>
       </div>
     </template>
-  </ElDrawer>
+  </LazyDrawerFrame>
 </template>
 
 <style scoped>

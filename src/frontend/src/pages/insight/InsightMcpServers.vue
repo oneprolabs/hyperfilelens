@@ -27,7 +27,7 @@ import {
   type LensHealth,
   type LensMcpServer,
 } from '../../lib/lensApi'
-import InsightMcpServerDetailDrawer from './InsightMcpServerDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog, {
@@ -65,6 +65,8 @@ const { appliedSearch, clearSearch } = useListSearch(search, () => {
 const selectedRows = ref<LensMcpServer[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
+const InsightMcpServerDetailDrawer = defineLazyDrawer(() => import('./InsightMcpServerDetailDrawer.vue'))
+const detailMounted = useDrawerMounted(() => detailOpen.value)
 const detailRow = ref<LensMcpServer | null>(null)
 const lifecycleAction = ref<McpLifecycleAction | null>(null)
 const lifecycleTarget = ref<LensMcpServer | null>(null)
@@ -525,6 +527,7 @@ watch(
     </div>
 
     <InsightMcpServerDetailDrawer
+      v-if="detailMounted"
       v-model:open="detailOpen"
       :row="detailRow"
       @edit="openEdit"

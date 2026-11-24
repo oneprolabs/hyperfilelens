@@ -11,7 +11,7 @@ import NodeLifecycleBanner from '../../components/node-lifecycle/NodeLifecycleBa
 import { useNodeLifecycleOps } from '../../composables/useNodeLifecycleOps'
 import { debouncedNodeStatus } from '../../composables/useNodeConnectionDisplay'
 import ModulePage from '../../components/ModulePage.vue'
-import ProxyNodeDetailDrawer from '../../components/ProxyNodeDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import ProxyHostDeleteBlockedDialog from '../../components/ProxyHostDeleteBlockedDialog.vue'
 import DangerOperationHint from '../../components/DangerOperationHint.vue'
 import DangerForceOption from '../../components/DangerForceOption.vue'
@@ -372,6 +372,8 @@ async function onUpgradeSelected() {
 }
 
 const proxyDetailOpen = ref(false)
+const ProxyNodeDetailDrawer = defineLazyDrawer(() => import('../../components/ProxyNodeDetailDrawer.vue'))
+const proxyDetailMounted = useDrawerMounted(() => proxyDetailOpen.value)
 const proxyDetailId = ref<number | null>(null)
 const proxyDetailInitialTab = ref<'basic' | 'performance' | 'storage' | 'nas' | 'maintenance'>('basic')
 
@@ -1094,6 +1096,7 @@ async function submitRename() {
     </el-dialog>
 
     <ProxyNodeDetailDrawer
+      v-if="proxyDetailMounted"
       :model-value="proxyDetailOpen"
       :node-id="proxyDetailId"
       :initial-tab="proxyDetailInitialTab"

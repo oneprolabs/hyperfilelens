@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LazyDrawerFrame } from '../../components/feedback/LazyDrawerFrame'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -287,13 +288,14 @@ watch(
       void loadDetail()
     }
   },
+  { immediate: true },
 )
 
 watch(drawerOpen, (isOpen) => {
   if (isOpen) {
     void nextTick(() => requestAnimationFrame(() => updateDrawerWidth()))
   }
-})
+}, { immediate: true })
 
 onUnmounted(() => {
   unbindDrawerResize()
@@ -301,7 +303,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ElDrawer
+  <LazyDrawerFrame
     v-model="drawerOpen"
     direction="rtl"
     destroy-on-close
@@ -704,7 +706,7 @@ onUnmounted(() => {
         @save="saveIngest"
       />
     </template>
-  </ElDrawer>
+  </LazyDrawerFrame>
 </template>
 
 <style scoped>

@@ -64,7 +64,7 @@ import DangerOperationHint from '../../components/DangerOperationHint.vue'
 import DangerForceOption from '../../components/DangerForceOption.vue'
 import DangerAdvancedOptions from '../../components/DangerAdvancedOptions.vue'
 import DangerConfirmDialog, { type DangerConfirmItem } from '../../components/DangerConfirmDialog.vue'
-import TaskDetailDrawer from '../protection/components/TaskDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import FlowSourceConnectionCell from '../protection/components/FlowSourceConnectionCell.vue'
 
 function repositoryTaskErrorDetails(task: TaskRow, fallback: string): ErrorDetailsPayload {
@@ -821,6 +821,10 @@ const {
   applyRepositoryTaskFilters()
 })
 const repositoryTaskDetailOpen = ref(false)
+const TaskDetailDrawer = defineLazyDrawer(() => import('../protection/components/TaskDetailDrawer.vue'), {
+  titleKey: 'ops.task.detailTitle', loadingLayout: 'task',
+})
+const repositoryTaskDetailMounted = useDrawerMounted(() => repositoryTaskDetailOpen.value)
 const repositoryTaskDetailUuid = ref('')
 let repositoryTasksPollTimer: ReturnType<typeof setInterval> | undefined
 const { drawerSize, updateDrawerWidth, bindDrawerResize, unbindDrawerResize } = useResponsiveDrawerWidth()
@@ -4451,6 +4455,7 @@ function s3ObjectPrefixCell(row: RepositoryRow) {
     </ElDrawer>
 
     <TaskDetailDrawer
+      v-if="repositoryTaskDetailMounted"
       v-model="repositoryTaskDetailOpen"
       :task-uuid="repositoryTaskDetailUuid"
       :drawer-size="repositoryTaskDetailDrawerSize"

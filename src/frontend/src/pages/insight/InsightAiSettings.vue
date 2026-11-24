@@ -24,7 +24,7 @@ import {
 import { defaultAiModelDisplayName } from '../../lib/aiModelDisplay'
 import { aiProviderLabel } from '../../lib/aiProviderDisplay'
 import AiProviderIcon from '../../components/ai-model/AiProviderIcon.vue'
-import InsightAiModelDetailDrawer from './InsightAiModelDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import HflStatusTag from '../../components/HflStatusTag.vue'
 import DangerConfirmDialog, {
   type DangerConfirmItem,
@@ -68,6 +68,8 @@ const selectedRows = ref<LensLlmConfig[]>([])
 const testingModelUuids = ref(new Set<string>())
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
+const InsightAiModelDetailDrawer = defineLazyDrawer(() => import('./InsightAiModelDetailDrawer.vue'))
+const detailMounted = useDrawerMounted(() => detailOpen.value)
 const detailUuid = ref<string | null>(null)
 const lifecycleAction = ref<ModelLifecycleAction | null>(null)
 const lifecycleTarget = ref<LensLlmConfig | null>(null)
@@ -716,6 +718,7 @@ onMounted(() => {
     </div>
 
     <InsightAiModelDetailDrawer
+      v-if="detailMounted"
       v-model="detailOpen"
       :model-uuid="detailUuid"
       :refresh-token="detailRefreshToken"

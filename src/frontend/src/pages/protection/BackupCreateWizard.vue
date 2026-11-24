@@ -40,10 +40,10 @@ import { copyTextToClipboard } from '../../lib/clipboard'
 import ModulePage from '../../components/ModulePage.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
 import HflPopover from '../../components/HflPopover.vue'
-import HostSourceDetailDrawer from '../../components/HostSourceDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted, useDrawerDetailRequest } from '../../composables/useLazyDrawer'
 import BackupConfigCreateWizard from './BackupConfigCreateWizard.vue'
 import ProtectionPolicyEditorForm from './components/ProtectionPolicyEditorForm.vue'
-import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
+import { NasSourceDetailDrawer } from './components/lazyNasSourceDetailDrawer'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import { useTenantPermissions } from '../../composables/useTenantPermissions'
 import { canViewProtectionSources } from '../../lib/protectionAccess'
@@ -694,10 +694,12 @@ const { proxyNodes, loadProxyNodes: loadProxyOptions, searchProxyNodes, proxyOpt
 )
 const proxyNodesRefreshing = ref(false)
 const createHostDetailOpen = ref(false)
+const HostSourceDetailDrawer = defineLazyDrawer(() => import('../../components/HostSourceDetailDrawer.vue'))
+const createHostDetailMounted = useDrawerMounted(() => createHostDetailOpen.value)
 const createHostDetailNodeId = ref<number | null>(null)
 const createNasDetailOpen = ref(false)
 const createNasDetailResource = ref<SourceResource | null>(null)
-const createSourceDetailLoading = ref(false)
+const { detailLoading: createSourceDetailLoading, loadDetails: loadCreateNasDetails } = useDrawerDetailRequest(createNasDetailOpen)
 
 async function loadProxyNodes() {
   try {
@@ -4156,16 +4158,11 @@ async function openCreateSourceDetail(row: CreateSourceRow) {
     return
   }
   if (kind !== 'nas' || createSourceDetailLoading.value) return
-  createSourceDetailLoading.value = true
-  try {
-    createNasDetailResource.value = await getSourceResource(refId)
-    createNasDetailOpen.value = true
+  createNasDetailResource.value = null
+  await loadCreateNasDetails(signal => getSourceResource(refId, { signal }), resource => {
+    createNasDetailResource.value = resource
     searchProxyNodes('')
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    createSourceDetailLoading.value = false
-  }
+  }, err => ElMessage.error({ message: apiErrorMessage(err), grouping: true }))
 }
 
 function closeCreateHostDetail() {
@@ -11082,6 +11079,7 @@ function preserveShallowestPathOrder(paths: string[]) {
     </Teleport>
 
     <HostSourceDetailDrawer
+      v-if="createHostDetailMounted"
       :model-value="createHostDetailOpen"
       :node-id="createHostDetailNodeId"
       :source="null"
@@ -11091,6 +11089,7 @@ function preserveShallowestPathOrder(paths: string[]) {
     <NasSourceDetailDrawer
       v-if="createNasDetailOpen"
       v-model="createNasDetailOpen"
+      :detail-loading="createSourceDetailLoading"
       :resource="createNasDetailResource"
       :proxy-nodes="proxyNodes"
       :proxy-search="searchProxyNodes"

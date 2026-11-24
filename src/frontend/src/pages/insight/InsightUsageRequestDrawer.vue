@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LazyDrawerFrame } from '../../components/feedback/LazyDrawerFrame'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useResponsiveDrawerWidth } from '../../composables/useResponsiveDrawerWidth'
@@ -71,7 +72,7 @@ const overview = computed(() => {
 </script>
 
 <template>
-  <ElDrawer
+  <LazyDrawerFrame
     v-model="open"
     direction="rtl"
     destroy-on-close
@@ -154,7 +155,7 @@ const overview = computed(() => {
         </section>
       </div>
     </div>
-  </ElDrawer>
+  </LazyDrawerFrame>
 </template>
 
 <style scoped>

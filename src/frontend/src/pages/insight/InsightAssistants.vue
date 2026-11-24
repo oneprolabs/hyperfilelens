@@ -29,7 +29,7 @@ import {
   type LensHealth,
 } from '../../lib/lensApi'
 
-import InsightAssistantDetailDrawer from './InsightAssistantDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import DangerConfirmDialog, {
   type DangerConfirmItem,
   type DangerLevel,
@@ -65,6 +65,8 @@ const { appliedSearch, clearSearch } = useListSearch(search, () => {
 const selectedRows = ref<LensAssistant[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
+const InsightAssistantDetailDrawer = defineLazyDrawer(() => import('./InsightAssistantDetailDrawer.vue'))
+const detailMounted = useDrawerMounted(() => detailOpen.value)
 const detailRow = ref<LensAssistant | null>(null)
 const lifecycleAction = ref<AssistantLifecycleAction | null>(null)
 const lifecycleTarget = ref<LensAssistant | null>(null)
@@ -619,6 +621,7 @@ watch(
     </div>
 
     <InsightAssistantDetailDrawer
+      v-if="detailMounted"
       v-model:open="detailOpen"
       :row="detailRow"
       @edit="openEdit"

@@ -18,7 +18,7 @@ import {
   syncKnowledgeSource,
   type LensKnowledgeSource,
 } from '../../lib/lensApi'
-import InsightKnowledgeSourceDetailDrawer from './InsightKnowledgeSourceDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import HflTypeLabel from '../../components/HflTypeLabel.vue'
 import DangerConfirmDialog, {
   type DangerConfirmItem,
@@ -56,6 +56,8 @@ const statusFilter = ref<string>('')
 const filterOrgKey = ref('')
 const knownOrganizations = ref<Array<{ key: string; name: string }>>([])
 const detailOpen = ref(false)
+const InsightKnowledgeSourceDetailDrawer = defineLazyDrawer(() => import('./InsightKnowledgeSourceDetailDrawer.vue'))
+const detailMounted = useDrawerMounted(() => detailOpen.value)
 const detailRow = ref<LensKnowledgeSource | null>(null)
 const actionType = ref<KnowledgeSourceAction | null>(null)
 const actionTarget = ref<LensKnowledgeSource | null>(null)
@@ -707,6 +709,7 @@ watch(hasSyncingRows, (syncing) => {
     </div>
 
     <InsightKnowledgeSourceDetailDrawer
+      v-if="detailMounted"
       v-model:open="detailOpen"
       :row="detailRow"
       @updated="onDetailUpdated"

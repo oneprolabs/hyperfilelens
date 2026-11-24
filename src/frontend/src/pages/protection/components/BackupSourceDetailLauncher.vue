@@ -1,19 +1,21 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import HostSourceDetailDrawer from '../../../components/HostSourceDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted, useDrawerDetailRequest } from '../../../composables/useLazyDrawer'
 import { apiErrorMessage } from '../../../lib/api'
 import { useProxyNodeOptions } from '../../../composables/useProxyNodeOptions'
 import { getSourceResource, type SourceResource } from '../../../lib/sourceApi'
 import type { FlowSourceRow } from '../composables/useFlowSourceAggregate'
-import NasSourceDetailDrawer from './NasSourceDetailDrawer.vue'
+import { NasSourceDetailDrawer } from './lazyNasSourceDetailDrawer'
 
 const hostOpen = ref(false)
+const HostSourceDetailDrawer = defineLazyDrawer(() => import('../../../components/HostSourceDetailDrawer.vue'))
+const hostMounted = useDrawerMounted(() => hostOpen.value)
 const hostNodeId = ref<number | null>(null)
 const nasOpen = ref(false)
 const nasResource = ref<SourceResource | null>(null)
 const { proxyNodes, proxyOptionsLoading, searchProxyNodes, loadMoreProxyNodes } = useProxyNodeOptions(() => nasResource.value?.bound_node ?? undefined, true)
-const loading = ref(false)
+const { detailLoading, loadDetails } = useDrawerDetailRequest(nasOpen)
 
 async function open(source: FlowSourceRow) {
   const refId = Number(source.refId || source.id.split(':')[1])
@@ -23,17 +25,12 @@ async function open(source: FlowSourceRow) {
     hostOpen.value = true
     return
   }
-  if (loading.value) return
-  loading.value = true
-  try {
-    nasResource.value = await getSourceResource(refId)
+  if (detailLoading.value) return
+  nasResource.value = null
+  await loadDetails(signal => getSourceResource(refId, { signal }), resource => {
+    nasResource.value = resource
     searchProxyNodes('')
-    nasOpen.value = true
-  } catch (err) {
-    ElMessage.error({ message: apiErrorMessage(err), grouping: true })
-  } finally {
-    loading.value = false
-  }
+  }, err => ElMessage.error({ message: apiErrorMessage(err), grouping: true }))
 }
 
 function setHostOpen(value: boolean) {
@@ -46,6 +43,7 @@ defineExpose({ open })
 
 <template>
   <HostSourceDetailDrawer
+    v-if="hostMounted"
     :model-value="hostOpen"
     :node-id="hostNodeId"
     :source="null"
@@ -54,6 +52,7 @@ defineExpose({ open })
   <NasSourceDetailDrawer
     v-if="nasOpen"
     v-model="nasOpen"
+    :detail-loading="detailLoading"
     :resource="nasResource"
     :proxy-nodes="proxyNodes"
     :proxy-search="searchProxyNodes"

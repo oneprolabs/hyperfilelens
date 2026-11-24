@@ -25,14 +25,14 @@ import {
 import { debouncedNodeStatus } from '../../composables/useNodeConnectionDisplay'
 import NodeLifecycleWizard from '../../components/NodeLifecycleWizard.vue'
 import AgentPlatformBrandIcon from '../../components/agent-deploy/AgentPlatformBrandIcon.vue'
-import HostSourceDetailDrawer from '../../components/HostSourceDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted, useDrawerDetailRequest } from '../../composables/useLazyDrawer'
 import HflCapacityCell from '../../components/HflCapacityCell.vue'
 import SourceTagBadge from '../../components/SourceTagBadge.vue'
 import SourceTagActionContent from '../../components/SourceTagActionContent.vue'
 import DangerConfirmDialog from '../../components/DangerConfirmDialog.vue'
 import HflHelpTip from '../../components/HflHelpTip.vue'
 import NasAddForm from './components/NasAddForm.vue'
-import NasSourceDetailDrawer from './components/NasSourceDetailDrawer.vue'
+import { NasSourceDetailDrawer } from './components/lazyNasSourceDetailDrawer'
 import { useRouteResourceDetail } from '../../composables/useRouteResourceDetail'
 import FlowSourceReadyStatusCell from './components/FlowSourceReadyStatusCell.vue'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
@@ -364,7 +364,10 @@ const dialogOpen = ref(false)
 const editing = ref<SourceResource | null>(null)
 const detailOpen = ref(false)
 const detail = ref<SourceResource | null>(null)
+const { detailLoading, loadDetails } = useDrawerDetailRequest(detailOpen)
 const hostDetailOpen = ref(false)
+const HostSourceDetailDrawer = defineLazyDrawer(() => import('../../components/HostSourceDetailDrawer.vue'))
+const hostDetailMounted = useDrawerMounted(() => hostDetailOpen.value)
 const hostDetailNodeId = ref<number | null>(null)
 const hostDetailSource = ref<SourceResource | null>(null)
 const hostDetailInitialTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
@@ -500,18 +503,12 @@ function buildPayload() {
 
 
 
-async function openDetail(row: SourceResource) {
-  if (row.id > 0) {
-    try {
-      detail.value = await getSourceResource(row.id)
-    } catch {
-      detail.value = row
-    }
-  } else {
-    detail.value = row
-  }
-  detailOpen.value = true
-  if (row.resource_type === 'nas') searchProxyNodes('')
+function openDetail(row: SourceResource) {
+  detail.value = row
+  return loadDetails(signal => row.id > 0 ? getSourceResource(row.id, { signal }).catch(() => row) : Promise.resolve(row), (resource) => {
+    detail.value = resource
+    if (row.resource_type === 'nas') searchProxyNodes('')
+  })
 }
 
 async function saveForm() {
@@ -3243,6 +3240,7 @@ onUnmounted(() => {
 
     <!-- ===== Host Detail Drawer ===== -->
     <HostSourceDetailDrawer
+      v-if="hostDetailMounted"
       :model-value="hostDetailOpen"
       :node-id="hostDetailNodeId"
       :source="hostDetailSource"
@@ -3256,6 +3254,7 @@ onUnmounted(() => {
     <NasSourceDetailDrawer
       v-if="detailOpen && isNasDetail"
       v-model="detailOpen"
+      :detail-loading="detailLoading"
       :resource="detail"
       :proxy-nodes="proxyNodes"
       :proxy-search="searchProxyNodes"

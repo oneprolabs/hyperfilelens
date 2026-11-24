@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import LazyDrawerFeedback from '../../../components/feedback/LazyDrawerFeedback.vue'
+import { LazyDrawerFrame } from '../../../components/feedback/LazyDrawerFrame'
 import { backupFailureCategory, backupFailureMetadata } from '../../../lib/backupFailureDisplay'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -1145,7 +1147,7 @@ watch(
 </script>
 
 <template>
-  <ElDrawer
+  <LazyDrawerFrame
     v-model="drawerOpen"
     class="hfl-task-drawer"
     :class="{ 'hfl-task-drawer--target-repositories': usesTargetRepositoryResources }"
@@ -1987,19 +1989,10 @@ watch(
     <div
       v-else
       ref="drawerScrollAnchorRef"
-      class="hfl-task-drawer__body"
     >
-      <div
-        class="hfl-task-drawer__loading"
-        aria-busy="true"
-      >
-        <el-skeleton
-          :rows="6"
-          animated
-        />
-      </div>
+      <LazyDrawerFeedback :failed="false" layout="task" />
     </div>
-  </ElDrawer>
+  </LazyDrawerFrame>
   <ProtectionStopConfirmDialog
     v-if="stopConfirmOpen"
     v-model="stopConfirmOpen"
@@ -2207,14 +2200,6 @@ watch(
   flex-direction: column;
   gap: 14px;
   padding: 16px;
-}
-
-.hfl-task-drawer__loading {
-  min-height: 320px;
-  padding: 14px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 10px;
-  background: var(--el-bg-color);
 }
 
 .hfl-task-drawer__hero,

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LazyDrawerFrame } from '../../../components/feedback/LazyDrawerFrame'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Copy, Pencil, X } from 'lucide-vue-next'
@@ -66,6 +67,7 @@ const props = defineProps<{
   proxySearch?: (search: string) => void
   proxyLoadMore?: (direction: string) => void
   proxyLoading?: boolean
+  detailLoading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -466,7 +468,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ElDrawer
+  <LazyDrawerFrame
     v-model="open"
     direction="rtl"
     destroy-on-close
@@ -1123,7 +1125,7 @@ onUnmounted(() => {
         </ElTabPane>
       </ElTabs>
     </div>
-  </ElDrawer>
+  </LazyDrawerFrame>
 </template>
 
 <style scoped>

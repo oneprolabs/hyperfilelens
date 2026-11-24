@@ -109,7 +109,9 @@ describe('Insight Usage history-only page', () => {
 
   it('opens the shared-width user detail drawer without any Usage section', async () => {
     const wrapper = await mountPage()
+    expect(mocks.fetchCopilotUsageDetail).not.toHaveBeenCalled()
     await wrapper.get('button.usage-history-question').trigger('click')
+    await vi.dynamicImportSettled()
     await flushPromises()
     expect(mocks.fetchCopilotUsageDetail).toHaveBeenCalledWith('run-1', true)
     const drawer = wrapper.getComponent(ElDrawer)
