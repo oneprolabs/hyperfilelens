@@ -14,6 +14,7 @@ from apps.storage.services.internal.kopia_cli import (
     status as kopia_status,
 )
 from apps.storage.services.internal.repository_errors import (
+    ManagedInitializationError,
     RepositoryAlreadyExistsError,
 )
 from apps.storage.services.internal.repository_ownership import (
@@ -169,7 +170,7 @@ def initialize_s3_repository(
     if provider is not None:
         try:
             provider.initialize(repository, recovery=recovery)
-        except RepositoryAlreadyExistsError:
+        except (RepositoryAlreadyExistsError, ManagedInitializationError):
             raise
         except Exception as exc:
             # Cloud errors may contain signing context. This boundary must not

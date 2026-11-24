@@ -23,6 +23,10 @@ from apps.node.services.internal.task import (
     record_task_progress,
     sweep_watchdog_timeouts,
 )
+from apps.storage.services.internal.repository_provider import (
+    MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+    ManagedRepositoryAgentUpgradeRequired,
+)
 
 
 class TaskCommandAckTests(TestCase):
@@ -127,6 +131,44 @@ class TaskCommandAckTests(TestCase):
         self.assertEqual(task.status, NodeTask.Status.FAILED)
         self.assertIn("Managed Repository authorization failed.", task.last_error)
         send_command.assert_called_once()
+
+    @patch("apps.node.services.internal.task._project_terminal_node_task")
+    @patch("apps.node.services.internal.task.redis_store.push_task_stream")
+    @patch("apps.node.services.internal.task.redis_store.set_task_info")
+    @patch(
+        "apps.node.services.internal.task._node_route_state",
+        return_value=_RouteState.ONLINE,
+    )
+    @patch(
+        "apps.node.services.internal.task._resolve_task_delivery_payload",
+        side_effect=ManagedRepositoryAgentUpgradeRequired,
+    )
+    @patch("apps.node.services.internal.task._send_task_command")
+    def test_incompatible_agent_fails_once_for_ack_and_legacy_tasks(
+        self, send_command, resolve_payload, _route, _set_info, _push_stream, project,
+    ):
+        for kind, correlation_type in (
+            ("repository.policy.apply", "protection.backup.policy_prepare"),
+            ("backup.run", "protection.backup"),
+            ("restore.run", "restore.record"),
+        ):
+            with self.subTest(kind=kind):
+                task = deliver_agent_task(task=self.task(
+                    kind=kind, correlation_type=correlation_type,
+                    result={"diagnostic_error_code": "AGENT_DELIVERY_FAILED"},
+                ))
+                self.assertEqual(task.status, NodeTask.Status.FAILED)
+                self.assertEqual(
+                    task.result["diagnostic_error_code"], "AGENT_UPGRADE_REQUIRED",
+                )
+                self.assertEqual(task.last_error, MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE)
+                self.assertNotIn("_delivery_protocol", task.result)
+                self.assertIsNone(task.dispatched_at)
+                self.assertEqual(task.delivery_attempt_count, 0)
+                deliver_agent_task(task=task, allow_ack_redelivery=True)
+        self.assertEqual(resolve_payload.call_count, 3)
+        self.assertEqual(project.call_count, 3)
+        send_command.assert_not_called()
 
     @patch("apps.node.services.internal.task.redis_store.set_task_info")
     @patch("apps.node.services.internal.task._send_task_command")

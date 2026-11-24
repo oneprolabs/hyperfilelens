@@ -45,6 +45,8 @@ from apps.storage.services.internal.proxy_fs_repository import (
 )
 from apps.storage.services.internal.repository_errors import (
     REPOSITORY_ALREADY_EXISTS_CODE,
+    ManagedInitializationError,
+    ManagedInitializationPending,
     RepositoryAlreadyExistsError,
 )
 from apps.storage.services.internal.repository_capabilities import (
@@ -441,7 +443,9 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
 
     if (
         task.status == Task.Status.WAITING
-        and task.error_code == CAPABILITIES_NOT_READY
+        and task.error_code in {
+            CAPABILITIES_NOT_READY, ManagedInitializationPending.error_code,
+        }
         and repository_task.due_at
         and repository_task.due_at > timezone.now()
     ):
@@ -619,6 +623,25 @@ def _run_repository_create_task_locked(*, repository_task_id: int) -> dict[str, 
             task, "finalize_repository_create", TaskStep.Status.RUNNING, 90
         )
         return _complete_create_success(repository_task)
+    except ManagedInitializationPending as exc:
+        # An inherited kernel lease, not a TTL, determines when the previous
+        # Controller/Kopia stopped. Keep the same product task recoverable.
+        task.refresh_from_db()
+        if task.status not in {
+            Task.Status.SUCCESS, Task.Status.FAILED, Task.Status.CANCELLED,
+            Task.Status.TIMEOUT,
+        }:
+            task.status = Task.Status.WAITING
+            task.error_code = exc.error_code
+            task.error_message = str(exc)
+            task.save(update_fields=["status", "error_code", "error_message", "updated_at"])
+            RepositoryTask.objects.filter(pk=repository_task.pk).update(
+                due_at=timezone.now() + timedelta(seconds=_CAPABILITY_RECHECK_SECONDS),
+            )
+        return {
+            "status": task.status, "repository_task_id": repository_task.id,
+            "error_code": exc.error_code,
+        }
     except RepositoryCapabilitiesError as exc:
         if exc.error_code == CAPABILITIES_NOT_READY:
             return _wait_for_repository_capabilities(repository_task, message=str(exc))
@@ -1457,6 +1480,13 @@ def _build_create_failure_result_payload(
 
 def _create_failure_resolution(error_code: str, *, managed: bool = False) -> str:
     if managed:
+        if error_code == ManagedInitializationError.error_code:
+            return (
+                "Initialization could not be verified and existing data was retained. "
+                "Review the initialization error, Object Storage connection and "
+                "Controller persistent execution storage before retrying in Managed Storage. "
+                "Do not delete data or bypass ownership verification."
+            )
         if error_code == REPOSITORY_ALREADY_EXISTS_CODE:
             return (
                 "Storage ownership could not be verified. Do not delete or adopt "
@@ -1867,6 +1897,8 @@ def _exception_message(exc: Exception) -> str:
 
 
 def _create_error_code(exc: Exception) -> str:
+    if isinstance(exc, ManagedInitializationError):
+        return exc.error_code
     if isinstance(exc, RepositoryAlreadyExistsError):
         return REPOSITORY_ALREADY_EXISTS_CODE
     if isinstance(exc, RepositoryInitializationError):

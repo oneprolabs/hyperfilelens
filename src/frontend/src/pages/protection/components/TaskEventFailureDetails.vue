@@ -56,7 +56,7 @@ const structuredSkipped = computed(() => extractSkippedDetails(metadataRecord.va
 const structuredSummary = computed(() => extractBackupSummary(metadataRecord.value))
 
 const category = computed(() => structuredFailure.value?.category || 'source_read_failed')
-const backupSourceOffline = computed(() => ['backup_communication_timeout', 'backup_source_offline', 'backup_source_busy', 'backup_precheck_failed'].includes(category.value))
+const backupSourceOffline = computed(() => ['agent_upgrade_required', 'backup_communication_timeout', 'backup_source_offline', 'backup_source_busy', 'backup_precheck_failed'].includes(category.value))
 const sourcePath = computed(() => String(metadataRecord.value.source_path || '').trim())
 const errorCode = computed(() => String(metadataRecord.value.error_code || '').trim())
 const restorePermissionDenied = computed(() => errorCode.value === 'RESTORE_TARGET_PERMISSION_DENIED')

@@ -8,6 +8,21 @@ import zh from '../../../../../../language-packs/packs/zh-hans/frontend/messages
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
+  it('shows upgrade instructions without storage-capacity or connectivity advice', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: {
+        error_code: 'AGENT_UPGRADE_REQUIRED',
+        error_message: 'The execution Agent must be upgraded to use Managed Storage.',
+      } },
+      global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] },
+    })
+    expect(wrapper.get('.task-event-failure__summary').text()).toContain('must be upgraded')
+    expect(wrapper.get('.task-event-failure__remediation').text()).toContain('Source Hosts')
+    expect(wrapper.findAll('.task-event-failure__remediation')).toHaveLength(1)
+    expect(wrapper.find('.task-event-failure__terminal-box').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('capacity')
+    wrapper.unmount()
+  })
   it.each([false, true])('localizes the missing bucket and keeps raw evidence (terminal metadata: %s)', (projected) => {
     const raw = 'unable to read repository ownership marker: S3: GetObject, StatusCode: 404, RequestID: test-request, HostID: test-host, api error NoSuchBucket'
     const wrapper = mount(TaskEventFailureDetails, {

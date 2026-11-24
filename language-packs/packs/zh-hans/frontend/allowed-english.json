@@ -18,6 +18,8 @@
   "addS3Repo.platformAws",
   "addS3Repo.platformAzure",
   "addS3Repo.platformGcp",
+  "addS3Repo.platformMinio",
+  "addS3Repo.platformRustfs",
   "common.deleteKeyword",
   "common.dotSeparator",
   "common.empty",

@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { backupFailureCategory, backupFailureMetadata, backupFailurePresentation } from './backupFailureDisplay'
 
 describe('backup failure compatibility', () => {
+  it('shows upgrade guidance instead of treating an old Agent as a connection failure', () => {
+    const input = { error_code: 'AGENT_UPGRADE_REQUIRED', error_message: 'Internal diagnostic' }
+    expect(backupFailureCategory(input)).toBe('agent_upgrade_required')
+    expect(backupFailurePresentation(input)?.reason).toContain('must be upgraded')
+    expect(backupFailurePresentation(input)?.resolutions[0]).toContain('Source Hosts')
+    expect(backupFailureMetadata(input).error_message).toBe(input.error_message)
+  })
   it('recognizes legacy dictionaries without metadata and preserves the diagnostic', () => {
     const input = { error_message: "{'source_ref_id': ['Agent source is offline.']}" }
     expect(backupFailurePresentation(input)?.reason).toContain('was offline')

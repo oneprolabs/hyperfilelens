@@ -239,11 +239,12 @@ def create_s3_repository(repository: Repository, *, timeout_seconds: int | None 
 
 def connect_s3_repository(
     repository: Repository, *, timeout_seconds: int | None = None,
-    config_file: Path | None = None,
+    config_file: Path | None = None, read_only: bool = False,
 ) -> KopiaResult:
     result = _run_repository_command(
         repository,
-        ["repository", "connect", "s3", *_s3_flags(repository)],
+        ["repository", "connect", "s3", *_s3_flags(repository),
+         *(["--readonly"] if read_only else [])],
         timeout_seconds=timeout_seconds,
         config_file=config_file,
     )
@@ -252,11 +253,15 @@ def connect_s3_repository(
     return KopiaResult(stdout=result.stdout, stderr=result.stderr)
 
 
-def status(repository: Repository, *, timeout_seconds: int | None = None) -> KopiaResult:
+def status(
+    repository: Repository, *, timeout_seconds: int | None = None,
+    config_file: Path | None = None,
+) -> KopiaResult:
     result = _run_repository_command(
         repository,
         ["repository", "status"],
         timeout_seconds=timeout_seconds,
+        config_file=config_file,
     )
     if result.returncode != 0:
         raise KopiaCliError(_format_failure("Kopia repository status failed", result))
@@ -589,6 +594,21 @@ def _run_repository_process(
         "--no-progress",
         *args,
     ]
+    from .repository_initialization_execution import current_initialization_execution
+
+    initialization = current_initialization_execution()
+    if initialization is not None:
+        # Only the trusted initialization context selects this path. The
+        # existing standalone supervisor retains the kernel lease if the
+        # Worker disappears, and bounds/stops/reaps the actual Kopia process.
+        result = initialization.run(
+            command, env, timeout, renew_identity=renew_identity,
+        )
+        if result.returncode == 0 and args[:3] in (
+            ["repository", "create", "s3"], ["repository", "connect", "s3"],
+        ):
+            _write_s3_connection_fingerprint(repository, config_file)
+        return result
     if args[:2] == ["snapshot", "delete"]:
         from .orphan_delete_execution import current_delete_execution
 

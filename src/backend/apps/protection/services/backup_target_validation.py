@@ -48,6 +48,10 @@ from apps.storage.services.internal.repository_access import (
     resolve_repository_reader,
 )
 from apps.storage.services.internal.repository_endpoints import repository_data_endpoint
+from apps.storage.services.internal.repository_provider import (
+    MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+    ManagedRepositoryAgentUpgradeRequired,
+)
 from apps.storage.services.internal.repository_secrets import (
     SECRET_VALUE_KEYS,
     build_repository_runtime_payload,
@@ -1366,6 +1370,14 @@ def _outcome_result(
             task_id=task_id,
             error_details=error_details,
         )
+    if outcome.result.get("diagnostic_error_code") == "AGENT_UPGRADE_REQUIRED":
+        return TargetValidationResult(
+            status="failed",
+            code="AGENT_UPGRADE_REQUIRED",
+            message=MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+            task_id=task_id,
+            error_details=error_details,
+        )
     specific_code = str(outcome.result.get("error_code") or "").strip()
     if specific_code in _NAS_WRITE_FAILURE_REMEDIATIONS:
         return TargetValidationResult(
@@ -1628,7 +1640,9 @@ def _validation_exception_result(
         )
         message = "Backup target validation failed unexpectedly. Try again."
     lowered = message.lower()
-    if "source" in lowered and "not found" in lowered:
+    if isinstance(exc, ManagedRepositoryAgentUpgradeRequired):
+        code = exc.code
+    elif "source" in lowered and "not found" in lowered:
         code = "SOURCE_NOT_FOUND"
     elif "offline" in lowered or "not online" in lowered:
         code = "SOURCE_NODE_OFFLINE"

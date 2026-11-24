@@ -58,6 +58,10 @@ from apps.storage.services.internal.repository_usage import (
     assert_repository_quota_available,
     enqueue_repository_usage_refresh,
 )
+from apps.storage.services.internal.repository_provider import (
+    MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+    ManagedRepositoryAgentUpgradeRequired,
+)
 from apps.task.models import Task, TaskEvent, TaskStep
 from apps.task.services.interface import (
     append_task_step_event,
@@ -107,6 +111,7 @@ _DIRECTORY_IN_PROGRESS = frozenset(
 )
 
 _DELIVERY_DIAGNOSTIC_MESSAGES = {
+    "AGENT_UPGRADE_REQUIRED": MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
     "AGENT_ACK_TIMEOUT": (
         "The Agent did not acknowledge the backup command. Check Agent "
         "connectivity and version, then retry."
@@ -818,7 +823,10 @@ def _ensure_directory_policy_prepared(
         0, protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_MAX_RETRIES
     )
     if latest is not None:
-        if len(attempts) >= max_attempts:
+        if (
+            _node_task_error_code(latest)[0] == "AGENT_UPGRADE_REQUIRED"
+            or len(attempts) >= max_attempts
+        ):
             _clear_policy_retry_schedule(
                 task=task,
                 backup_config_dir_id=directory_row.backup_config_dir_id,
@@ -2488,8 +2496,14 @@ def advance_backup(
             repository_endpoint_type=config.repository_endpoint_type,
         )
     except Exception as exc:
-        error_code = "BACKUP_REPOSITORY_ACCESS_UNAVAILABLE"
-        error_message = str(exc)
+        error_code = (
+            exc.code if isinstance(exc, ManagedRepositoryAgentUpgradeRequired)
+            else "BACKUP_REPOSITORY_ACCESS_UNAVAILABLE"
+        )
+        error_message = (
+            exc.message if isinstance(exc, ManagedRepositoryAgentUpgradeRequired)
+            else str(exc)
+        )
         mark_source_snapshot_failed(
             source_snapshot=source_snapshot,
             error_code=error_code,

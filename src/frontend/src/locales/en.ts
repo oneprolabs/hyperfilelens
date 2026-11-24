@@ -3447,6 +3447,8 @@ export const en = {
     platformHuawei: 'Huawei Cloud OBS',
     platformTencent: 'Tencent Cloud COS',
     platformAws: 'AWS S3',
+    platformMinio: 'MinIO',
+    platformRustfs: 'RustFS',
     platformGcp: 'Google GCS',
     platformAzure: 'Azure Blob',
     platformOther: 'Other Platform',

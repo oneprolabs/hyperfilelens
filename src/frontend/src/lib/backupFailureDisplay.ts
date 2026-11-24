@@ -5,6 +5,10 @@ function record(value: unknown): RecordValue {
 }
 
 export const backupFailureCopy: Record<string, { reason: string; resolutions: string[] }> = {
+  agent_upgrade_required: {
+    reason: 'The execution Agent must be upgraded before this operation can run.',
+    resolutions: ['Upgrade the Agent from Source Hosts, then retry the operation.'],
+  },
   backup_communication_timeout: {
     reason: 'The backup result could not be confirmed in time because the connection to the execution host was temporarily interrupted or delayed.',
     resolutions: ['Wait until the connection is stable, then retry the failed directory.'],
@@ -36,7 +40,8 @@ export function backupFailureMetadata(value: unknown): RecordValue {
   const code = String(source.error_code || '')
   const message = String(source.error_message || '')
   let category = ''
-  if (code === 'AGENT_ACK_TIMEOUT' || code === 'RESULT_ACK_TIMEOUT') category = 'backup_communication_timeout'
+  if (code === 'AGENT_UPGRADE_REQUIRED') category = 'agent_upgrade_required'
+  else if (code === 'AGENT_ACK_TIMEOUT' || code === 'RESULT_ACK_TIMEOUT') category = 'backup_communication_timeout'
   else if (/agent source is offline|agent websocket is reconnecting/i.test(message)) category = 'backup_source_offline'
   else if (/agent source is busy/i.test(message)) category = 'backup_source_busy'
   else if (code === 'BACKUP_PRECHECK_FAILED') category = 'backup_precheck_failed'

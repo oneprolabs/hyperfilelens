@@ -16,6 +16,18 @@ class RepositoryAlreadyExistsError(RuntimeError):
     """Raised when strict repository initialization finds an existing repository."""
 
 
+class ManagedInitializationError(RuntimeError):
+    """A credential-free initialization diagnostic safe for durable tasks."""
+
+    error_code = "MANAGED_REPOSITORY_INITIALIZATION_UNVERIFIED"
+
+
+class ManagedInitializationPending(ManagedInitializationError):
+    """A previous executor still owns its kernel lease; never start another."""
+
+    error_code = "MANAGED_REPOSITORY_INITIALIZATION_PENDING"
+
+
 class RepositoryCleanupAuthorizationLost(RuntimeError):
     """A cleanup executor lost authorization; Force must not bypass its fence."""
 

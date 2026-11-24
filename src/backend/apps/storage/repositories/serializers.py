@@ -1000,11 +1000,18 @@ class RepositoryWriteSerializer(serializers.ModelSerializer):
 
 class RepositoryCleanupSerializer(serializers.Serializer):
     force = serializers.BooleanField(required=False, default=False)
+    retain_unverified_data = serializers.BooleanField(required=False, default=False)
     confirmation = serializers.CharField(
         required=False, allow_blank=True, default="", trim_whitespace=False
     )
 
     def validate(self, attrs):
+        if attrs["retain_unverified_data"] and (
+            attrs["force"] or attrs["confirmation"] != "DELETE"
+        ):
+            raise serializers.ValidationError(
+                {"confirmation": 'Type "DELETE" exactly to confirm retaining unverified data.'}
+            )
         if attrs["force"] and attrs["confirmation"] != "FORCE DELETE":
             raise serializers.ValidationError(
                 {"confirmation": 'Type "FORCE DELETE" exactly to confirm.'}
@@ -1014,6 +1021,7 @@ class RepositoryCleanupSerializer(serializers.Serializer):
 
 class RepositoryCleanupPreflightSerializer(serializers.Serializer):
     force = serializers.BooleanField(required=False, default=False)
+    retain_unverified_data = serializers.BooleanField(required=False, default=False)
 
 
 class RepositoryResidualReleaseSerializer(serializers.Serializer):

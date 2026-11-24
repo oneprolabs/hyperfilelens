@@ -625,6 +625,10 @@ class RepositoryCleanupTests(TestCase):
         self.assertFalse(result["cleanup_complete"])
         self.assertEqual(warning_step.status, warning_step.Status.WARNING)
         self.assertEqual(warning_event.metadata["mount_status"], "not_mounted")
+        self.assertEqual(result["physical_cleanup"], "skipped_unmounted")
+        self.assertEqual(
+            warning_event.metadata["physical_cleanup"], result["physical_cleanup"],
+        )
         self.assertEqual(repository.status, Repository.Status.REMOVED)
         self.assertEqual(
             repository.cleanup_result, Repository.CleanupResult.FORCE_SKIPPED
