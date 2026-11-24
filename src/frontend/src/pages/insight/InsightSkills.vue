@@ -32,7 +32,7 @@ import {
   skillDescription,
 } from '../../lib/lensSkillHelpers'
 
-import InsightSkillDetailDrawer from './InsightSkillDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import HflBooleanStatusTag from '../../components/HflBooleanStatusTag.vue'
 import DangerConfirmDialog, {
   type DangerConfirmItem,
@@ -69,6 +69,8 @@ const { appliedSearch, clearSearch } = useListSearch(search, () => {
 const selectedRows = ref<LensSkill[]>([])
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
+const InsightSkillDetailDrawer = defineLazyDrawer(() => import('./InsightSkillDetailDrawer.vue'))
+const detailMounted = useDrawerMounted(() => detailOpen.value)
 const detailRow = ref<LensSkill | null>(null)
 const lifecycleAction = ref<SkillLifecycleAction | null>(null)
 const lifecycleTarget = ref<LensSkill | null>(null)
@@ -523,6 +525,7 @@ watch(
     </div>
 
     <InsightSkillDetailDrawer
+      v-if="detailMounted"
       v-model:open="detailOpen"
       :row="detailRow"
       @edit="openEdit"

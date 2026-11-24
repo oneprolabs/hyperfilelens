@@ -5,10 +5,11 @@ import { getNode } from '../lib/nodeApi'
 import { useProxyNodeOptions } from '../composables/useProxyNodeOptions'
 import { usePageRequestScope } from '../composables/usePageRequestScope'
 import { useDrawerTableMaxHeight } from '../composables/useDrawerTableMaxHeight'
+import { useDrawerDetailRequest } from '../composables/useLazyDrawer'
 import type { ApiNode } from '../types/node'
 import NasSourceListTable from './NasSourceListTable.vue'
 import HflPagination from './HflPagination.vue'
-import NasSourceDetailDrawer from '../pages/protection/components/NasSourceDetailDrawer.vue'
+import { NasSourceDetailDrawer } from '../pages/protection/components/lazyNasSourceDetailDrawer'
 
 const props = defineProps<{
   nodeId: number
@@ -24,6 +25,7 @@ const boundProxy = ref<ApiNode[]>([])
 const loading = ref(false)
 const detailOpen = ref(false)
 const detail = ref<SourceResource | null>(null)
+const { detailLoading, loadDetails } = useDrawerDetailRequest(detailOpen)
 const { proxyNodes, proxyOptionsLoading, searchProxyNodes, loadMoreProxyNodes } = useProxyNodeOptions(() => detail.value?.bound_node ?? undefined, true)
 const { tableMaxHeight, containerRef: tableRef } = useDrawerTableMaxHeight()
 
@@ -66,18 +68,12 @@ async function refresh() {
   }
 }
 
-async function openDetail(row: SourceResource) {
-  if (row.id > 0) {
-    try {
-      detail.value = await getSourceResource(row.id)
-    } catch {
-      detail.value = row
-    }
-  } else {
-    detail.value = row
-  }
-  detailOpen.value = true
-  searchProxyNodes('')
+function openDetail(row: SourceResource) {
+  detail.value = row
+  return loadDetails(signal => row.id > 0 ? getSourceResource(row.id, { signal }).catch(() => row) : Promise.resolve(row), resource => {
+    detail.value = resource
+    searchProxyNodes('')
+  })
 }
 
 function onDetailUpdated(resource: SourceResource) {
@@ -122,6 +118,7 @@ watch(
     <NasSourceDetailDrawer
       v-if="detailOpen"
       v-model="detailOpen"
+      :detail-loading="detailLoading"
       :resource="detail"
       :proxy-nodes="proxyNodes"
       :proxy-search="searchProxyNodes"

@@ -66,7 +66,7 @@ import {
   nodePlatformLabel,
   type NodeOsPlatformLabels,
 } from '../../lib/nodeInventoryDisplay'
-import InsightGatewayDetailDrawer from './InsightGatewayDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import { gatewayAiFromInsight } from './gatewayAiStatus'
 import GatewayCompositeStatusCell from './GatewayCompositeStatusCell.vue'
 import PlatformOpsPagination from '../../platform-ops/components/PlatformOpsPagination.vue'
@@ -128,6 +128,8 @@ const deleteStartErrors = ref<Array<{ nodeId: number; name: string; message: str
 watch(deleteOpen, () => { deleteStartErrors.value = [] })
 const moreActionsOpen = ref(false)
 const detailOpen = ref(false)
+const InsightGatewayDetailDrawer = defineLazyDrawer(() => import('./InsightGatewayDetailDrawer.vue'))
+const detailMounted = useDrawerMounted(() => detailOpen.value)
 const detailNodeId = ref<number | null>(null)
 const detailInitialTab = ref<'basic' | 'performance' | 'maintenance'>('basic')
 const detailInitialGatewayAi = ref<ReturnType<typeof gatewayAiFromInsight> | null>(null)
@@ -1374,6 +1376,7 @@ onUnmounted(() => {
     </el-dialog>
 
     <InsightGatewayDetailDrawer
+      v-if="detailMounted"
       v-model="detailOpen"
       :node-id="detailNodeId"
       :initial-tab="detailInitialTab"

@@ -69,7 +69,7 @@ import HflCapacityCell from '../../components/HflCapacityCell.vue'
 import TaskProgressCell from './components/TaskProgressCell.vue'
 import TaskTerminalOutcomeCell from './components/TaskTerminalOutcomeCell.vue'
 import TaskStatusTag from '../../components/TaskStatusTag.vue'
-import TaskDetailDrawer from './components/TaskDetailDrawer.vue'
+import { defineLazyDrawer, useDrawerMounted } from '../../composables/useLazyDrawer'
 import { isTransferProgress, type TransferProgress } from '../../lib/kopiaProgress'
 import TargetRepositoryDetailCard from './components/TargetRepositoryDetailCard.vue'
 import type { TargetRepositoryItem } from './components/TargetRepositoryPicker.vue'
@@ -248,19 +248,9 @@ import { formatOfflineBackupPlanMessage } from './lib/offlineBackupPlanMessage'
 import type { ResourceAction } from '../../composables/useResourceCapabilities'
 import { useBackupSourceCapabilities } from '../../composables/useBackupSourceCapabilities'
 
-const loadFlowBackupSourceDetailDrawer = () => import('./components/FlowBackupSourceDetailDrawer.vue')
 const loadBackupCreateWizard = () => import('./BackupCreateWizard.vue')
 
-let flowBackupSourceDetailDrawerPreload: ReturnType<typeof loadFlowBackupSourceDetailDrawer> | null = null
 let backupCreateWizardPreload: ReturnType<typeof loadBackupCreateWizard> | null = null
-
-function preloadFlowBackupSourceDetailDrawer() {
-  flowBackupSourceDetailDrawerPreload ||= loadFlowBackupSourceDetailDrawer().catch((err) => {
-    flowBackupSourceDetailDrawerPreload = null
-    throw err
-  })
-  return flowBackupSourceDetailDrawerPreload
-}
 
 function preloadBackupCreateWizard() {
   backupCreateWizardPreload ||= loadBackupCreateWizard().catch((err) => {
@@ -283,10 +273,7 @@ function scheduleInteractivePreload(preload: () => Promise<unknown>) {
   window.setTimeout(run, 250)
 }
 
-const FlowBackupSourceDetailDrawer = defineAsyncComponent({
-  loader: preloadFlowBackupSourceDetailDrawer,
-  suspensible: false,
-})
+const FlowBackupSourceDetailDrawer = defineLazyDrawer(() => import('./components/FlowBackupSourceDetailDrawer.vue'))
 const BackupCreateWizard = defineAsyncComponent({
   loader: preloadBackupCreateWizard,
   suspensible: false,
@@ -2157,6 +2144,10 @@ const flowSourceDetailTaskUuid = ref('')
 const flowSourceDetailRestoreRecordId = ref<number | null>(null)
 const flowSourceDetailRestoreRecordTaskUuid = ref('')
 const backupTaskDetailOpen = ref(false)
+const TaskDetailDrawer = defineLazyDrawer(() => import('./components/TaskDetailDrawer.vue'), {
+  titleKey: 'ops.task.detailTitle', loadingLayout: 'task',
+})
+const backupTaskDetailMounted = useDrawerMounted(() => backupTaskDetailOpen.value)
 const backupTaskDetailUuid = ref('')
 const flowSourceDetailRows = computed(() => {
   const rows = Array.from(backupSelectableById.value.values())
@@ -2178,7 +2169,6 @@ function openFlowSourceDetail(
     restoreRecordTaskUuid?: string
   },
 ) {
-  void preloadFlowBackupSourceDetailDrawer().catch(() => undefined)
   flowSourceDetailMounted.value = true
   activeFlowSource.value = row
   const tab = opts?.tab ?? 'overview'
@@ -3073,7 +3063,6 @@ watch(flowMainStep, (step) => {
   if (step !== 0) clearFlowStepLoadRetry(0)
   if (step !== 1) clearFlowStepLoadRetry(1)
   if (step === 1) scheduleInteractivePreload(preloadBackupCreateWizard)
-  if (step === 2) scheduleInteractivePreload(preloadFlowBackupSourceDetailDrawer)
   nextTick(() => {
     updateFlowTableMaxHeight()
     if (!flowBootstrapping.value) {
@@ -3130,7 +3119,6 @@ async function initializeFlow() {
       if (signal.aborted) return
       await refreshFlowStepData(flowMainStep.value)
       if (flowMainStep.value === 1) scheduleInteractivePreload(preloadBackupCreateWizard)
-      if (flowMainStep.value === 2) scheduleInteractivePreload(preloadFlowBackupSourceDetailDrawer)
     }
   }, (failed) => {
     // Promise.all can fail while a sibling count is still in flight. Keep the
@@ -3178,7 +3166,6 @@ async function initializeFlow() {
 
 onMounted(async () => {
   lifecycleOps.restorePersisted()
-  scheduleInteractivePreload(preloadFlowBackupSourceDetailDrawer)
   await initializeFlow()
 })
 
@@ -12890,6 +12877,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
         />
 
         <TaskDetailDrawer
+          v-if="backupTaskDetailMounted"
           v-model="backupTaskDetailOpen"
           :task-uuid="backupTaskDetailUuid"
           :drawer-size="drawerSize"

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { LazyDrawerFrame } from './feedback/LazyDrawerFrame'
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import NodeBasicInfoPanel from './NodeBasicInfoPanel.vue'
@@ -139,6 +140,8 @@ async function refresh() {
   }
 }
 
+let pollTimer: ReturnType<typeof setInterval> | null = null
+
 watch(
   () => [open.value, props.nodeId] as const,
   ([isOpen, id]) => {
@@ -153,9 +156,8 @@ watch(
       stopPolling()
     }
   },
+  { immediate: true },
 )
-
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function stopPolling() {
   if (pollTimer != null) {
@@ -187,7 +189,7 @@ watch(open, (isOpen) => {
   if (isOpen) {
     void nextTick(() => requestAnimationFrame(() => updateDrawerWidth()))
   }
-})
+}, { immediate: true })
 
 onUnmounted(() => {
   stopPolling()
@@ -196,7 +198,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ElDrawer
+  <LazyDrawerFrame
     v-model="open"
     direction="rtl"
     destroy-on-close
@@ -316,7 +318,7 @@ onUnmounted(() => {
         @save="saveDrawerChanges"
       />
     </template>
-  </ElDrawer>
+  </LazyDrawerFrame>
 </template>
 
 <style scoped>
