@@ -281,6 +281,8 @@ export type StorageRepositoryCleanupPreflight = {
   force: boolean
   repository_id: number
   repository_status: string
+  can_retain_unverified_data?: boolean
+  retain_unverified_data?: boolean
   associated_source_count: number
   active_snapshot_count: number
   blockers: StorageRepositoryCleanupBlocker[]

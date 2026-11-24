@@ -45,6 +45,17 @@ function mountCell(task: Record<string, unknown>, fallback?: Record<string, unkn
 }
 
 describe('TaskTerminalOutcomeCell', () => {
+  it('keeps Agent upgrade instructions visible in the backup wizard outcome', () => {
+    const wrapper = mountCell({
+      status: 'failed', error_code: 'AGENT_UPGRADE_REQUIRED',
+      error_message: 'The execution Agent must be upgraded to use Managed Storage.',
+    })
+    const diagnostic = wrapper.get('.task-terminal-outcome__diagnostic')
+    expect(diagnostic.text()).toContain('must be upgraded')
+    expect(diagnostic.text()).not.toContain('Open task details')
+    expect(diagnostic.attributes('data-table-overflow-title')).toBe(diagnostic.text())
+    wrapper.unmount()
+  })
   it('localizes the missing bucket in the backup wizard tooltip', () => {
     const wrapper = mount(TaskTerminalOutcomeCell, {
       props: { task: {

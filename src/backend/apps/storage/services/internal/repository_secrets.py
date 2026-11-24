@@ -221,9 +221,14 @@ def build_repository_runtime_payload(
             ),
             "ownership": ownership_payload_for_node(repository),
         }
-        from .repository_provider import managed_repository_provider
+        from .repository_provider import (
+            assert_managed_repository_agent_compatible,
+            managed_repository_provider,
+        )
         provider = managed_repository_provider(repository)
         if provider is not None:
+            if execution_target is not None:
+                assert_managed_repository_agent_compatible(execution_target.node)
             return provider.runtime_payload(repository, payload)
         return payload
     if repository.repo_type == Repository.Type.PROXY_FS:

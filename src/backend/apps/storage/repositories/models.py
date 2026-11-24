@@ -106,6 +106,7 @@ class Repository(models.Model):
         AWS = "aws", "AWS"
         HUAWEICLOUD = "huaweicloud", "Huawei Cloud"
         ALIYUN = "aliyun", "Aliyun"
+        MINIO = "minio", "MinIO"
         CUSTOM = "custom", "Custom"
 
     class S3BucketMode(models.TextChoices):

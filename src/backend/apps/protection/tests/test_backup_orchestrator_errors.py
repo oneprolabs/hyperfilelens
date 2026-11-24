@@ -8,6 +8,16 @@ from apps.protection.services.backup_orchestrator import (
     _node_task_error_code,
     _redeliver_pending_node_task_after_commit,
 )
+from apps.protection.services.backup_target_validation import (
+    _AgentOutcome,
+    _s3_outcome_result,
+    _validation_exception_result,
+)
+from apps.storage.repositories.models import Repository
+from apps.storage.services.internal.repository_provider import (
+    MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+    ManagedRepositoryAgentUpgradeRequired,
+)
 
 
 class BackupOrchestratorErrorCodeTests(SimpleTestCase):
@@ -65,6 +75,36 @@ class BackupOrchestratorErrorCodeTests(SimpleTestCase):
 
         self.assertEqual(error_code, "AGENT_UNAVAILABLE")
         self.assertIn("Bring the Agent online", message)
+
+    def test_upgrade_required_diagnostic_is_not_reported_as_a_network_failure(self):
+        task = NodeTask(
+            status=NodeTask.Status.FAILED,
+            last_error="internal diagnostic",
+            result={"diagnostic_error_code": "AGENT_UPGRADE_REQUIRED"},
+        )
+        self.assertEqual(
+            _node_task_error_code(task),
+            ("AGENT_UPGRADE_REQUIRED", MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE),
+        )
+
+    def test_target_validation_preserves_upgrade_required_preflight(self):
+        result = _validation_exception_result(ManagedRepositoryAgentUpgradeRequired())
+        self.assertEqual(result.code, "AGENT_UPGRADE_REQUIRED")
+        self.assertEqual(result.message, MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE)
+
+    def test_target_validation_preserves_upgrade_required_delivery(self):
+        result = _s3_outcome_result(
+            _AgentOutcome(
+                ok=False, timed_out=False, status="failed",
+                result={"diagnostic_error_code": "AGENT_UPGRADE_REQUIRED"},
+                message=MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+                task_id="managed-validation",
+            ),
+            repository=Repository(config={}),
+        )
+        self.assertEqual(result.code, "AGENT_UPGRADE_REQUIRED")
+        self.assertEqual(result.message, MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE)
+        self.assertEqual(result.task_id, "managed-validation")
 
     def test_agent_path_protection_errors_are_preserved(self):
         expected_messages = {

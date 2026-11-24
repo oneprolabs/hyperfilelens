@@ -722,11 +722,15 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         repository = self.get_object()
         assert_resource_access(request, "repository", repository.pk, action="protection.backup_data.delete")
+        retain_unverified_data = serializer.validated_data["retain_unverified_data"]
+        if retain_unverified_data:
+            self._authorize_retained_cleanup(request, repository)
         try:
             repository_task = create_repository_cleanup_task(
                 repository=repository,
                 requested_by=request.user,
                 force=serializer.validated_data["force"],
+                retain_unverified_data=retain_unverified_data,
             )
         except RepositoryCleanupBlocked as exc:
             return Response(exc.preflight, status=status.HTTP_409_CONFLICT)
@@ -740,13 +744,27 @@ class _RepositoryViewSetBase(viewsets.ModelViewSet):
     def cleanup_preflight(self, request, pk=None):
         serializer = RepositoryCleanupPreflightSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        repository = self.get_object()
+        retain_unverified_data = serializer.validated_data["retain_unverified_data"]
+        if retain_unverified_data:
+            self._authorize_retained_cleanup(request, repository)
         return Response(
             repository_cleanup_preflight(
-                repository=self.get_object(),
+                repository=repository,
                 force=serializer.validated_data["force"],
+                retain_unverified_data=retain_unverified_data,
             ),
             status=status.HTTP_200_OK,
         )
+
+    def _authorize_retained_cleanup(self, request, repository):
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
+
+        provider = managed_repository_provider(repository)
+        authorize = getattr(provider, "authorize_retained_initialization_cleanup", None)
+        if not callable(authorize):
+            raise PermissionDenied("Managed Storage administration access is required.")
+        authorize(request, repository)
 
     @action(detail=False, methods=["post"], url_path="validate/s3")
     def validate_s3(self, request):

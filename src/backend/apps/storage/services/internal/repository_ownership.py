@@ -125,6 +125,26 @@ def ownership_payload(
     return {**unsigned, "signature": _sign_marker(unsigned)}
 
 
+def repository_initialization_claim(
+    repository: Repository, *, executor_identity: str,
+) -> dict[str, object]:
+    """Bind an initialization claim to its location and durable execution lease.
+
+    This is not a ready/ownership marker. Its distinct purpose and signature
+    prevent a claim from being promoted or copied to another execution journal.
+    """
+    unsigned = {
+        **{key: value for key, value in ownership_payload(repository).items()
+           if key != "signature"},
+        "purpose": "managed_repository_initialization",
+        "executor_identity": executor_identity,
+        "endpoint_digest": hashlib.sha256(
+            repository_control_endpoint(repository.config).rstrip("/").encode()
+        ).hexdigest(),
+    }
+    return {**unsigned, "signature": _sign_marker(unsigned)}
+
+
 def inspect_s3_repository_initialization(
     repository: Repository,
 ) -> S3RepositoryInitializationState:
@@ -571,6 +591,7 @@ __all__ = [
     "repository_location_digest",
     "reset_s3_legacy_marker_for_initialization_recovery",
     "s3_repository_ownership_marker",
+    "repository_initialization_claim",
     "verify_s3_repository_deletion_ownership",
     "verify_s3_repository_ownership",
 ]

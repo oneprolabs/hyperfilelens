@@ -79,6 +79,42 @@ describe('Unified Backup Wizard access', () => {
       .toContain("props.configurationScope ? { scope: 'backup_configurations'")
   })
 
+  it('requires configuration Manage and data Delete for reset, matching its API', () => {
+    const configs = ref([{ id: 1 }])
+    const grants = ref(new Set(['manage', 'delete_data']))
+    const lifecycle = ref(true)
+    const busy = ref(false)
+    const canReset = new Function(
+      'computed', 'step3LifecycleActionsEnabled', 'step3SourceSelection',
+      'sourceBackupConfigs', 'resourcePermissions', 'sourceHasRunningBackupOrRestore',
+      transpile(
+        between(page, 'const sourceCanCleanup =', 'const wizardTagActionOpen =')
+        + '\n' + between(page, 'const step3ResetEnabled =', 'const step1UnregisterEnabled ='),
+      ) + '\nreturn step3ResetEnabled;',
+    )(
+      computed, lifecycle, ref([{ id: 'agent:1' }]), () => configs.value,
+      { permitted: (_kind: string, id: number, action: string) => id === 1 && grants.value.has(action) },
+      () => busy.value,
+    )
+    // Reset keeps its Manage + data Delete contract; Deregister separately
+    // requires configuration Delete. Neither operation requires repository Delete.
+    expect(canReset.value).toBe(true)
+    grants.value = new Set(['manage', 'delete'])
+    expect(canReset.value).toBe(false)
+    grants.value = new Set(['delete', 'delete_data'])
+    expect(canReset.value).toBe(false)
+    grants.value = new Set(['manage', 'delete', 'delete_data'])
+    busy.value = true
+    expect(canReset.value).toBe(false)
+    busy.value = false
+    lifecycle.value = false
+    expect(canReset.value).toBe(false)
+    lifecycle.value = true
+    // Source ownership does not confer Delete on another configuration.
+    configs.value = [{ id: 1 }, { id: 2 }]
+    expect(canReset.value).toBe(false)
+  })
+
   it('hydrates config edit sources through configuration scope without broadening target discovery', () => {
     const source = between(editor, 'async function loadWizardSources(', 'watch(restoreTargetCatalog.allRecords')
     expect(source).toContain('editConfigs.value.map(sourceIdFromConfig)')

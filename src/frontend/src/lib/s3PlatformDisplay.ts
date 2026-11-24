@@ -3,6 +3,8 @@ export type S3StoragePlatform =
   | 'huaweicloud'
   | 'tencent'
   | 'aws'
+  | 'rustfs'
+  | 'minio'
   | 'gcp'
   | 'azure'
   | 'other'
@@ -23,18 +25,22 @@ const PLATFORM_LABEL_KEYS: Record<S3StoragePlatform, string> = {
   huaweicloud: 'addS3Repo.platformHuawei',
   tencent: 'addS3Repo.platformTencent',
   aws: 'addS3Repo.platformAws',
+  rustfs: 'addS3Repo.platformRustfs',
+  minio: 'addS3Repo.platformMinio',
   gcp: 'addS3Repo.platformGcp',
   azure: 'addS3Repo.platformAzure',
   other: 'addS3Repo.platformOtherS3',
   custom: 'addS3Repo.platformOtherS3',
 }
 
-/** Cloud brand icons from newmuse; `other` / `custom` use the shared Database lucide icon in UI. */
+/** Local provider brand assets; `other` / `custom` use the shared Database lucide icon in UI. */
 export const S3_PLATFORM_ICON_URLS: Record<S3StoragePlatform, string> = {
   aliyun: '/cloud-platforms/aliyun.svg',
   huaweicloud: '/cloud-platforms/huawei.svg',
   tencent: '/cloud-platforms/tencent.svg',
   aws: '/cloud-platforms/aws.svg',
+  rustfs: '/cloud-platforms/rustfs.svg',
+  minio: '/cloud-platforms/minio.png',
   gcp: '/cloud-platforms/gcp.svg',
   azure: '/cloud-platforms/azure.svg',
   other: '/cloud-platforms/other.svg',
@@ -43,7 +49,8 @@ export const S3_PLATFORM_ICON_URLS: Record<S3StoragePlatform, string> = {
 
 export function normalizeS3StoragePlatform(raw: string | undefined | null): S3StoragePlatform {
   const value = (raw || '').trim().toLowerCase()
-  if (value === 'aliyun' || value === 'huaweicloud' || value === 'tencent' || value === 'aws') return value
+  if (value === 'aliyun' || value === 'huaweicloud' || value === 'tencent' || value === 'aws' || value === 'minio') return value
+  if (value === 'rustfs') return 'rustfs'
   if (value === 'gcp') return 'gcp'
   if (value === 'azure') return 'azure'
   if (value === 'other') return 'other'

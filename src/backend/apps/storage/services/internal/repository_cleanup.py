@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -29,7 +30,13 @@ from apps.storage.repositories.models import (
     RepositoryTask,
     RepositoryUsageShard,
 )
-from apps.storage.services.internal.repository_errors import RepositoryCleanupAuthorizationLost
+from apps.storage.services.internal.repository_errors import (
+    ManagedInitializationPending, RepositoryCleanupAuthorizationLost,
+)
+from apps.storage.services.internal.repository_retained_cleanup import (
+    can_retain_unverified_data,
+    retains_unverified_data,
+)
 from apps.storage.services.internal.repository_access import repository_payload_for_node
 from apps.storage.services.internal.proxy_fs_repository import (
     proxy_fs_uses_managed_subdir,
@@ -344,6 +351,7 @@ def repository_cleanup_preflight(
     force: bool = False,
     allow_associations: bool = False,
     ignored_task_ids: Iterable[int] = (),
+    retain_unverified_data: bool = False,
 ) -> dict[str, Any]:
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -584,11 +592,37 @@ def repository_cleanup_preflight(
         .select_related("task", "execution_target", "triggered_by_task")
         .first()
     )
+    retention_candidate = (
+        bool(residual_claim_count) and not force and not allow_associations
+        and can_retain_unverified_data(repository)
+    )
+    retention_allowed = bool(
+        retention_candidate
+        and blockers
+        and all(item["code"] == "repository_ownership_unverified" for item in blockers)
+    )
+    if retain_unverified_data:
+        if not retention_candidate:
+            blockers.append({
+                "code": "unverified_data_retention_unavailable",
+                "detail": "Only failed Managed Repository initialization with unverified residual data can use this deletion mode.",
+            })
+        else:
+            blockers = [
+                item for item in blockers
+                if item["code"] != "repository_ownership_unverified"
+            ]
+            warnings.append({
+                "code": "unverified_repository_data_retained",
+                "detail": "The repository registration will be deleted. Unverified cloud data will be retained for manual review.",
+            })
     return {
         "allowed": not blockers,
         "force": force,
         "repository_id": repository.id,
         "repository_status": repository.status,
+        "can_retain_unverified_data": retention_allowed,
+        "retain_unverified_data": retain_unverified_data,
         "associated_source_count": associated_source_count,
         "active_snapshot_count": snapshot_count,
         "snapshot_count": snapshot_count,
@@ -609,7 +643,10 @@ def create_repository_cleanup_task(
     requested_by=None,
     force: bool = False,
     dispatch: bool = True,
+    retain_unverified_data: bool = False,
 ) -> RepositoryTask:
+    if force and retain_unverified_data:
+        raise ValidationError("Retaining unverified data cannot be combined with Force Delete.")
     existing = (
         _logical_cleanup_tasks(repository)
         .filter(
@@ -619,7 +656,7 @@ def create_repository_cleanup_task(
         .first()
     )
     if existing is not None:
-        if existing.force == force:
+        if existing.force == force and retains_unverified_data(existing.task) == retain_unverified_data:
             return existing
         raise ValidationError(
             {
@@ -641,7 +678,9 @@ def create_repository_cleanup_task(
         if latest is not None:
             return latest
 
-    preflight = repository_cleanup_preflight(repository=repository, force=force)
+    preflight = repository_cleanup_preflight(
+        repository=repository, force=force, retain_unverified_data=retain_unverified_data,
+    )
     if not preflight["allowed"]:
         raise RepositoryCleanupBlocked(preflight)
 
@@ -659,7 +698,7 @@ def create_repository_cleanup_task(
             .first()
         )
         if active is not None:
-            if active.force == force:
+            if active.force == force and retains_unverified_data(active.task) == retain_unverified_data:
                 return active
             raise ValidationError(
                 {
@@ -692,7 +731,9 @@ def create_repository_cleanup_task(
                     "detail": f"Repository in status {locked.status} cannot be cleaned up."
                 }
             )
-        second_preflight = repository_cleanup_preflight(repository=locked, force=force)
+        second_preflight = repository_cleanup_preflight(
+            repository=locked, force=force, retain_unverified_data=retain_unverified_data,
+        )
         if not second_preflight["allowed"]:
             raise RepositoryCleanupBlocked(second_preflight)
 
@@ -725,6 +766,7 @@ def create_repository_cleanup_task(
             force=force,
             triggered_by_task=None,
             release_residual_only=residual_cleanup,
+            retain_unverified_data=retain_unverified_data,
         )
         _inherit_cleanup_owner_verification(repository_task)
         _write_cleanup_audit(
@@ -1039,7 +1081,16 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             "idempotent": True,
         }
 
+    retain_unverified_data = retains_unverified_data(task)
+    execution_guard = ExitStack()
     try:
+        if retain_unverified_data:
+            from apps.storage.services.internal.repository_initialization_execution import (
+                initialization_execution,
+            )
+            # A terminated Worker may have left a live Kopia child. Keep its
+            # kernel fence through validation AND metadata finalization.
+            execution_guard.enter_context(initialization_execution(repository_task.repository))
         probe_wait = _wait_for_automatic_repository_health_probes(
             repository_task=repository_task,
             task=task,
@@ -1047,7 +1098,8 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
         if probe_wait is not None:
             return probe_wait
         resuming_physical_delete = (
-            not started_now
+            not retain_unverified_data
+            and not started_now
             and task.current_step == "delete_physical_repository"
             and int(task.progress or 0) >= 40
         )
@@ -1078,6 +1130,7 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                 force=repository_task.force,
                 allow_associations=is_target_cleanup,
                 ignored_task_ids=ignored_task_ids,
+                retain_unverified_data=retain_unverified_data,
             )
             if not preflight["allowed"]:
                 raise RepositoryCleanupBlocked(preflight)
@@ -1154,6 +1207,7 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             not physical_cleanup_complete
             and not repository_task.force
             and not retained_unmounted_nas
+            and not retain_unverified_data
         ):
             cleanup_failures = [
                 item
@@ -1187,7 +1241,7 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                     else []
                 ),
             }
-        elif retained_unmounted_nas:
+        elif retained_unmounted_nas or retain_unverified_data:
             result = {
                 **result,
                 "force": bool(repository_task.force),
@@ -1200,11 +1254,15 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                 task=task,
                 step=task.steps.filter(step_name="delete_physical_repository").first(),
                 level=TaskEvent.Level.WARN,
-                message="Remote NAS repository cleanup skipped because the target was not mounted",
+                message=(
+                    "Unverified Managed Repository data retained; no storage delete was attempted"
+                    if retain_unverified_data else
+                    "Remote NAS repository cleanup skipped because the target was not mounted"
+                ),
                 metadata={
                     "owner_node_id": repository_task.owner_node_id,
-                    "mount_status": "not_mounted",
-                    "physical_cleanup": "skipped_unmounted",
+                    **({"mount_status": "not_mounted"} if retained_unmounted_nas else {}),
+                    "physical_cleanup": result["physical_cleanup"],
                     "retained_resources": result["retained_resources"],
                 },
             )
@@ -1242,7 +1300,7 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
                     Repository.CleanupResult.PRESERVED
                     if result.get("physical_cleanup") == "preserved_legacy_directory"
                     else Repository.CleanupResult.FORCE_SKIPPED
-                    if retained_unmounted_nas
+                    if retained_unmounted_nas or retain_unverified_data
                     else None
                 ),
             )
@@ -1261,6 +1319,12 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             "status": "success",
             "repository_task_id": repository_task.id,
             **scrub_secrets(result),
+        }
+    except ManagedInitializationPending:
+        return {
+            "status": "waiting",
+            "repository_task_id": repository_task.id,
+            "waiting_for": "managed_repository_initialization",
         }
     except RepositoryAgentOperationStateUnknown as exc:
         safe_message = str(exc)[:2000]
@@ -1343,6 +1407,8 @@ def run_repository_cleanup_task(*, repository_task_id: int) -> dict[str, Any]:
             "repository_task_id": repository_task.id,
             "error": safe_message,
         }
+    finally:
+        execution_guard.close()
 
 
 def repository_cleanup_task_payload(repository_task: RepositoryTask) -> dict[str, Any]:
@@ -1490,6 +1556,10 @@ def _active_repository_tasks(*, repository: Repository):
         .filter(
             Q(status__in=ACTIVE_TASK_STATUSES)
             | Q(
+                id__in=operation_task_ids,
+                status__in=[Task.Status.WAITING, Task.Status.BLOCKED],
+            )
+            | Q(
                 task_type=Task.Type.BACKUP_CONFIG_PROVISION,
                 status__in=[Task.Status.WAITING, Task.Status.BLOCKED],
             )
@@ -1626,6 +1696,7 @@ def _create_cleanup_task(
     triggered_by_task: Task | None,
     replaces_task: Task | None = None,
     release_residual_only: bool = False,
+    retain_unverified_data: bool = False,
 ) -> RepositoryTask:
     owner_type = (
         target.owner_type if target else RepositoryExecutionTarget.OwnerType.CONTROLLER
@@ -1672,6 +1743,10 @@ def _create_cleanup_task(
             "operation_type": operation_type,
             "target_key": target.target_key if target else "",
             "force": force,
+            "retain_unverified_data": bool(
+                retain_unverified_data
+                or (replaces_task is not None and retains_unverified_data(replaces_task))
+            ),
             "release_residual_only": bool(
                 release_residual_only
                 or (
@@ -1872,6 +1947,7 @@ def _create_replacement_cleanup_task(
         force=original.force,
         allow_associations=is_target_cleanup,
         ignored_task_ids=ignored_task_ids,
+        retain_unverified_data=retains_unverified_data(original_task),
     )
     if not preflight["allowed"]:
         return None
@@ -1941,6 +2017,28 @@ def _execute_physical_cleanup(
 ) -> dict[str, Any] | RepositoryAgentOperationResult:
     repository = repository_task.repository
     target = repository_task.execution_target
+    if retains_unverified_data(repository_task.task):
+        # This mode NEVER reaches a cloud/Agent delete or establishes ownership.
+        # It was separately confirmed by the administrator and rechecked above.
+        repository.refresh_from_db()
+        if repository_task.force or not can_retain_unverified_data(repository):
+            raise ValidationError("The confirmed unverified-data deletion mode is no longer applicable.")
+        from apps.storage.services.internal.repository_provider import managed_repository_provider
+
+        provider = managed_repository_provider(repository)
+        authorize = getattr(provider, "verify_retained_cleanup_authority", None)
+        if not callable(authorize):
+            raise ValidationError("Managed Repository cleanup authority is unavailable.")
+        authorize(repository_task)
+        return {
+            "physical_cleanup": "retained_unverified",
+            "cleanup_complete": False,
+            "retained_resources": _retained_repository_resources(repository_task),
+            "cleanup_failures": [{
+                "code": "REPOSITORY_OWNERSHIP_UNVERIFIED",
+                "detail": "Cloud data was retained because repository ownership could not be verified.",
+            }],
+        }
     if (repository_task.task.request_payload or {}).get("release_residual_only"):
         if (
             not repository_task.force
@@ -2757,6 +2855,14 @@ def _apply_cleanup_success(
                     repository_subdir=target.repository_subdir,
                 ).update(is_active=False)
         else:
+            if retains_unverified_data(repository_task.task):
+                preflight = repository_cleanup_preflight(
+                    repository=repository,
+                    ignored_task_ids=[repository_task.task_id],
+                    retain_unverified_data=True,
+                )
+                if not preflight["allowed"]:
+                    raise RepositoryCleanupBlocked(preflight)
             if repository_task.force:
                 # Do not release a location while another task could still
                 # write to it. The current cleanup task is the only exception.
@@ -3130,6 +3236,7 @@ def _write_cleanup_audit(
             "task_uuid": str(task.task_uuid),
             "operation_type": repository_task.operation_type,
             "force": repository_task.force,
+            "retain_unverified_data": retains_unverified_data(task),
             "target_id": repository_task.execution_target_id,
             "triggered_by_task_uuid": (
                 str(repository_task.triggered_by_task.task_uuid)

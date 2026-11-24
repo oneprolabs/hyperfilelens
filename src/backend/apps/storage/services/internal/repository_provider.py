@@ -1,12 +1,41 @@
 """Fail-closed resolution of extension-owned repository credentials."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from django.core.exceptions import ValidationError
 
 from common.extension_spi import get_repository_provider
 
+if TYPE_CHECKING:
+    from apps.node.models import Node
+
 MANAGED_CREDENTIAL_MODE = "repository_temporary_identity_v1"
+MANAGED_REPOSITORY_AGENT_CAPABILITY = "repository_s3_temporary_credentials_v2"
+MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE = (
+    "The execution Agent must be upgraded to use Managed Storage. "
+    "Upgrade it from Source Hosts, then retry the operation."
+)
+
+
+class ManagedRepositoryAgentUpgradeRequired(ValidationError):
+    """A deterministic incompatibility, not a retryable transport failure."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+            code="AGENT_UPGRADE_REQUIRED",
+        )
+
+
+def assert_managed_repository_agent_compatible(node: Node) -> None:
+    """Require the current scoped-credential protocol before Agent execution."""
+    from apps.node.services.capabilities import node_supports_capability
+
+    if not node_supports_capability(node, MANAGED_REPOSITORY_AGENT_CAPABILITY):
+        raise ManagedRepositoryAgentUpgradeRequired()
 
 
 @dataclass(frozen=True)

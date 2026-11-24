@@ -23,6 +23,8 @@
   "addS3Repo.platformAzure",
   "addS3Repo.platformGcp",
   "addS3Repo.platformHuawei",
+  "addS3Repo.platformMinio",
+  "addS3Repo.platformRustfs",
   "addS3Repo.platformTencent",
   "addS3Repo.tlsUseNo",
   "common.deleteKeyword",

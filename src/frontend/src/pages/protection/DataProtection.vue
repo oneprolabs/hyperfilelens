@@ -5196,6 +5196,7 @@ function selectionHasRunningBackupOrRestore(sourceIds: string[]) {
 
 const step3ResetEnabled = computed(() =>
   step3LifecycleActionsEnabled.value
+  // Match POST backup-configs/reset: configuration Manage + data Delete.
   && step3SourceSelection.value.every((row) => sourceCanCleanup(row, 'manage'))
   && !step3SourceSelection.value.some((row) => sourceHasRunningBackupOrRestore(row.id)),
 )

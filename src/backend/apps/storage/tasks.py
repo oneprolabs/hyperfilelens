@@ -782,6 +782,11 @@ def reconcile_repository_operations(*, limit: int = 100):
             due_at__gt=timezone.now(),
         )
         .exclude(
+            task__status=Task.Status.WAITING,
+            task__error_code="MANAGED_REPOSITORY_INITIALIZATION_PENDING",
+            due_at__gt=timezone.now(),
+        )
+        .exclude(
             operation_type=RepositoryTask.OperationType.SNAPSHOT_RECONCILE,
             task__error_code="ORPHAN_EXECUTION_CONFIRMING",
             due_at__gt=timezone.now(),

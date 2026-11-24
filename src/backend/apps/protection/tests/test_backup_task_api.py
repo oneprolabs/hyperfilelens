@@ -56,6 +56,10 @@ from apps.storage.services.internal.repository_location import (
     mark_repository_location_ownership_verified,
     reserve_repository_location,
 )
+from apps.storage.services.internal.repository_provider import (
+    MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+    ManagedRepositoryAgentUpgradeRequired,
+)
 from apps.task.models import Task, TaskEvent, TaskResource, TaskStep
 from apps.task.services.interface import create_task
 from common.errors import AppError
@@ -2531,6 +2535,64 @@ class ProtectionBackupTaskApiTests(TestCase):
             [attempt.payload["policy_attempt"] for attempt in attempts], [1, 2]
         )
         self.assertEqual(mock_run_agent_task_async.call_count, 2)
+
+    @patch(
+        "apps.protection.services.backup_orchestrator._repository_payload_for_backup",
+        side_effect=ManagedRepositoryAgentUpgradeRequired,
+    )
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_managed_repository_preflight_preserves_upgrade_required(
+        self, dispatch, _repository_payload,
+    ):
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="managed-agent-preflight",
+        )
+
+        result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        task.refresh_from_db()
+        snapshot.refresh_from_db()
+        for item in (task, snapshot):
+            self.assertEqual(item.error_code, "AGENT_UPGRADE_REQUIRED")
+            self.assertEqual(item.error_message, MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE)
+        dispatch.assert_not_called()
+
+    @patch("apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh")
+    @patch("apps.protection.services.backup_orchestrator.run_agent_task_async")
+    def test_policy_prepare_does_not_retry_an_incompatible_agent(
+        self, dispatch, _usage_refresh,
+    ):
+        _usage_refresh.return_value = {"queued": True, "task_id": "usage-refresh"}
+        self.agent.metadata = {
+            "inventory": {"capabilities": ["backup_prepared_snapshot_v1"]},
+        }
+        self.agent.save(update_fields=["metadata"])
+        task, snapshot = self._create_backup_task_and_snapshot(
+            idempotency_key="managed-agent-policy-failure",
+        )
+        dispatch.side_effect = self._mock_run_agent_task_async([self._async_outcome(
+            status=NodeTask.Status.FAILED, kopia_snapshot_id="",
+            result={"diagnostic_error_code": "AGENT_UPGRADE_REQUIRED"},
+            last_error=MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE,
+        )])
+
+        with patch.object(
+            protection_conf, "PROTECTION_BACKUP_POLICY_PREPARE_MAX_RETRIES", 3,
+        ):
+            self._run_orchestrated_backup(task=task, snapshot=snapshot)
+            result = self._run_orchestrated_backup(task=task, snapshot=snapshot)
+            self._run_orchestrated_backup(task=task, snapshot=snapshot)
+
+        self.assertEqual(result["status"], Task.Status.FAILED)
+        row = snapshot.directories.get()
+        task.refresh_from_db()
+        snapshot.refresh_from_db()
+        for item in (row, snapshot, task):
+            self.assertEqual(item.error_code, "AGENT_UPGRADE_REQUIRED")
+            self.assertEqual(item.error_message, MANAGED_REPOSITORY_AGENT_UPGRADE_MESSAGE)
+        self.assertEqual(row.status, BackupSourceSnapshotDirectory.Status.FAILED)
+        dispatch.assert_called_once()
 
     @patch(
         "apps.protection.services.backup_orchestrator.enqueue_repository_usage_refresh"

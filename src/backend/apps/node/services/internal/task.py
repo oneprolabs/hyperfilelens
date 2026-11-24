@@ -30,6 +30,9 @@ from apps.node.services.internal.repository_cache_policy import (
     attach_node_kopia_cache_policy,
 )
 from apps.storage.crypto import decrypt_text, encrypt_text
+from apps.storage.services.internal.repository_provider import (
+    ManagedRepositoryAgentUpgradeRequired,
+)
 
 if TYPE_CHECKING:
     from apps.task.models import Task
@@ -861,9 +864,11 @@ def _mark_task_reconnecting(*, task: NodeTask) -> NodeTask:
     return task
 
 
-def _fail_task_delivery(*, task: NodeTask, reason: str) -> NodeTask:
+def _fail_task_delivery(
+    *, task: NodeTask, reason: str, error_code: str = "",
+) -> NodeTask:
     result = _without_delivery_runtime_state(task.result)
-    result["diagnostic_error_code"] = _delivery_diagnostic_error_code(reason)
+    result["diagnostic_error_code"] = error_code or _delivery_diagnostic_error_code(reason)
     updated = NodeTask.objects.filter(
         pk=task.pk,
         status=NodeTask.Status.PENDING,
@@ -885,7 +890,7 @@ def _fail_task_delivery(*, task: NodeTask, reason: str) -> NodeTask:
         task_id=str(task.id),
         message=_terminal_stream_message(task),
     )
-    if task.correlation_type in {
+    if error_code == "AGENT_UPGRADE_REQUIRED" or task.correlation_type in {
         "source.connection_probe",
         "storage.repository_health",
         "protection.snapshot_delete",
@@ -1162,6 +1167,13 @@ def _deliver_agent_task(
         task.refresh_from_db()
         _sync_task_info(task)
         logger.info("agent task dispatched %s status=%s", ctx, task.status)
+    except ManagedRepositoryAgentUpgradeRequired as exc:
+        # Retrying an unsupported credential protocol cannot make progress.
+        # Keep this distinct from ambiguous transport failures, which must
+        # remain retryable for durable ACK commands.
+        task = _fail_task_delivery(
+            task=task, reason=exc.message, error_code=exc.code,
+        )
     except _DOWNLINK_ERRORS as exc:
         logger.warning(
             "agent task dispatch failed %s error=%s",

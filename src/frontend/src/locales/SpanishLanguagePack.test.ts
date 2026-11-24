@@ -131,6 +131,15 @@ describe('Spanish language pack', () => {
     expect(spanish.nodesDeploy.proxyIntroDesc).toContain('recursos compartidos NAS')
   })
 
+  it('uses the reviewed backup terminology for managed repository provisioning', () => {
+    expect(spanish.managedStorage.provision.description).toBe(
+      'Cree un repositorio de copias de seguridad administrado para cada miembro de Personal Edition que aún no tenga uno.',
+    )
+    expect(spanish.managedStorage.provision.defaultConnectionHint).toBe(
+      'Se utilizará para crear nuevos repositorios de copias de seguridad administrados.',
+    )
+  })
+
   it('contains no migration markers or unrelated writing systems', () => {
     const serialized = JSON.stringify(spanish)
     const containsUnrelatedWritingSystem = Array.from(serialized).some((character) => {
