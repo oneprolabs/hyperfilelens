@@ -44,9 +44,25 @@ const Button = defineComponent({
     return () => h('button', { disabled: props.disabled || props.loading }, slots.default?.())
   },
 })
+const Switch = defineComponent({
+  inheritAttrs: false,
+  props: ['modelValue', 'disabled'],
+  emits: ['update:modelValue', 'change'],
+  setup(props, { attrs, emit }) {
+    return () => h('input', {
+      ...attrs, type: 'checkbox', checked: props.modelValue, disabled: props.disabled,
+      onChange: (event: Event) => {
+        const value = (event.target as HTMLInputElement).checked
+        emit('update:modelValue', value)
+        emit('change', value)
+      },
+    })
+  },
+})
 const wrappers: ReturnType<typeof mount>[] = []
 let state: Record<string, unknown>
 const path = '/api/v1/platform-ops/platform/settings/external-access'
+const compatibilityPath = '/api/v1/instance-settings/external-access/compatibility'
 
 function render() {
   const wrapper = mount(ExternalAccessSettings, {
@@ -55,7 +71,7 @@ function render() {
       directives: { loading: {} },
       stubs: {
         ModulePage: { template: '<main><slot /></main>' },
-        ElInput: Input, ElButton: Button, ElAlert: true,
+        ElInput: Input, ElButton: Button, ElSwitch: Switch, ElAlert: true,
       },
     },
   })
@@ -82,6 +98,10 @@ describe('External Access Product Website setting', () => {
     }
     mocks.profile.mockResolvedValue(null)
     mocks.api.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === compatibilityPath && init?.method === 'PATCH') {
+        state.compatibility = JSON.parse(init.body as string)
+        return { compatibility: state.compatibility }
+      }
       if (url !== path) throw new Error(`Unexpected request: ${url}`)
       if (init?.method === 'PATCH') {
         const patch = JSON.parse(init.body as string)
@@ -110,6 +130,73 @@ describe('External Access Product Website setting', () => {
     expect(wrapper.text()).toContain('Defaults to https://192.168.8.69:11442.')
     expect(button(wrapper, en.platformOps.settings.saveChanges).attributes('disabled')).toBeDefined()
     expect(body()).toBeUndefined()
+    expect(wrapper.find('[data-testid="sts-compatibility"]').exists()).toBe(false)
+  })
+
+  it('saves connection compatibility independently without submitting address drafts', async () => {
+    state.compatibility = { aliyun_sts_proxy_compatibility_enabled: false }
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.findAll('.platform-settings__panel')).toHaveLength(1)
+    const panel = wrapper.get('.platform-settings__panel')
+    expect(panel.get('h3').text()).toBe('Access Configuration')
+    const rows = panel.findAll('.platform-settings__rows > .platform-settings__setting-row')
+    expect(rows).toHaveLength(3)
+    expect(rows[1]!.find('#product-website-url').exists()).toBe(true)
+    expect(rows[2]!.attributes('data-testid')).toBe('sts-compatibility')
+    expect(rows[2]!.text()).toContain('Alibaba Cloud STS Proxy Compatibility')
+    await wrapper.get('#product-website-url').setValue('https://draft.example/')
+    await wrapper.get('#aliyun-sts-proxy-compatibility').setValue(true)
+    await flushPromises()
+    const patches = mocks.api.mock.calls.filter(([, init]) => init?.method === 'PATCH')
+    expect(patches).toHaveLength(1)
+    expect(patches[0]![0]).toBe(compatibilityPath)
+    expect(JSON.parse(patches[0]![1].body)).toEqual({ aliyun_sts_proxy_compatibility_enabled: true })
+    expect((wrapper.get('#product-website-url').element as HTMLInputElement).value).toBe('https://draft.example/')
+    expect(button(wrapper, en.platformOps.settings.saveChanges).attributes('disabled')).toBeUndefined()
+    expect(mocks.clear).not.toHaveBeenCalled()
+    expect(mocks.profile).not.toHaveBeenCalled()
+  })
+
+  it('preserves the switch across address saving and restoring defaults', async () => {
+    state.compatibility = { aliyun_sts_proxy_compatibility_enabled: true }
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('#aliyun-sts-proxy-compatibility').element.checked).toBe(true)
+    await wrapper.get('#product-website-url').setValue('https://public.example/')
+    await button(wrapper, en.platformOps.settings.saveChanges).trigger('click')
+    await flushPromises()
+    await button(wrapper, en.platformOps.settings.externalAccess.restoreDefaults).trigger('click')
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('#aliyun-sts-proxy-compatibility').element.checked).toBe(true)
+    expect(mocks.api.mock.calls.filter(([url]) => url === compatibilityPath)).toHaveLength(0)
+    expect(state.compatibility).toEqual({ aliyun_sts_proxy_compatibility_enabled: true })
+  })
+
+  it('ignores stale compatibility snapshots from a concurrent address save', async () => {
+    state.compatibility = { aliyun_sts_proxy_compatibility_enabled: false }
+    const wrapper = render()
+    await flushPromises()
+    let finish!: (response: unknown) => void
+    const snapshot = { ...state }
+    mocks.api.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    await wrapper.get('#product-website-url').setValue('https://public.example/')
+    await button(wrapper, en.platformOps.settings.saveChanges).trigger('click')
+    await wrapper.get('#aliyun-sts-proxy-compatibility').setValue(true)
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('#aliyun-sts-proxy-compatibility').element.checked).toBe(true)
+    finish({ ...snapshot, product_website_url: 'https://public.example/' })
+    await flushPromises()
+    expect(wrapper.get<HTMLInputElement>('#aliyun-sts-proxy-compatibility').element.checked).toBe(true)
+    expect(mocks.error).not.toHaveBeenCalled()
+  })
+
+  it('hides compatibility controls for community payloads with no supported controls', async () => {
+    state.compatibility = {}
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="sts-compatibility"]').exists()).toBe(false)
+    expect(wrapper.find('#product-website-url').exists()).toBe(true)
   })
 
   it('saves only Website when the external access field is unchanged', async () => {

@@ -81,6 +81,8 @@ function decorateDocSidebar(path: string) {
       '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="14" width="16" height="6" rx="1"/><path d="M8 7h.01M8 17h.01"/></svg>',
       '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="9" width="16" height="7" rx="1"/><path d="M8 9V6M12 9V5M16 9V6M7 19h10M9 13h.01M12 13h.01M15 13h.01"/></svg>',
       '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-6 4 12 2-6h6"/></svg>',
+      // UserRoundCog — Personal Edition operators, using the existing line-icon treatment.
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.305 19.53.923-.382"/><path d="m15.228 16.852-.923-.383"/><path d="m16.852 15.228-.383-.923"/><path d="m16.852 20.772-.383.924"/><path d="m19.148 15.228.383-.923"/><path d="m19.53 21.696-.382-.924"/><path d="M2 21a8 8 0 0 1 10.434-7.62"/><path d="m20.772 16.852.924-.383"/><path d="m20.772 19.148.924.383"/><circle cx="10" cy="8" r="5"/><circle cx="18" cy="18" r="3"/></svg>',
     ],
     help: [
       '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4.2 1.8c-1 .8-1.7 1.2-1.7 2.7M12 17h.01"/></svg>',

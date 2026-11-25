@@ -6,6 +6,7 @@ from django.conf import settings
 from django.http import HttpResponseBase
 
 from apps.iam.models import Membership
+from apps.iam.services.login_organizations import login_memberships
 from apps.iam.services.login_audit import record_user_login
 from apps.iam.services.token_service import (
     blacklist_all_user_tokens,
@@ -67,12 +68,7 @@ def set_auth_cookies(
 
 
 def issue_auth_tokens_for_user(user, request) -> tuple[str, str, str, Membership | None]:
-    membership = (
-        Membership.objects.filter(user=user, is_active=True, organization__is_active=True)
-        .select_related("organization")
-        .order_by("id")
-        .first()
-    )
+    membership = login_memberships(user).first()
     if membership is not None:
         record_user_login(user, request, organization=membership.organization)
 

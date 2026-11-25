@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import ModulePage from '../../../../components/ModulePage.vue'
+import ConnectionCompatibilitySettings from './ConnectionCompatibilitySettings.vue'
 import { clearDeployProfileCache, fetchDeployProfile } from '../../../../composables/useDeployProfile'
 import { apiErrorMessage } from '../../../../lib/api'
 import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
@@ -42,6 +43,12 @@ function applyPayload(payload: PlatformExternalAccessSettings) {
   // Show the URL currently in effect (Runtime override, else Deployment/Default).
   externalAccessUrl.value = payload.external_access_url || payload.effective_url || ''
   productWebsiteUrl.value = payload.product_website_url || payload.default_product_website_url || ''
+}
+
+function compatibilitySaved(enabled: boolean) {
+  if (meta.value) {
+    meta.value.compatibility = { aliyun_sts_proxy_compatibility_enabled: enabled }
+  }
 }
 
 async function load() {
@@ -183,6 +190,11 @@ onMounted(load)
                   </p>
                 </div>
               </div>
+              <ConnectionCompatibilitySettings
+                v-if="typeof meta.compatibility?.aliyun_sts_proxy_compatibility_enabled === 'boolean'"
+                :initial-value="meta.compatibility?.aliyun_sts_proxy_compatibility_enabled === true"
+                @saved="compatibilitySaved"
+              />
             </div>
             <p
               v-if="validationError"

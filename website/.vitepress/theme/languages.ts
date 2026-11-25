@@ -122,9 +122,16 @@ const englishDocRoutes = new Set([
   '/docs/deployment/agent',
   '/docs/deployment/proxy',
   '/docs/deployment/data-gateway',
+  '/docs/deployment/repository-cache',
   '/docs/deployment/lifecycle',
   '/docs/deployment/operations',
   '/docs/deployment/uninstall',
+  '/docs/deployment/personal-edition/managed-storage/',
+  '/docs/deployment/personal-edition/managed-storage/huawei',
+  '/docs/deployment/personal-edition/managed-storage/aliyun',
+  '/docs/deployment/personal-edition/managed-storage/aws',
+  '/docs/deployment/personal-edition/managed-storage/rustfs',
+  '/docs/deployment/personal-edition/managed-storage/minio',
   '/docs/help',
   '/docs/reference',
   '/docs/reference/support-matrix',
@@ -141,8 +148,11 @@ const englishDocRoutes = new Set([
 /** Docs use English/Chinese only; fall back when a page has no English version. */
 export function localizedDocPath(pathname: string, locale: 'en' | 'zh'): string {
   const route = pathWithoutLocale(pathname).replace(/\/+$/, '') || '/docs'
-  if (locale === 'zh') return `/zh${route}`
-  if (englishDocRoutes.has(route)) return route
+  // Directory guides registered with a trailing slash must retain it:
+  // /guide/index.md is not the same VitePress route as /guide.md.
+  const publishedRoute = englishDocRoutes.has(`${route}/`) ? `${route}/` : route
+  if (locale === 'zh') return `/zh${publishedRoute}`
+  if (englishDocRoutes.has(publishedRoute)) return publishedRoute
   if (/^\/docs\/(product|backup-restore|insights)\//.test(route)) return '/docs/product'
   return '/docs'
 }

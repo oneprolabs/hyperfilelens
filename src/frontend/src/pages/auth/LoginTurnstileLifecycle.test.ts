@@ -190,6 +190,7 @@ function deferred<T>() {
 describe('Login Turnstile lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.clear()
     window.sessionStorage.clear()
     clearSharedSessionNotice()
     for (const key of Object.keys(mocks.routeQuery)) {
@@ -665,6 +666,45 @@ describe('Login Turnstile lifecycle', () => {
     expect(mocks.fetchCurrentUser.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.syncAuthenticatedLocale.mock.invocationCallOrder[0],
     )
+    wrapper.unmount()
+  })
+
+  it.each(['password', 'email-code'])('selects only the authenticated account preference for %s login', async (method) => {
+    const { rememberLoginOrganization } = await import('../../lib/loginOrganizationPreference')
+    rememberLoginOrganization(1, 'personal')
+    rememberLoginOrganization(2, 'enterprise')
+    localStorage.setItem('hfl_org_key', 'enterprise')
+    mocks.fetchDeployProfile.mockResolvedValue({
+      site_role: 'tenant', email_code_login_available: true,
+      password_reset_available: false, landing_path: '/',
+    })
+    const data = {
+      user: { id: 1, email: 'person@example.com', username: 'person' },
+      available_orgs: [
+        { org_key: 'enterprise', org_name: 'Enterprise', role: 'member' },
+        { org_key: 'personal', org_name: 'Personal', role: 'member' },
+      ],
+    }
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === '/api/v1/auth/google/config') return { code: '0000', data: { enabled: false } }
+      if (path === '/api/v1/auth/email-login') return { code: '0000', data }
+      if (path === '/api/v1/auth/org-select') return { code: '0000', data: {} }
+      throw new Error(`Unexpected API path: ${path}`)
+    })
+    const wrapper = await mountLogin(1440)
+    if (method === 'password') {
+      await fillCredentials(wrapper)
+      wrapper.getComponent(AuthTurnstileFieldStub).vm.$emit('success', 'verified-token')
+      await wrapper.vm.$nextTick()
+      await wrapper.get('button.submit-btn').trigger('click')
+    } else {
+      await wrapper.findAll('.login-method-tabs__tab')[1].trigger('click')
+      wrapper.getComponent({ name: 'EmailCodeLoginForm' }).vm.$emit('verified', data)
+    }
+    await flushPromises()
+    expect(mocks.api).toHaveBeenCalledWith('/api/v1/auth/org-select', {
+      method: 'POST', body: JSON.stringify({ org_key: 'personal' }),
+    })
     wrapper.unmount()
   })
 

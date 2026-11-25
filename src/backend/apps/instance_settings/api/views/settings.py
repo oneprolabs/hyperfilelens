@@ -44,6 +44,7 @@ from apps.instance_settings.services.product_website import (
     set_product_website_url,
 )
 from common.platform_audit import write_platform_audit_log
+from common.extension_spi import get_repository_provider
 from common.platform_authz import (
     AI_ENGINE_AI_MODELS_MANAGE,
     AI_ENGINE_AI_MODELS_VIEW,
@@ -789,6 +790,54 @@ class PlatformOpsSettingsDefaultsView(APIView):
         invalidate_config_cache(key=key, tenant_key="", scope="global")
 
 
+def _connection_compatibility_payload() -> dict:
+    if get_repository_provider() is None:
+        return {}
+    return {
+        "aliyun_sts_proxy_compatibility_enabled": (
+            runtime_settings_svc.aliyun_sts_proxy_compatibility_enabled()
+        ),
+    }
+
+
+class PlatformOpsSettingsConnectionCompatibilityView(APIView):
+    """Independent outbound compatibility controls under External Access."""
+
+    permission_classes = [HasPlatformPermission.for_actions(PLATFORM_EXTERNAL_ACCESS_MANAGE)]
+
+    def get(self, request):
+        if get_repository_provider() is None:
+            return Response({"detail": "The platform extension is required."}, status=403)
+        return Response({"compatibility": _connection_compatibility_payload()})
+
+    def patch(self, request):
+        from apps.configuration.models.platform_runtime_setting import PlatformRuntimeSetting
+
+        if get_repository_provider() is None:
+            return Response({"detail": "The platform extension is required."}, status=403)
+        field = "aliyun_sts_proxy_compatibility_enabled"
+        data = request.data
+        if not isinstance(data, dict) or set(data) != {field} or not isinstance(data[field], bool):
+            return Response(
+                {"detail": f"Provide only {field} as a boolean."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        key = runtime_settings_svc.KEY_ALIYUN_STS_PROXY_COMPATIBILITY
+        with transaction.atomic():
+            PlatformRuntimeSetting.objects.get_or_create(key=key, defaults={"value_text": "false"})
+            PlatformRuntimeSetting.objects.select_for_update().get(key=key)
+            previous = runtime_settings_svc.aliyun_sts_proxy_compatibility_enabled()
+            runtime_settings_svc.set_bool(key, data[field], user=request.user)
+            write_platform_audit_log(
+                request=request,
+                action="platform_settings.compatibility.update",
+                target_type="platform_runtime_setting",
+                target_id=key,
+                details={"previous": previous, "enabled": data[field]},
+            )
+        return self.get(request)
+
+
 class PlatformOpsSettingsEnvironmentView(APIView):
     permission_classes = [HasPlatformPermission.for_actions(PLATFORM_RUNTIME_ENVIRONMENT_MANAGE)]
 
@@ -971,6 +1020,7 @@ class PlatformOpsSettingsExternalAccessView(APIView):
                 "product_website_url": configured_product_website_url(),
                 "default_product_website_url": default_product_website_url(request),
                 "editable": True,
+                "compatibility": _connection_compatibility_payload(),
             }
         )
 

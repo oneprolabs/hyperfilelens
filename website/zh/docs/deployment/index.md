@@ -22,6 +22,13 @@ description: 根据使用方式部署 HyperFileLens 控制平面、备份组件�
 
 ## 运行维护
 
+- [仓库缓存配置](/zh/docs/deployment/repository-cache)：调整 Agent 与 Proxy 的每仓库缓存预算，了解分配比例、生效方式和磁盘空间规划。
 - [任务、告警与审计](/zh/docs/deployment/operations)：查看任务状态、告警信息和审计记录；新组织会启用默认告警规则。组织成员、角色与配额见[组织管理](/zh/docs/governance/)。
 - [升级与恢复](/zh/docs/deployment/lifecycle)：升级社区版、验证升级结果，并在异常时按安全流程处理。
 - [卸载社区版](/zh/docs/deployment/uninstall)：完整移除 HyperFileLens，或在保留配置和业务数据的情况下移除运行组件。
+
+## 个人版运营
+
+运营 Personal Edition 时，由具有相应权限的运营人员准备托管对象存储及临时凭证签发身份。此能力需要企业版支持，不是普通个人用户的必做配置。
+
+从[托管存储概述](/zh/docs/deployment/personal-edition/managed-storage/)开始，再按实际服务选择[华为云 OBS](/zh/docs/deployment/personal-edition/managed-storage/huawei)、[阿里云 OSS](/zh/docs/deployment/personal-edition/managed-storage/aliyun)、[AWS S3](/zh/docs/deployment/personal-edition/managed-storage/aws)、[RustFS](/zh/docs/deployment/personal-edition/managed-storage/rustfs)或 [MinIO](/zh/docs/deployment/personal-edition/managed-storage/minio) 的最小权限接入步骤。

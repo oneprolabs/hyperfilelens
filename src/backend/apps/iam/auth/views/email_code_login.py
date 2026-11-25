@@ -289,13 +289,9 @@ class EmailCodeLoginVerifyView(AnonymousPublicViewMixin, APIView):
                 fields={"code": [message]},
             )
 
-        memberships = list(
-            Membership.objects.filter(
-                user=user,
-                is_active=True,
-                organization__is_active=True,
-            ).select_related("organization")
-        )
+        from apps.iam.services.login_organizations import login_memberships
+
+        memberships = list(login_memberships(user))
         if not memberships:
             return _error_response(
                 "ACCOUNT_ACCESS_UNAVAILABLE",

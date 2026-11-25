@@ -159,15 +159,9 @@ def resolve_membership_for_org(
 
             org = Organization.objects.filter(key=org_key, is_active=True).first()
             return installation_org_context(user, org) if org else None
-    from common.extension_spi import get_authz_provider
+    from apps.iam.services.login_organizations import login_memberships
 
-    preferred = getattr(get_authz_provider(), "preferred_installation_organization", None)
-    preferred_key = preferred(user) if callable(preferred) else None
-    if preferred_key:
-        membership = qs.filter(organization__key=preferred_key).first()
-        if membership is not None:
-            return membership
-    return qs.order_by("organization__key", "id").first()
+    return login_memberships(user).first()
 
 
 def get_access_profile(

@@ -326,10 +326,10 @@ class EmailLoginView(AnonymousPublicViewMixin, APIView):
         roles = []
         available_orgs = []
         try:
-            from apps.iam.models import Membership
+            from apps.iam.services.login_organizations import login_memberships
             from apps.iam.services.membership_service import authoritative_role
 
-            memberships = Membership.objects.filter(user=user_obj, is_active=True).select_related("organization")
+            memberships = login_memberships(user_obj)
             roles = [authoritative_role(m) for m in memberships]
             available_orgs = [
                 {

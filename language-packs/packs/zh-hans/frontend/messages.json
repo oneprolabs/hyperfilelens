@@ -10022,6 +10022,8 @@
       "saveFailed": "保存配置失败",
       "source": "来源：{source}",
       "externalAccess": {
+        "aliyunStsProxyCompatibility": "阿里云 STS 代理兼容",
+        "aliyunStsProxyCompatibilityHint": "当阿里云 STS 请求未遵循 NO_PROXY 时启用。仅影响临时凭证请求，不影响对象存储流量。",
         "configurationTitle": "访问配置",
         "managed": "部署策略已禁用外部访问配置修改。",
         "urlLabel": "外部访问地址",

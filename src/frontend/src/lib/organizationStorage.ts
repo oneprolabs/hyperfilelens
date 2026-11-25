@@ -57,8 +57,9 @@ export function prepareTabOrganizationContext(): void {
 
 /** A remembered browser choice is only a hint within server-returned memberships. */
 export function chooseLoginOrganization(
-  organizations: Array<{ org_key: string }>, rememberedKey: string,
+  organizations: Array<{ org_key: string }>, rememberedKey: string, fallbackKey = '',
 ): string {
   return organizations.find(org => org.org_key === rememberedKey)?.org_key
+    || organizations.find(org => org.org_key === fallbackKey)?.org_key
     || organizations[0]?.org_key || ''
 }

@@ -69,6 +69,8 @@ describe('Admin Console finalization contracts', () => {
     expect(environment).toContain('<RuntimeServiceConnections :data-gateway="dataGatewayProbe" />')
     expect(environment).not.toContain('effectiveEntries')
     expect(environment).not.toContain('sourceEntries')
+    expect(environment).not.toContain('sts-compatibility')
+    expect(environment).not.toContain('patchPlatformConnectionCompatibility')
   })
 
   it('keeps Admin Console enablement read-only in Identity settings', () => {

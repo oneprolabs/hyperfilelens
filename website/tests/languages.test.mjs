@@ -53,8 +53,10 @@ test('every published English document is recognized by the language switcher', 
     const slug = file.replaceAll('\\', '/').replace(/(^|\/)index\.md$/, '').replace(/\.md$/, '')
     const route = `/docs/${slug}`.replace(/\/+$/, '')
     for (const input of [route, `${route}/`, `/zh${route}`, `/zh${route}/`]) {
-      assert.equal(localizedDocPath(input, 'en'), route, `${input} must retain its English document`)
-      assert.equal(localizedDocPath(input, 'zh'), `/zh${route}`, `${input} must retain its Chinese document`)
+      assert.equal(localizedDocPath(input, 'en').replace(/\/+$/, ''), route,
+        `${input} must retain its English document`)
+      assert.equal(localizedDocPath(input, 'zh').replace(/\/+$/, ''), `/zh${route}`,
+        `${input} must retain its Chinese document`)
     }
   }
 })

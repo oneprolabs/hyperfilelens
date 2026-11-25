@@ -7,6 +7,10 @@ description: Configure and validate object storage, NAS, and Proxy local-disk re
 
 Target storage holds backup repositories. Choose a storage type based on network access from the source, capacity, retention requirements, and restore performance.
 
+::: info Direct repositories and Personal managed storage
+This page describes repositories configured by ordinary organizations. Operators providing managed repositories for Personal Edition should follow the [managed storage guides](/docs/deployment/personal-edition/managed-storage/) instead. Those buckets must already exist, and their issuing identities and setup flow differ. Personal users do not configure operator credentials.
+:::
+
 Open **Protection → Backup Wizard → Target Storage** and select **Add Repository**. After creating a repository, assign it to a backup source; appearing in the repository list does not mean that a backup configuration already uses it.
 
 ## Object storage

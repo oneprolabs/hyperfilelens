@@ -9515,6 +9515,8 @@
   "platformOps.settings.saveSuccess": "1fbe175c7aa5f3a6f39059e34398514869af9f733f1a1478db3947ad897f32e2",
   "platformOps.settings.saveFailed": "7ac41fe0267951d2cb6ad35c2aa0f3c232ee85127cc762b042ad76d1c4ca75fa",
   "platformOps.settings.source": "99e72bc6503254f3ccb1aa56667b5273004cc87cf5656f70838f83bd338446e7",
+  "platformOps.settings.externalAccess.aliyunStsProxyCompatibility": "e5bbe97c26f5265f5366cc78d864d9073992cc9f3232da03ab39dbf8c2153d7d",
+  "platformOps.settings.externalAccess.aliyunStsProxyCompatibilityHint": "9a13eadeefd63feea0ac889d115e9d7a9c82b3826ef2f6364b7b465fdd97d57a",
   "platformOps.settings.externalAccess.productWebsiteUrl": "7544f65062b7aea4d134e5f6fcf5cd22ea0f5befb67d476056da1ccf7b8e213d",
   "platformOps.settings.externalAccess.productWebsiteHint": "d2559938fd9d0ea27b18984cbb93a189ae799d59cd024811960af024f4aa6a24",
   "platformOps.settings.externalAccess.configurationTitle": "06b89dd16f165234bd4a8d03ee12689c3e92f59579813524a8a6e55620ea5043",
