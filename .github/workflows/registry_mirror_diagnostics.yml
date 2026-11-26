@@ -1,0 +1,61 @@
+name: Diagnose registry mirror transport
+
+on:
+  push:
+    branches:
+      - fix/registry-mirror-transport
+    paths:
+      - .github/workflows/registry_mirror_diagnostics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  copy-http1:
+    name: HTTP/1.1 copy · ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Enterprise Backend
+            repository: hyperfilelens-backend
+            digest: sha256:a2f58173d88e7b901db82f4bc20167f3979f3e46862e2c1c80b6f46b30a029fc
+          - name: Gateway assets
+            repository: hyperfilelens-gateway-assets
+            digest: sha256:e626773d47c86e27132cec87f9f68c797424672b069271a3b7ee7a7f47bf77a9
+    steps:
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+        with:
+          version: v0.39.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: docker.io
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: registry.cn-beijing.aliyuncs.com
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+      - name: Copy immutable source to a diagnostic tag
+        env:
+          REPOSITORY: ${{ matrix.repository }}
+          EXPECTED_DIGEST: ${{ matrix.digest }}
+          GODEBUG: http2client=0
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="docker.io/oneprolabs/$REPOSITORY@$EXPECTED_DIGEST"
+          destination="registry.cn-beijing.aliyuncs.com/oneprolabs/$REPOSITORY:diag-http1-$GITHUB_RUN_ID"
+          printf 'Source: %s\nDiagnostic destination: %s\n' "$source" "$destination"
+          docker buildx version
+          timeout 20m docker buildx imagetools create \
+            --prefer-index=false --tag "$destination" "$source"
+          actual="$(timeout 60s docker buildx imagetools inspect \
+            "$destination" --format '{{json .Manifest}}' | jq -r .digest)"
+          [[ "$actual" == "$EXPECTED_DIGEST" ]]
+          printf 'Verified immutable digest: %s\n' "$actual"
+          printf '## %s\n\nHTTP/1.1 copy and digest verification passed.\n' \
+            "$REPOSITORY" >>"$GITHUB_STEP_SUMMARY"
