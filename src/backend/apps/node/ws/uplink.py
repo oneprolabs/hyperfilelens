@@ -801,6 +801,10 @@ def _handle_task_result(
         task.kind == "agent.upgrade"
         and task.correlation_type == node_conf.LIFECYCLE_CORRELATION_TYPE
     )
+    if lifecycle_upgrade:
+        # Recovery verification belongs to the control plane. Strip only the
+        # raw Agent field before merging the trusted, persisted task result.
+        incoming_result.pop("upgrade_recovery", None)
     if lifecycle_upgrade and str(incoming_status).lower() in {
         "success", "succeeded", "ok"
     }:
