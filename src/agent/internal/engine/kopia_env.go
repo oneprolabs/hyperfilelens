@@ -11,6 +11,9 @@ import (
 )
 
 func agentDataDir(cfg *model.AgentConfig) string {
+	if cfg == nil {
+		cfg = &model.AgentConfig{}
+	}
 	dataDir := strings.TrimSpace(cfg.DataDir)
 	if dataDir == "" {
 		dataDir = vfs.DefaultAgentDataDir()
@@ -22,7 +25,7 @@ func agentDataDir(cfg *model.AgentConfig) string {
 }
 
 func managedRepositoryCacheRoot(cfg *model.AgentConfig) string {
-	return filepath.Join(vfs.AgentCacheDir(agentDataDir(cfg)), "repositories")
+	return filepath.Join(kopialayout.ActiveCacheRoot(agentDataDir(cfg)), "repositories")
 }
 
 // managedRepositoryCacheDir isolates Kopia's format and content caches by the

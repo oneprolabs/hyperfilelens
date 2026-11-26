@@ -22,7 +22,7 @@ ITEMS = ("cpu", "memory", "bandwidth", "cache", "logLevel", "retention", "logSpa
 STATES = {"applied", "pending", "unsupported", "degraded", "monitoring", "disabled"}
 
 
-def normalize_settings(raw: object, *, role: str) -> dict:
+def normalize_settings(raw: object, *, role: str, legacy_cache: bool = True) -> dict:
     """Validate console input without relying on frontend bounds."""
     if not isinstance(raw, dict):
         raise ValidationError("Performance settings must be an object.")
@@ -39,7 +39,7 @@ def normalize_settings(raw: object, *, role: str) -> dict:
         raise ValidationError("Unknown performance setting.")
     settings = {}
     for key, (minimum, maximum) in FIELDS.items():
-        if key == "kopiaCacheMb" and role == "gateway":
+        if key == "kopiaCacheMb" and (role == "gateway" or not legacy_cache):
             continue
         value = raw.get(key)
         if type(value) is not int or not minimum <= value <= maximum:
@@ -58,15 +58,19 @@ def merge_performance_metadata(current: object, incoming: dict, *, role: str) ->
     existing = deepcopy(current) if isinstance(current, dict) else {}
     inventory = existing.get("inventory")
     inventory = inventory if isinstance(inventory, dict) else {}
+    old_perf = existing.get("perf_settings")
+    old_perf = old_perf if isinstance(old_perf, dict) else {}
+    capabilities = inventory.get("capabilities")
+    capable = role in {"agent", "proxy"} and isinstance(capabilities, list) and "cache_management_v1" in capabilities
     supplied = {
         key: value
         for key, value in incoming.items()
-        if key not in {POLICY_KEY, STATUS_KEY}
+        if key not in {POLICY_KEY, STATUS_KEY, "cache_policy", "cache_status", "cache_space_check", "inventory", "capabilities", "inventory_session_id", "inventory_capabilities_session_id"}
     }
     existing.update(supplied)
     if "perf_settings" not in incoming:
         return existing
-    settings = normalize_settings(incoming["perf_settings"], role=role)
+    settings = normalize_settings(incoming["perf_settings"], role=role, legacy_cache=not capable)
     cores = inventory.get("cpu_cores", inventory.get("cpu_logical_cores"))
     memory = inventory.get("memory_total_bytes")
     if type(cores) is int and cores > 0 and settings["cpuCores"] > cores:
@@ -81,6 +85,18 @@ def merge_performance_metadata(current: object, incoming: dict, *, role: str) ->
         )
     previous = existing.get(POLICY_KEY)
     previous = previous if isinstance(previous, dict) else {}
+    perf_settings = deepcopy(settings)
+    if capable:
+        previous_settings = previous.get("settings")
+        previous_settings = previous_settings if isinstance(previous_settings, dict) else old_perf
+        for key in ("kopiaCacheMb", "kopia_cache_mb"):
+            if key in previous_settings:
+                settings[key] = deepcopy(previous_settings[key])
+            if key in old_perf:
+                perf_settings[key] = deepcopy(old_perf[key])
+        # Preserve hidden legacy fields per storage location, including absence.
+        # An old form cannot restore a capacity limit on a capable node.
+        existing["perf_settings"] = perf_settings
     revision = previous.get("revision", 0)
     revision = revision if type(revision) is int and revision >= 0 else 0
     reported = existing.get(STATUS_KEY)
@@ -91,7 +107,7 @@ def merge_performance_metadata(current: object, incoming: dict, *, role: str) ->
     if previous.get("settings") == settings and observed <= revision:
         return existing
     revision = max(revision, observed)
-    existing["perf_settings"] = settings
+    existing["perf_settings"] = perf_settings if capable else settings
     existing[POLICY_KEY] = {
         "revision": revision + 1,
         "settings": settings,

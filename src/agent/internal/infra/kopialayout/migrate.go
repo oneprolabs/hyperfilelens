@@ -50,7 +50,7 @@ type referenceSwitcher func(context.Context, map[string]string) error
 func Status(root string) (map[string]any, error) {
 	result := map[string]any{
 		"status": "pending", "disposable": false,
-		"cache_root": vfs.AgentCacheDir(root), "state_file": StatePath(root),
+		"cache_root": ActiveCacheRoot(root), "state_file": StatePath(root),
 	}
 	data, err := readRegular(root, StatePath(root), 32<<20)
 	if os.IsNotExist(err) {
@@ -89,6 +89,11 @@ func Ready(root string) (bool, error) {
 // Migrate runs before task dispatch. The callback switches durable CLI aliases
 // in one database transaction before any old configuration is removed.
 func Migrate(ctx context.Context, root, logDir string, switchReferences func(context.Context, map[string]string) error) error {
+	if a, err := ReadActiveRoot(root); err != nil {
+		return err
+	} else if a.Generation > 0 {
+		return completedLayout(root)
+	}
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return err

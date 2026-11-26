@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 )
 
@@ -53,5 +54,21 @@ func TestDurableNodeIdentity(t *testing.T) {
 				t.Fatalf("durableNodeIdentity() = %t, want %t", got, test.want)
 			}
 		})
+	}
+}
+
+func TestPeriodicHeartbeatsKeepBinaryCachePolicySupport(t *testing.T) {
+	agent := &Agent{storageInventory: map[string]any{"disk_count": 1}}
+	for i := 0; i < 3; i++ {
+		capabilities := agent.heartbeatPayload()["capabilities"].([]string)
+		found := false
+		for _, capability := range capabilities {
+			if capability == kopialayout.GiBPolicyCapability {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("heartbeat %d lost GiB policy capability: %v", i, capabilities)
+		}
 	}
 }

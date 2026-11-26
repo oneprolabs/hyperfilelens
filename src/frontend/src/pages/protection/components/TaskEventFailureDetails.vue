@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { cacheFailurePresentation } from '../../../lib/cacheFailureDisplay'
 import { backupFailureCategory, backupFailureMetadata, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
 import {
   extractFailureDetails,
@@ -41,6 +42,7 @@ const failureDetailsOpen = ref(false)
 const { t } = useI18n()
 
 const metadataRecord = computed(() => backupFailureMetadata(props.metadata))
+const cacheFailure = computed(() => cacheFailurePresentation(metadataRecord.value, t))
 const backupFailure = computed(() => backupFailurePresentation(metadataRecord.value))
 const backupFailureCategoryValue = computed(() => backupFailureCategory(metadataRecord.value))
 const backupFailureReason = computed(() => backupFailureCategoryValue.value === 'backup_communication_timeout'
@@ -56,7 +58,7 @@ const structuredSkipped = computed(() => extractSkippedDetails(metadataRecord.va
 const structuredSummary = computed(() => extractBackupSummary(metadataRecord.value))
 
 const category = computed(() => structuredFailure.value?.category || 'source_read_failed')
-const backupSourceOffline = computed(() => ['agent_upgrade_required', 'backup_communication_timeout', 'backup_source_offline', 'backup_source_busy', 'backup_precheck_failed'].includes(category.value))
+const backupSourceOffline = computed(() => !cacheFailure.value && ['agent_upgrade_required', 'backup_communication_timeout', 'backup_source_offline', 'backup_source_busy', 'backup_precheck_failed'].includes(category.value))
 const sourcePath = computed(() => String(metadataRecord.value.source_path || '').trim())
 const errorCode = computed(() => String(metadataRecord.value.error_code || '').trim())
 const restorePermissionDenied = computed(() => errorCode.value === 'RESTORE_TARGET_PERMISSION_DENIED')
@@ -104,6 +106,7 @@ const exactSourceBusy = computed(() =>
 )
 const terminalFailure = computed(() => {
   if (!props.showTerminalFailure) return ''
+  if (cacheFailure.value) return cacheFailure.value.title
   if (unregisterFailure.value) return unregisterFailure.value.summary
   if (terminalContext.value.error_code === 'SOURCE_PATH_NOT_FOUND') {
     return t('ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND')
@@ -121,6 +124,7 @@ const showTerminalBox = computed(() =>
   Boolean(terminalFailure.value) && !failureCount.value && !backupSourceOffline.value && !restorePermissionDenied.value,
 )
 const terminalFailurePath = computed(() => {
+  if (cacheFailure.value) return cacheFailure.value.path
   const terminal = metadataRecord.value.terminal_failure
   if (!terminal || typeof terminal !== 'object' || Array.isArray(terminal)) return ''
   return String((terminal as Record<string, unknown>).path || '').trim()
@@ -129,7 +133,8 @@ const terminalFilterRule = computed(() =>
   exactSourceBusy.value ? String(terminalContext.value.filter_rule || '') : '',
 )
 const effectiveTerminalResolutions = computed(() =>
-  unregisterFailure.value ? unregisterFailure.value.resolutions
+  cacheFailure.value ? cacheFailure.value.resolutions
+  : unregisterFailure.value ? unregisterFailure.value.resolutions
   : terminalContext.value.error_code === 'SOURCE_PATH_NOT_FOUND'
     ? [
         t('ops.task.failureDetails.suggestion.restore_backup_source_path'),
@@ -167,6 +172,7 @@ const skippedSpecialCount = computed(() => structuredSkipped.value?.special_coun
 const skippedReportedCount = computed(() => Math.min(MAX_SKIPPED_ITEMS, structuredSkipped.value?.reported_count || 0))
 const hasSkippedDetails = computed(() => props.showSkippedDetails && skippedCount.value > 0)
 const technicalDetail = computed(() => {
+  if (cacheFailure.value) return [cacheFailure.value.raw, props.technicalDetail].filter(Boolean).filter((item, index, all) => all.indexOf(item) === index).join('\n')
   const detail = String(props.technicalDetail || '').trim()
     || errorDiagnostic.value || localizedRepositoryFailure.value?.raw || ''
   return detail === terminalFailure.value || (repositoryTimeout.value && detail === originalError.value)
@@ -288,15 +294,29 @@ function remediationText(code: string) {
       <div class="task-event-failure__summary task-event-failure__summary--terminal">
         <AlertTriangle :size="15" />
         <div class="task-event-failure__terminal-copy">
-          <span>{{ terminalFailure }}</span>
+          <strong v-if="cacheFailure">{{ terminalFailure }}</strong>
+          <span v-else>{{ terminalFailure }}</span>
+          <span v-if="cacheFailure">{{ cacheFailure.description }}</span>
         </div>
       </div>
       <div
         v-if="terminalFailurePath"
         class="task-event-failure__terminal-path"
       >
-        {{ t('ops.task.failureDetails.affectedPath') }}: <code>{{ terminalFailurePath }}</code>
+        {{ t(cacheFailure ? 'ops.task.failureDetails.cache.directory' : 'ops.task.failureDetails.affectedPath') }}: <code>{{ terminalFailurePath }}</code>
       </div>
+      <dl
+        v-if="cacheFailure"
+        class="task-event-failure__cache-facts"
+      >
+        <div
+          v-for="fact in cacheFailure.measurements"
+          :key="fact.label"
+        >
+          <dt>{{ fact.label }}</dt>
+          <dd>{{ fact.value }}</dd>
+        </div>
+      </dl>
       <div
         v-if="effectiveTerminalResolutions.length || terminalFilterRule"
         class="task-event-failure__remediation"
@@ -510,6 +530,24 @@ function remediationText(code: string) {
 </template>
 
 <style scoped>
+.task-event-failure__cache-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.task-event-failure__cache-facts dt {
+  color: var(--el-text-color-secondary);
+}
+
+.task-event-failure__cache-facts dd {
+  margin: 3px 0 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .task-event-failure {
   display: grid;
   align-self: stretch;

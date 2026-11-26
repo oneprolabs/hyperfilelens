@@ -19,12 +19,16 @@ const (
 // managedKopiaCachePolicy is a single product-level budget split between the
 // content and metadata caches understood by Kopia.
 type managedKopiaCachePolicy struct {
-	Enabled    bool
-	ContentMB  int64
-	MetadataMB int64
+	DemandDriven bool
+	Enabled      bool
+	ContentMB    int64
+	MetadataMB   int64
 }
 
 func kopiaCachePolicyFromPayload(p Payload) (managedKopiaCachePolicy, error) {
+	if p.Extra["_cache_demand_driven"] == true {
+		return managedKopiaCachePolicy{Enabled: true, DemandDriven: true}, nil
+	}
 	value := int64(defaultKopiaCacheSizeMB)
 	if raw, present := p.Extra["kopia_cache_size_mb"]; present {
 		parsed, ok := payloadIntValue(raw)
@@ -48,6 +52,9 @@ func kopiaCachePolicyFromPayload(p Payload) (managedKopiaCachePolicy, error) {
 }
 
 func (p managedKopiaCachePolicy) flags() []string {
+	if p.DemandDriven {
+		return []string{"--cache-demand-driven"}
+	}
 	if !p.Enabled {
 		return []string{
 			"--content-cache-size-mb=0",
@@ -70,6 +77,7 @@ func (p managedKopiaCachePolicy) setArgs(configFile string) []string {
 }
 
 type kopiaConfigCaching struct {
+	DemandDriven      bool  `json:"demandDriven"`
 	ContentSoftBytes  int64 `json:"maxCacheSize"`
 	ContentHardBytes  int64 `json:"contentCacheSizeLimitBytes"`
 	MetadataSoftBytes int64 `json:"maxMetadataCacheSize"`
@@ -112,6 +120,9 @@ func kopiaConfigMatchesCachePolicy(configFile string, policy managedKopiaCachePo
 	}
 	if config.Caching == nil {
 		return false, nil
+	}
+	if policy.DemandDriven {
+		return config.Caching.DemandDriven, nil
 	}
 	wantContent := policy.ContentMB
 	wantMetadata := policy.MetadataMB

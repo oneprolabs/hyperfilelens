@@ -8,7 +8,9 @@ import (
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
 
+	"hyperfilelens/agent/internal/engine"
 	"hyperfilelens/agent/internal/infra/config"
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 	"hyperfilelens/agent/internal/platform/hostinfo"
@@ -57,6 +59,9 @@ func SupportedCapabilities() []string {
 		"detached_uninstall_v2",
 		"storage_inventory_v1",
 		RestoreTargetDirectoryCreateCapability,
+		// Binary policy parsing is a stable Agent feature, independent of
+		// runtime Kopia probing. Periodic heartbeats must advertise it too.
+		kopialayout.GiBPolicyCapability,
 	}
 }
 
@@ -105,6 +110,10 @@ func SendInventory(
 		"capabilities": SupportedCapabilities(),
 	} {
 		payload[key] = value
+	}
+	if cache := engine.CacheInventory(ctx, dataDir, cfg.KopiaPath); cache != nil && (cfg.Role == model.RoleAgent || cfg.Role == model.RoleProxy) {
+		payload["cache_status"] = cache
+		payload["capabilities"] = append(SupportedCapabilities(), kopialayout.CacheManagementCapability)
 	}
 	preferredAddress := ""
 	if reporter, ok := sink.(interface{ LocalIPAddress() string }); ok {

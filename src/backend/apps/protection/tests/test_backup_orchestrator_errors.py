@@ -138,3 +138,13 @@ class BackupOrchestratorErrorCodeTests(SimpleTestCase):
         self.assertEqual(error_code, "PROXY_REPOSITORY_SERVER_START_FAILED")
         self.assertIn("did not make", message)
         self.assertNotIn("sensitive", message)
+
+
+class CacheSpaceBackupErrorTests(SimpleTestCase):
+    def test_cache_errors_remain_distinct_from_repository_capacity_and_policy_errors(self):
+        from apps.protection.services.backup_task import classify_kopia_execution_failure
+        for code in ("CACHE_SPACE_INSUFFICIENT", "CACHE_SPACE_CHECK_FAILED"):
+            message = code + ": cache /cache-volume has too little space or cannot be queried"
+            task = NodeTask(status=NodeTask.Status.FAILED, last_error=message, result={"error_code": code})
+            self.assertEqual(_node_task_error_code(task), (code, message))
+            self.assertEqual(classify_kopia_execution_failure(task.result, last_error=message), (code, message))

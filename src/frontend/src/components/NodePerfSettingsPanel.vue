@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import NodeCacheSettingsPanel from './NodeCacheSettingsPanel.vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { updateNode, type NodeApiScope } from '../lib/nodeApi'
@@ -50,31 +51,14 @@ const hostMemMb = computed(() => {
   return Math.max(128, Math.round(bytes / (1024 * 1024)))
 })
 
-const supportsKopiaCache = computed(() => props.node?.role === 'agent' || props.node?.role === 'proxy')
-const performanceStatus = computed(() => {
-  const metadata = props.node?.metadata
-  const policy = metadata?.performance_policy as { revision?: number } | undefined
-  const report = metadata?.performance_status as {
-    revision?: number
-    items?: Record<string, { state: string; reason: string }>
-  } | undefined
-  if (!policy?.revision) return metadata?.perf_settings ? { pending: true, legacy: true, stale: false, items: [] } : null
-  const timestamp = Date.parse(String((report as { reported_at?: string } | undefined)?.reported_at || ''))
-  return {
-    legacy: false,
-    stale: Number.isFinite(timestamp) && Date.now() - timestamp > 120_000,
-    pending: report?.revision !== policy.revision,
-    items: report?.revision === policy.revision ? Object.entries(report.items || {}).filter(([key, item]) =>
-      key in performanceItemLabels && item && typeof item === 'object'
-      && ['applied', 'pending', 'unsupported', 'degraded', 'monitoring', 'disabled'].includes(item.state),
-    ) : [],
-  }
-})
-const performanceItemLabels: Record<string, string> = {
-  cpu: 'perfCpuCap', memory: 'perfMemSoft', bandwidth: 'perfBandwidth',
-  cache: 'perfKopiaCache', logLevel: 'perfLogLevel', retention: 'perfLogRetention', logSpace: 'perfLogSpace',
-}
-
+const cacheNode = computed(() => props.node?.role === 'agent' || props.node?.role === 'proxy')
+type CacheCapability = 'supported' | 'legacy' | 'unknown'
+const cacheCapability = ref<CacheCapability | null>(null)
+const newCacheCapable = computed(() => cacheCapability.value === 'supported')
+const supportsLegacyCache = computed(() => cacheCapability.value === 'legacy' || cacheCapability.value === 'unknown')
+const settingsSaving = ref(false)
+const cachePanel = ref<InstanceType<typeof NodeCacheSettingsPanel> | null>(null)
+watch(() => props.node?.id, () => { cacheCapability.value = null })
 type PerfSnapshot = NodePerfSettings
 
 function buildPerfDefaults(): PerfSnapshot {
@@ -122,7 +106,7 @@ const otherInputError = computed(() => {
     [perfLogRetentionDays.value, 1, 365, 'perfLogRetention'],
     [perfLogSpaceMb.value, 64, 8192, 'perfLogSpace'],
   ]
-  if (supportsKopiaCache.value) inputs.push([kopiaCacheMb.value, 0, MAX_KOPIA_CACHE_MB, 'perfKopiaCache'])
+  if (supportsLegacyCache.value) inputs.push([kopiaCacheMb.value, 0, MAX_KOPIA_CACHE_MB, 'perfKopiaCache'])
   for (const [value, min, max, label] of inputs) {
     const message = quotaError(value, min, max)
     if (message) return `${t(`nodesDetail.${label}`)}: ${message}`
@@ -179,8 +163,8 @@ function applyPerfDefaults() {
   applyPerfSettings(buildPerfDefaults())
 }
 
-async function savePerfSettings(node: ApiNode): Promise<ApiNode | null> {
-  if (!hasPerfChanges.value) return null
+async function savePerfSettings(node: ApiNode, notify = true): Promise<ApiNode | null> {
+  if (!hasResourceChanges.value) return null
   if (!quotasValid.value || otherInputError.value) {
     const label = t(cpuQuotaError.value ? 'nodesDetail.perfCpuCap' : 'nodesDetail.perfMemSoft')
     const message = otherInputError.value || `${label}: ${cpuQuotaError.value || memoryQuotaError.value}`
@@ -192,7 +176,7 @@ async function savePerfSettings(node: ApiNode): Promise<ApiNode | null> {
   try {
     const updated = await updateNode(
       node.id,
-      { metadata: { perf_settings: supportsKopiaCache.value ? settings : {
+      { metadata: { perf_settings: cacheNode.value && supportsLegacyCache.value ? settings : {
         bandwidth: settings.bandwidth,
         cpuCores: settings.cpuCores,
         memCapMb: settings.memCapMb,
@@ -203,11 +187,36 @@ async function savePerfSettings(node: ApiNode): Promise<ApiNode | null> {
       props.nodeScope,
     )
     perfSnapshot.value = capturePerfSnapshot()
-    ElMessage.success({ message: t('nodesDetail.perfSaveSuccess'), grouping: true })
+    if (notify) ElMessage.success({ message: t('nodesDetail.perfSaveSuccess'), grouping: true, duration: 3000 })
     return updated
   } catch (error) {
-    ElMessage.error({ message: apiErrorMessageI18n(error, t, t('nodesDetail.saveFailed')), grouping: true })
+    if (notify) ElMessage.error({ message: apiErrorMessageI18n(error, t, t('nodesDetail.saveFailed')), grouping: true })
     throw new Error('save perf settings failed')
+  }
+}
+
+async function saveAllSettings(node: ApiNode): Promise<ApiNode | null> {
+  if (settingsSaving.value) return null
+  // Buttons are disabled during cache work; keep the guard for programmatic callers.
+  if (cachePanel.value?.cacheOperationPending) return null
+  if (cachePanel.value?.cachePolicyError) {
+    ElMessage.warning({ message: cachePanel.value.cachePolicyError, grouping: true })
+    throw new Error(cachePanel.value.cachePolicyError)
+  }
+  settingsSaving.value = true
+  let updated: ApiNode | null = null
+  try {
+    updated = await savePerfSettings(node, false)
+    const cacheTask = await cachePanel.value?.saveCachePolicy()
+    if (updated || cacheTask) ElMessage.success({ message: t('nodesDetail.perfSaveSuccess'), grouping: true, duration: 3000 })
+    return updated || (cacheTask ? node : null)
+  } catch (error) {
+    const detail = apiErrorMessageI18n(error, t, t('nodesDetail.saveFailed'))
+    const message = updated ? t('nodesDetail.perfSavePartial', { detail }) : detail
+    ElMessage.error({ message, grouping: true })
+    throw error instanceof Error ? error : new Error('save settings failed')
+  } finally {
+    settingsSaving.value = false
   }
 }
 
@@ -217,6 +226,7 @@ function resetPerfDefaults() {
 
 function cancelPerfEdits() {
   applyPerfSettings(perfSnapshot.value)
+  cachePanel.value?.cancelCacheEdits()
 }
 
 function perfSnapshotsEqual(a: PerfSnapshot, b: PerfSnapshot): boolean {
@@ -224,14 +234,14 @@ function perfSnapshotsEqual(a: PerfSnapshot, b: PerfSnapshot): boolean {
     a.bandwidth === b.bandwidth &&
     a.cpuCores === b.cpuCores &&
     a.memCapMb === b.memCapMb &&
-    a.kopiaCacheMb === b.kopiaCacheMb &&
+    (newCacheCapable.value || a.kopiaCacheMb === b.kopiaCacheMb) &&
     a.log === b.log &&
     a.logRetention === b.logRetention &&
     a.logSpaceMb === b.logSpaceMb
   )
 }
 
-const hasPerfChanges = computed(() => {
+const hasResourceChanges = computed(() => {
   const metadata = props.node?.metadata
   const policy = metadata?.performance_policy as { revision?: number } | undefined
   const report = metadata?.performance_status as { observed_revision?: number } | undefined
@@ -239,6 +249,7 @@ const hasPerfChanges = computed(() => {
   const needsActivation = Boolean(metadata?.perf_settings) && !policy?.revision
   return needsActivation || needsReconcile || !perfSnapshotsEqual(capturePerfSnapshot(), perfSnapshot.value)
 })
+const hasPerfChanges = computed(() => hasResourceChanges.value || Boolean(cachePanel.value?.cachePolicyDirty()))
 
 watch(
   () => [props.active, props.node?.id] as const,
@@ -262,31 +273,15 @@ watch([hostCpuCores, hostMemMb], () => {
   clampPerfValues()
 })
 
-defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefaults })
+const saveBlocked = computed(() => settingsSaving.value
+  || Boolean(cachePanel.value?.cacheOperationPending || cachePanel.value?.cachePolicyError)
+  || !quotasValid.value || Boolean(otherInputError.value))
+
+defineExpose({ hasPerfChanges, saveBlocked, savePerfSettings, saveAllSettings, cancelPerfEdits, resetPerfDefaults })
 </script>
 
 <template>
   <div class="hfl-detail-sections node-perf-drawer-sections">
-    <div
-      v-if="performanceStatus"
-      class="node-perf-status"
-      role="status"
-    >
-      <p>
-        {{ t(performanceStatus.legacy ? 'nodesDetail.perfLegacy' : performanceStatus.pending
-          ? 'nodesDetail.perfPending' : performanceStatus.stale ? 'nodesDetail.perfStale' : 'nodesDetail.perfReported') }}
-      </p>
-      <ul v-if="!performanceStatus.pending">
-        <li
-          v-for="[key, item] in performanceStatus.items"
-          :key="key"
-        >
-          <strong>{{ t(`nodesDetail.${performanceItemLabels[key] || 'perfResSection'}`) }}:</strong>
-          {{ t(`nodesDetail.perfState.${item.state}`) }}
-          <span v-if="item.reason"> — {{ item.reason }}</span>
-        </li>
-      </ul>
-    </div>
     <section class="hfl-detail-section">
       <h4 class="hfl-detail-section__title">
         {{ t('nodesDetail.perfResSection') }}
@@ -390,40 +385,48 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
       </div>
     </section>
 
-    <section
-      v-if="supportsKopiaCache"
-      class="hfl-detail-section"
+    <NodeCacheSettingsPanel
+      v-if="cacheNode && node"
+      ref="cachePanel"
+      :saving="settingsSaving"
+      :node="node"
+      :active="active"
+      @capability="cacheCapability = $event"
     >
-      <h4 class="hfl-detail-section__title">
-        {{ t('nodesDetail.perfCacheSection') }}
-      </h4>
-      <div class="hfl-detail-config-grid">
-        <div class="hfl-detail-config-cell">
-          <div class="hfl-detail-config-cell__label">
-            {{ t('nodesDetail.perfKopiaCache') }}
-          </div>
-          <div class="hfl-detail-config-cell__control">
-            <div class="hfl-detail-form-input hfl-detail-form-input--narrow">
-              <ElInputNumber
-                v-model="kopiaCacheMb"
-                :min="0"
-                :max="MAX_KOPIA_CACHE_MB"
-                :step="256"
-                :precision="0"
-                controls-position="right"
-                class="hfl-detail-form-input__num"
-              />
-              <div class="hfl-detail-form-input__suffix">
-                {{ t('nodesDetail.unitMbPlain') }}
+      <template
+        v-if="supportsLegacyCache"
+        #legacy-settings
+      >
+        <div class="node-legacy-cache-settings">
+          <div class="hfl-detail-config-grid">
+            <div class="hfl-detail-config-cell">
+              <div class="hfl-detail-config-cell__label">
+                {{ t('nodesDetail.perfKopiaCache') }}
               </div>
+              <div class="hfl-detail-config-cell__control">
+                <div class="hfl-detail-form-input hfl-detail-form-input--narrow">
+                  <ElInputNumber
+                    v-model="kopiaCacheMb"
+                    :min="0"
+                    :max="MAX_KOPIA_CACHE_MB"
+                    :step="256"
+                    :precision="0"
+                    controls-position="right"
+                    class="hfl-detail-form-input__num"
+                  />
+                  <div class="hfl-detail-form-input__suffix">
+                    {{ t('nodesDetail.unitMbPlain') }}
+                  </div>
+                </div>
+              </div>
+              <p class="hfl-detail-config-cell__hint">
+                {{ t('nodesDetail.perfDescKopiaCache') }}
+              </p>
             </div>
           </div>
-          <p class="hfl-detail-config-cell__hint">
-            {{ t('nodesDetail.perfDescKopiaCache') }}
-          </p>
         </div>
-      </div>
-    </section>
+      </template>
+    </NodeCacheSettingsPanel>
 
     <section class="hfl-detail-section">
       <h4 class="hfl-detail-section__title">
@@ -532,28 +535,34 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
     <div class="node-perf-drawer-inline-actions__btns">
       <ElButton
         text
+        :disabled="settingsSaving"
         @click="cancelPerfEdits"
       >
         {{ t('nodesDetail.perfCancelEdits') }}
       </ElButton>
       <ElButton
         plain
+        :disabled="settingsSaving"
         @click="resetPerfDefaults"
       >
         {{ t('nodesDetail.perfResetDefaults') }}
       </ElButton>
       <ElButton
         type="primary"
-        :disabled="!node || !hasPerfChanges || !quotasValid || Boolean(otherInputError)"
-        @click="node && savePerfSettings(node)"
+        :loading="settingsSaving"
+        :disabled="!node || !hasPerfChanges || saveBlocked"
+        @click="node && saveAllSettings(node)"
       >
-        {{ t('nodesDetail.save') }}
+        {{ t(settingsSaving ? 'nodesDetail.perfSaving' : 'nodesDetail.save') }}
       </ElButton>
     </div>
   </div>
 </template>
 
 <style scoped>
+.node-legacy-cache-settings { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
+.node-perf-drawer-sections :deep(.hfl-detail-section__title) { display: flex; align-items: center; gap: 8px; }
+.node-perf-drawer-sections :deep(.hfl-detail-section__title)::before { width: 3px; height: 14px; flex: 0 0 3px; border-radius: 999px; background: var(--color-primary); content: ''; }
 .hfl-detail-config-cell__metric {
   margin: 0;
   text-align: left;
@@ -563,19 +572,6 @@ defineExpose({ hasPerfChanges, savePerfSettings, cancelPerfEdits, resetPerfDefau
   margin: 0;
   color: var(--el-color-danger);
   font-size: 12px;
-}
-
-.node-perf-status {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-}
-
-.node-perf-status ul {
-  padding-left: 20px;
-}
-
-.node-perf-status li {
-  overflow-wrap: anywhere;
 }
 
 .node-perf-drawer-sections {

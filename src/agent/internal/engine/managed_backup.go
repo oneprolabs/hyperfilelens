@@ -735,10 +735,12 @@ func (e *Engine) prepareManagedRepositoryLocked(
 		// because its cache policy could not be refreshed. Keep the last valid
 		// config and report the deferred application in the task result.
 		result["kopia_cache_policy_error"] = cacheErr.Error()
-		performance.CacheApplied(int(cachePolicy.ContentMB+cachePolicy.MetadataMB), false)
+		if !cachePolicy.DemandDriven {
+			performance.CacheApplied(int(cachePolicy.ContentMB+cachePolicy.MetadataMB), false)
+		}
 		slog.Warn("managed_repository", "event", "cache_policy_apply_deferred", "task_id", taskID, "err", cacheErr.Error())
 	} else {
-		if performance.CacheConfigured() {
+		if !cachePolicy.DemandDriven && performance.CacheConfigured() {
 			if matched, err := kopiaConfigMatchesCachePolicy(configFile, cachePolicy); err == nil && matched {
 				performance.CacheApplied(int(cachePolicy.ContentMB+cachePolicy.MetadataMB), true)
 			}
@@ -1622,6 +1624,11 @@ func runPreparedManagedSnapshot(
 	sourcePath string,
 	result map[string]any,
 ) (string, map[string]any, string) {
+	if check, ok := ctx.Value(backupSpaceCheckKey{}).(func() (map[string]any, error)); ok {
+		if data, err := check(); err != nil {
+			return "failed", data, err.Error()
+		}
+	}
 	_ = sendProgress(ctx, rep, taskID, orchestrationProgressPayload(
 		"snapshot_start",
 		"Starting snapshot",
@@ -3542,6 +3549,9 @@ func (e *Engine) runManagedRestore(
 	if reconcileChatUpdate && conflictMode != "overwrite" {
 		return "failed", nil, "Chat data update requires overwrite restore"
 	}
+	if err := e.validateCacheRestoreTarget(targetPath); err != nil {
+		return "failed", nil, err.Error()
+	}
 	if err := validateNASRestoreTarget(p, targetPath); err != nil {
 		return "failed", nil, err.Error()
 	}
@@ -3606,6 +3616,9 @@ func (e *Engine) runManagedRestore(
 	for pathIndex, selectedPath := range selectedPaths {
 		source := snapshotObjectPath(p.SnapshotID, selectedPath)
 		restoreTarget := restoreTargetPathForSelection(p, targetPath, selectedPath)
+		if err := e.validateCacheRestoreTarget(restoreTarget); err != nil {
+			return "failed", result, err.Error()
+		}
 		if err := validateNASRestoreTarget(p, restoreTarget); err != nil {
 			return "failed", result, err.Error()
 		}

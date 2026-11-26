@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
 )
@@ -445,7 +446,17 @@ FROM tasks WHERE status=?
 			strings.Contains(strings.ToLower(repaired[i].Kind), "upgrade") {
 			spaceFailure = install.ReadUpgradeSpaceFailure(opts.DataDir, repaired[i].StartedAt)
 		}
-		if spaceFailure != nil {
+		if (repaired[i].Kind == "cache.relocate" || repaired[i].Kind == "cache.relocation.retry") && kopialayout.RelocationStatus(opts.DataDir) != nil {
+			recovered := kopialayout.RelocationStatus(opts.DataDir)
+			if recovered["task_id"] == repaired[i].ID {
+				result = recovered
+				errMsg = fmt.Sprint(recovered["error"])
+				if recovered["stage"] == "completed" {
+					status = model.TaskStatusSucceeded
+					errMsg = ""
+				}
+			}
+		} else if spaceFailure != nil {
 			errMsg = spaceFailure.Error()
 			result = spaceFailure.Result()
 			result["mode"] = "local_detached"

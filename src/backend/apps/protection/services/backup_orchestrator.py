@@ -215,6 +215,8 @@ def _node_task_error_code(node_task: NodeTask) -> tuple[str, str]:
         structured_error = str(result.get("error_code") or "")
         if structured_error == "USER_BACKUP_STORAGE_LIMIT_REACHED":
             return bt.classify_kopia_execution_failure(result, last_error=last_error)
+        if structured_error in {"CACHE_SPACE_INSUFFICIENT", "CACHE_SPACE_CHECK_FAILED"}:
+            return structured_error, last_error or "Cache filesystem check failed. Free space or check the mount and account permissions, then start a new backup."
         repository_server_code = repository_server_diagnostic_code(result, last_error)
         if repository_server_code:
             return (
@@ -747,6 +749,8 @@ def _mark_policy_prepare_failed(
         error_code
         not in {
             "AGENT_PATH_FORBIDDEN",
+            "CACHE_SPACE_INSUFFICIENT",
+            "CACHE_SPACE_CHECK_FAILED",
             "BACKUP_TARGET_STORAGE_FULL",
             "POLICY_APPLY_FAILED",
             "BACKUP_PROTECTION_POLICY_MISSING",
@@ -823,10 +827,10 @@ def _ensure_directory_policy_prepared(
         0, protection_conf.PROTECTION_BACKUP_POLICY_PREPARE_MAX_RETRIES
     )
     if latest is not None:
-        if (
-            _node_task_error_code(latest)[0] == "AGENT_UPGRADE_REQUIRED"
-            or len(attempts) >= max_attempts
-        ):
+        latest_code, _ = _node_task_error_code(latest)
+        if len(attempts) >= max_attempts or latest_code in {
+            "AGENT_UPGRADE_REQUIRED", "CACHE_SPACE_INSUFFICIENT", "CACHE_SPACE_CHECK_FAILED",
+        }:
             _clear_policy_retry_schedule(
                 task=task,
                 backup_config_dir_id=directory_row.backup_config_dir_id,
@@ -2159,6 +2163,19 @@ def _finalize_backup_task(
                     if isinstance(primary_node_task.result, dict)
                     else {}
                 )
+                cache_check = primary_result.get("cache_space_check")
+                if isinstance(cache_check, dict) and error_code in {"CACHE_SPACE_INSUFFICIENT", "CACHE_SPACE_CHECK_FAILED"}:
+                    import hashlib
+                    cache_root = str(cache_check.get("cache_root") or "")
+                    task_result["terminal_failure"].update({
+                        "execution_node_id": primary_node_task.node_id,
+                        "execution_node_name": primary_node_task.node.name,
+                        "cache_filesystem_id": str(cache_check.get("cache_filesystem_id") or hashlib.sha256(cache_root.encode()).hexdigest()),
+                        "reason_code": error_code, "cache_root": cache_root,
+                        "cache_space_check": {key: cache_check[key] for key in ("available_bytes", "policy", "sampled_at", "state", "cache_generation") if key in cache_check},
+                    })
+                    if error_code == "CACHE_SPACE_CHECK_FAILED":
+                        task_result["terminal_failure"]["cache_space_check"]["available_bytes"] = None
                 for key in (
                     "snapshot_terminal_path",
                     "snapshot_terminal_side",

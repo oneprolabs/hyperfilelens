@@ -150,6 +150,32 @@ class NodeNetworkInventoryHeartbeatTests(TestCase):
             ip_address="10.20.1.10",
         )
 
+    def test_delayed_same_session_inventory_recovers_cache_flags_without_rolling_back_node_data(self):
+        from apps.node.ws.uplink import _persist_heartbeat_snapshot
+        from apps.node.services.internal.cache_management import CAPABILITY, GIB_POLICY_CAPABILITY
+
+        observed = timezone.now()
+        self.node.last_seen_at = observed
+        self.node.version = "new-build"
+        self.node.metadata = {
+            "inventory_session_id": "current-session",
+            "inventory_capabilities_session_id": "current-session",
+            "inventory": {"capabilities": ["performance_policy_v1"], "hostname": "current-name"},
+        }
+        self.node.save()
+        _, changed = _persist_heartbeat_snapshot(
+            node_id=self.node.pk, session_id="current-session",
+            observed_at=observed - timezone.timedelta(seconds=30),
+            merge_inventory=True, allow_stale_capability_snapshot=True,
+            inventory={"capabilities": [CAPABILITY, GIB_POLICY_CAPABILITY], "agent_version": "stale-build", "hostname": "stale-name"},
+        )
+        self.assertTrue(changed)
+        self.node.refresh_from_db()
+        self.assertEqual(self.node.version, "new-build")
+        self.assertEqual(self.node.last_seen_at, observed)
+        self.assertEqual(self.node.metadata["inventory"]["hostname"], "current-name")
+        self.assertEqual(self.node.metadata["inventory"]["capabilities"], ["performance_policy_v1", CAPABILITY, GIB_POLICY_CAPABILITY])
+
     def test_inventory_heartbeat_updates_host_ip_and_compact_snapshot(self):
         apply_heartbeat_inventory_snapshot(
             node_id=self.node.id,

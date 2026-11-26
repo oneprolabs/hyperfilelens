@@ -135,6 +135,9 @@ def run_agent_task_async(
         node_id=node_id,
         platform=platform,
     )
+    from apps.node.services.internal.cache_management import attach_cache_context
+    payload = attach_cache_context(node=node, payload=payload, kind=kind, correlation_type=correlation_type)
+    persisted_payload = attach_cache_context(node=node, payload=persisted_payload, kind=kind, correlation_type=correlation_type)
     payload = _attach_node_kopia_cache_policy(node=node, payload=payload)
     persisted_payload = _attach_node_kopia_cache_policy(
         node=node, payload=persisted_payload
@@ -314,6 +317,9 @@ def run_agent_task_sync(
         node_id=node_id,
         platform=platform,
     )
+    from apps.node.services.internal.cache_management import attach_cache_context
+    payload = attach_cache_context(node=node, payload=payload, kind=kind, correlation_type=correlation_type)
+    persisted_payload = attach_cache_context(node=node, payload=persisted_payload, kind=kind, correlation_type=correlation_type)
     payload = _attach_node_kopia_cache_policy(node=node, payload=payload)
     persisted_payload = _attach_node_kopia_cache_policy(
         node=node, payload=persisted_payload

@@ -69,8 +69,92 @@ repository connection. Existing snapshots remain in their actual repositories.
 Deleting cache during an operation can fail that operation; it must not delete
 identity, credentials, durable tasks, restore output or valid backups.
 
-This change adds no cache-size policy, low-space threshold, relocation UI or
-automatic backup blocking.
+## Demand-driven cache management
+
+Nodes explicitly advertising `cache_management_v1` use the patched Kopia
+`cache-demand-driven` mode. Content and metadata caches grow on demand without
+fixed capacities or a content/metadata allocation ratio. Ordinary restore,
+download and other content reads remain cached. Invalid data and explicit cache
+invalidation retain their existing behavior. Upgrade does not clear warm caches.
+Legacy Kopia's zero-size arguments still disable caching; zero is NOT unlimited.
+
+Each installation has a separate versioned cache policy. The backup-blocking
+threshold B defaults to 10 GiB; warning W is B + 10 GiB (20 GiB by default).
+One GiB is 1,073,741,824 bytes. Existing byte-valued policies remain readable
+and are never rewritten on read.
+The `cache_policy_gib_v1` capability gates new binary-delta saves; older
+cache-management nodes retain their decimal defaults until upgraded. The
+protocol stores exact integer byte values and
+persists B/W/revision together outside cache. CPU, memory, bandwidth and log
+settings are independent. An unsupported Agent/Proxy keeps its existing
+fixed-size configuration and editor; the console explains the limitation and
+provides upgrade guidance. A mixed-version backup chain is protected only on
+the individual nodes that support and have applied the new mode.
+
+Before backup-related repository preparation and again before snapshot
+execution, the executing account samples available bytes on the active cache
+filesystem (Unix `Bavail`, Windows `freeAvail`). Available >= W proceeds;
+B <= available < W warns and proceeds; available < B fails this task. A query
+failure is distinct from insufficient space. Checks do not disable a shared
+policy or other nodes. Each near-limit check records a Backup Space Check
+Warning through the existing EVENT rule matcher. Insufficient space and query
+failures follow only the existing Backup Failed lifecycle with a structured
+reason, without a duplicate cache warning. Query failure has unknown,
+not zero, current free space. Events are retained per execution; notification
+merge and silence belong to the existing alert rule framework, not an Agent
+or cache-specific state controller. Failed historical tasks retain their normal
+manual/explicit recovery semantics.
+
+**Preflight only:** there is no runtime monitoring, cancellation or space
+reservation. Passing a check cannot prevent cache or business writes from
+exhausting the filesystem later. No backup/check means no immediate-space alert.
+
+### Active root and relocation
+
+Persistent cache-management records are under `data/kopia/cache-management/`;
+never publish their private journals, which can contain connection recovery
+copies. The active-root manifest, policies, journals, credentials, configs,
+node identity and task state remain outside cache. Stable connection cache
+names are independent of the selected root. Unexpected removal of the owned
+cache recreates it only on its verified parent filesystem.
+
+The operator selects an existing writable parent directory. Agent validation
+creates no pending path switch; it returns short-lived evidence for a dedicated
+`.hyperfilelens-cache-<installation-id>` child. Critical paths, protected-state
+and repository overlaps, aliases/reparse points, changed mounts and arbitrary
+non-empty unowned directories are rejected. Validation must complete online
+before the operator confirms the durable `cache.relocate` task.
+
+Selecting the configured node root or its canonical `cache` path restores the
+exact default cache subtree, rather than adding another hidden child. Only
+that canonical target is exempt from the broad installation-root overlap rule;
+logs, runtime, persistent data, real repositories, unowned files, aliases and
+low available-space checks still apply. Validation and execution recheck the
+same resolution. Returning to default never adopts the entire installation.
+
+The task closes admission, drains existing users without killing them,
+revalidates, prepares the owned destination, journals connection references,
+commits one active root, verifies it, and only then inventories/deletes old
+managed cache files. Verification checks managed cache references, directory
+identity and a temporary local read/write probe. It deliberately does not open
+repositories or run `kopia cache info`: those operations need transient backup
+credentials and repository availability unrelated to moving local cache. No
+password is stored or requested by relocation. Shutdown/stop operations remain available during draining;
+already admitted nested clients and detached servers retain their usage leases.
+Unclassified content is retained. New cache is warmed again, not copied, so
+relocation can cause additional downloads.
+
+A pre-verification failure rolls references back and retains the old root.
+A verified cutover with failed old cleanup reports `switched_cleanup_pending`;
+normal operations use the new root and cleanup can be retried idempotently.
+Interrupted switching recovers before task admission. Never roll back into a
+partially deleted old root or delete data to force a failed task to complete.
+
+The console reports cache usage as logical regular-file bytes, not allocated
+blocks. Local walks have entry/time budgets, do not follow links, deduplicate
+hard links and show timestamps/completeness. Heartbeats do not scan cache trees
+or object storage. UI status refresh samples do not fabricate preflight
+recovery events.
 
 ## Isolated verification
 

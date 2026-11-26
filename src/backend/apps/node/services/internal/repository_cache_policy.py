@@ -24,4 +24,7 @@ def attach_node_kopia_cache_policy(*, node, payload: dict | None) -> dict | None
         return payload
     if not isinstance(payload, dict) or not isinstance(payload.get("repository"), dict):
         return payload
+    from apps.node.services.internal.cache_management import supports_cache_management
+    if supports_cache_management(node):
+        return {key: value for key, value in payload.items() if key != "kopia_cache_size_mb"}
     return {**payload, "kopia_cache_size_mb": node_kopia_cache_size_mb(node)}

@@ -37,7 +37,7 @@ type Task struct {
 // and agent-process repair until the control plane reconciles it.
 func IsResumableTaskKind(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "backup.run", "backup", "backup.snapshot.create", "restore.run":
+	case "backup.run", "backup", "backup.snapshot.create", "restore.run", "cache.relocate", "cache.relocation.retry":
 		return true
 	default:
 		return false

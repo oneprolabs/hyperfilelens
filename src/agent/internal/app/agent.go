@@ -101,6 +101,10 @@ func (a *Agent) Startup(ctx context.Context) error {
 		}
 		slog.Warn("cache layout migration incomplete; cache is not safe to discard", "retained_entries", incomplete.Count)
 	}
+	if err := engine.RecoverCacheRelocation(ctx, dataRoot, logDir, cfg.KopiaPath); err != nil {
+		_ = db.Close()
+		return fmt.Errorf("recover cache relocation: %w", err)
+	}
 	slog.Info("agent startup phase completed", "phase", "cache_layout_migration")
 	repo := database.NewTaskRepo(db)
 	pathSizeConcurrency := 1

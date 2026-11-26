@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
-	"hyperfilelens/agent/internal/platform/filelock"
 	"hyperfilelens/agent/internal/platform/vfs"
 )
 
@@ -56,12 +56,12 @@ func LockPath(root, config string) string {
 // PrepareConfigDir validates the non-cache boundary before creating a config.
 // Explicit external configs remain caller-owned, not migration candidates.
 func PrepareConfigDir(root, config string) error {
-	cache := filepath.Dir(LegacyConfigDir(root))
+	cache := ActiveCacheRoot(root)
 	absolute, err := filepath.Abs(config)
 	if err != nil {
 		return err
 	}
-	if samePath(cache, absolute) || within(cache, absolute) {
+	if samePath(cache, absolute) || within(cache, absolute) || within(filepath.Dir(LegacyConfigDir(root)), absolute) {
 		return fmt.Errorf("Kopia configuration must be outside cache")
 	}
 	physicalCache, err := physicalPath(cache)
@@ -103,12 +103,16 @@ func CacheDir(root, config string) string {
 	base := strings.TrimSuffix(filepath.Base(canonical), filepath.Ext(canonical))
 	base = sanitizeToken(base)
 	sum := sha256.Sum256([]byte(canonical))
-	return filepath.Join(LegacyConfigDir(root), base+"-"+hex.EncodeToString(sum[:])[:12])
+	return filepath.Join(ActiveCacheRoot(root), "repositories", base+"-"+hex.EncodeToString(sum[:])[:12])
 }
 
 func samePath(a, b string) bool {
 	aa, ea := filepath.Abs(a)
 	bb, eb := filepath.Abs(b)
+	if runtime.GOOS == "windows" {
+		aa = strings.ToLower(aa)
+		bb = strings.ToLower(bb)
+	}
 	return ea == nil && eb == nil && filepath.Clean(aa) == filepath.Clean(bb)
 }
 
@@ -134,8 +138,10 @@ func sanitizeToken(value string) string {
 // AcquireUsage covers the entire managed operation, not merely repository
 // preparation. Startup migration takes the exclusive side of the same lock.
 func AcquireUsage(ctx context.Context, root string) (func(), error) {
-	if err := privateDir(root, RuntimeDir(root)); err != nil {
-		return nil, err
+	if lease, ok := ctx.Value(usageContextKey{}).(*usageLease); ok && samePath(lease.root, root) {
+		if release := lease.retain(); release != nil {
+			return release, nil
+		}
 	}
-	return filelock.Acquire(ctx, filepath.Join(RuntimeDir(root), "migration.lock"), true)
+	return acquireAdmission(ctx, root)
 }

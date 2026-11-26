@@ -133,7 +133,7 @@ def registration_metadata(
     metadata = dict(payload_metadata) if isinstance(payload_metadata, dict) else {}
     # Console-owned policies must survive durable re-registration, and must
     # never be overwritten by an Agent inventory or enrollment payload.
-    for key in ("perf_settings", "performance_policy", "performance_status"):
+    for key in ("perf_settings", "performance_policy", "performance_status", "cache_policy", "cache_status", "cache_space_check"):
         metadata.pop(key, None)
         if isinstance(existing_metadata, dict) and key in existing_metadata:
             metadata[key] = existing_metadata[key]

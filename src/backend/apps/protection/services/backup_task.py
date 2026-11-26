@@ -2358,6 +2358,8 @@ def classify_kopia_execution_failure(
             "Review Resource Usage or contact your administrator before retrying. "
             "Restore and cleanup remain available.",
         )
+    if result.get("error_code") in {"CACHE_SPACE_INSUFFICIENT", "CACHE_SPACE_CHECK_FAILED"}:
+        return result["error_code"], str(last_error or "Cache space check failed; free space or check the cache mount, then start a new backup.")[:2000]
     message = extract_kopia_failure_message(result, last_error=last_error)
     if not message:
         message = str(last_error or "Agent backup command failed.").strip()

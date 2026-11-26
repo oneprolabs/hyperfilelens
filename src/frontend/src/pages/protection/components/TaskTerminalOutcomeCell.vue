@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { cacheFailurePresentation } from '../../../lib/cacheFailureDisplay'
 import { backupFailureCategory, backupFailurePresentation } from '../../../lib/backupFailureDisplay'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -96,16 +97,17 @@ const outcome = computed(() => {
   const structuredReason = resolvedCount > 0 && te(detailKey)
     ? t(detailKey, { count: resolvedCount })
     : ''
+  const cacheFailure = cacheFailurePresentation(source, t) || cacheFailurePresentation(diagnosticFallback, t)
   const friendly = backupFailurePresentation(source) || backupFailurePresentation(diagnosticFallback)
   const friendlyCategory = backupFailureCategory(source) || backupFailureCategory(diagnosticFallback)
   const friendlyReason = friendlyCategory === 'backup_communication_timeout'
     ? t('ops.task.failureDetails.communicationTimeoutReason')
     : friendly?.reason
-  const displayReason = missingSource
+  const displayReason = cacheFailure ? cacheFailure.title : missingSource
     ? t('ops.task.failureDetails.reason.SOURCE_PATH_NOT_FOUND')
     : localizedReason !== reason ? localizedReason
     : friendlyReason || structuredReason || (/agent|source_ref_id|^\s*(?:\[|\{)/i.test(reason) ? 'The task failed. Open task details for troubleshooting.' : reason)
-  const displayCode = friendly || localizedReason !== reason ? '' : code
+  const displayCode = friendly || cacheFailure || localizedReason !== reason ? '' : code
   const showDiagnostic = diagnosticStatuses.has(status) && Boolean(code || displayReason)
   const diagnostic = showDiagnostic
     ? [displayCode ? `[${displayCode}]` : '', displayReason].filter(Boolean).join(' ')
