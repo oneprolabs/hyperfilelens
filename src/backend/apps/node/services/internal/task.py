@@ -662,7 +662,11 @@ def _sync_task_info(task: NodeTask) -> None:
 
 
 def _upgrade_node_status(*, node_task: NodeTask) -> str:
+    from .node_upgrade_recovery import upgrade_recovery_verified
+
     if node_task.status == NodeTask.Status.SUCCESS:
+        return Node.Status.ACTIVE
+    if upgrade_recovery_verified(node_task):
         return Node.Status.ACTIVE
     if node_task.status not in {NodeTask.Status.PENDING, NodeTask.Status.RUNNING}:
         return Node.Status.UPGRADE_FAILED
@@ -726,6 +730,18 @@ def project_node_lifecycle_task(
     if latest_id != node_task.pk:
         return
     if node_task.kind == "agent.upgrade":
+        from .node_upgrade_recovery import (
+            is_reconnect_timeout_upgrade,
+            project_reconnect_timeout_upgrade,
+        )
+
+        if is_reconnect_timeout_upgrade(node_task):
+            # The parent-task sync above owns only its own transaction when
+            # this function is called standalone. Recheck under the Node fence
+            # rather than relying on those already-released locks or this
+            # caller's possibly stale terminal-task snapshot.
+            project_reconnect_timeout_upgrade(node_task=node_task)
+            return
         _update_node_lifecycle_status(
             node_id=node_task.node_id,
             status=status_override or _upgrade_node_status(node_task=node_task),
@@ -1752,17 +1768,44 @@ def complete_task(
         # terminal failure. ACK a late Agent result, but retain it only as
         # diagnostics; never resurrect the audited failure.
         merged = dict(task.result or {})
-        merged["late_result"] = {
-            "received_at": timezone.now().isoformat(),
-            "status": incoming,
-            "result": incoming_result,
-        }
-        task.result = merged
-        task.save(update_fields=["result", "updated_at"])
+        from .node_upgrade_recovery import (
+            is_reconnect_timeout_upgrade,
+            queue_failed_upgrade_recovery,
+        )
+
+        reconnect_failure = is_reconnect_timeout_upgrade(task)
+        previous_late = merged.get("late_result")
+        previous_success = (
+            isinstance(previous_late, dict)
+            and str(previous_late.get("status") or "").lower() in {"success", "succeeded", "ok"}
+            and isinstance(previous_late.get("result"), dict)
+            and previous_late["result"].get("host_upgrade_status") == "success"
+        )
+        if not (reconnect_failure and previous_success):
+            # Uplink results may contain a merge of the existing task result.
+            # Never recursively embed previous late results/recovery evidence.
+            late_payload = dict(incoming_result)
+            if reconnect_failure:
+                late_payload.pop("late_result", None)
+                late_payload.pop("upgrade_recovery", None)
+            merged["late_result"] = {
+                "received_at": timezone.now().isoformat(),
+                "status": incoming,
+                "result": late_payload,
+            }
+            task.result = merged
+            task.save(update_fields=["result", "updated_at"])
+        else:
+            task._result_retransmission_unchanged = True
         # The frame is retained for diagnostics and ACKed, but it must not
         # trigger ordinary task-result follow-up for a lifecycle operation
         # that has already been durably failed by the coordinator.
         task._late_result_ignored = True
+        if reconnect_failure:
+            transaction.on_commit(
+                lambda: queue_failed_upgrade_recovery(node_id=task.node_id)
+            )
+            return task
         try:
             from apps.node.services.internal.node_lifecycle import (
                 heal_upgrade_failed_after_late_host_success,

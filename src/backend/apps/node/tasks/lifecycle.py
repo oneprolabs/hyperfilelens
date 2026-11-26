@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from itertools import chain
 
 from celery import shared_task
 
@@ -14,6 +15,9 @@ from apps.node.constants import (
 from apps.node.models import Node, NodeTask
 from apps.node.services.internal import redis_store
 from apps.node.services.internal.node_lifecycle import advance_node_lifecycle
+from apps.node.services.internal.node_upgrade_recovery import (
+    reconnect_timeout_recovery_node_ids,
+)
 from common.observability.celery_context import logged_celery_task
 
 logger = logging.getLogger(__name__)
@@ -71,7 +75,11 @@ def advance_active_lifecycle_nodes(self) -> dict[str, int]:
             .distinct()
         )
         advanced = 0
-        for node_id in task_rows:
+        seen: set[int] = set()
+        for node_id in chain(task_rows, reconnect_timeout_recovery_node_ids()):
+            if node_id in seen:
+                continue
+            seen.add(node_id)
             if not lease.refresh():
                 logger.warning(
                     "advance_active_lifecycle stopped after lease loss advanced=%s",

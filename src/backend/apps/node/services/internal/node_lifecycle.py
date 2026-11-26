@@ -225,6 +225,10 @@ def _stale_failed_upgrade_is_current(*, node: Node, task: NodeTask) -> bool:
         NodeTask.Status.TIMEOUT,
     } or node.status != Node.Status.ACTIVE:
         return False
+    from .node_upgrade_recovery import upgrade_recovery_verified
+
+    if upgrade_recovery_verified(task):
+        return True
     result = task.result if isinstance(task.result, dict) else {}
     # After a verification-timeout seal, a late atomic host success may heal the
     # node to ACTIVE before inventory catches up. Suppress the obsolete failure
@@ -411,7 +415,11 @@ def record_upgrade_session_observation(
         kind=LIFECYCLE_KIND_UPGRADE,
     )
     if candidate is None:
-        return False
+        from .node_upgrade_recovery import record_failed_upgrade_observation
+
+        return record_failed_upgrade_observation(
+            node=node, session_id=session_id, inventory=inventory,
+        )
     task = NodeTask.objects.select_for_update().get(pk=candidate.pk)
     if task.status not in _ACTIVE_TASK_STATUSES or not _is_detached_lifecycle_task(task):
         return False
@@ -855,7 +863,9 @@ def record_upgrade_disconnect(*, node_id: int) -> bool:
             kind=LIFECYCLE_KIND_UPGRADE,
         )
         if candidate is None:
-            return False
+            from .node_upgrade_recovery import record_failed_upgrade_observation
+
+            return record_failed_upgrade_observation(node=node, disconnected=True)
         task = NodeTask.objects.select_for_update().get(pk=candidate.pk)
         if task.status not in _ACTIVE_TASK_STATUSES or not _is_detached_lifecycle_task(
             task
@@ -1219,7 +1229,10 @@ def _build_upgrade_timeline(*, node: Node, task: NodeTask) -> list[dict[str, Any
         {
             "phase": "success" if not is_failed else "failed",
             "label": "Success" if not is_failed else "Failed",
-            "at": _ts(task.updated_at) if (is_success or is_failed) else None,
+            "at": (
+                _ts(result.get("failed_at") or task.updated_at)
+                if is_failed else _ts(task.updated_at) if is_success else None
+            ),
             "status": (
                 "completed"
                 if is_success
@@ -1588,6 +1601,12 @@ def advance_node_lifecycle(
             upgrade_task.refresh_from_db()
         else:
             _fail_stale_upgrade_task(node=node, task=upgrade_task)
+    else:
+        from .node_upgrade_recovery import advance_failed_upgrade_recovery
+
+        advance_failed_upgrade_recovery(
+            node_id=node.id, organization_id=owner_id(org),
+        )
 
     remove_task = _latest_lifecycle_task(org=org, node=node, kind=LIFECYCLE_KIND_REMOVE)
     if remove_task is None:
