@@ -79,6 +79,9 @@ export interface PlatformExternalAccessSettings {
   editable: boolean
   product_website_url?: string
   default_product_website_url?: string
+  compatibility?: {
+    aliyun_sts_proxy_compatibility_enabled?: boolean
+  }
 }
 
 /** Deployment-managed services shown in Runtime Environment. */
@@ -153,6 +156,16 @@ export async function patchPlatformIdentitySettings(body: Record<string, unknown
 
 export async function fetchPlatformEnvironment() {
   return get<PlatformEnvironmentSettings>('/api/v1/platform-ops/platform/settings/environment')
+}
+
+export async function patchPlatformConnectionCompatibility(enabled: boolean) {
+  return send<Pick<PlatformExternalAccessSettings, 'compatibility'>>(
+    '/api/v1/instance-settings/external-access/compatibility',
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ aliyun_sts_proxy_compatibility_enabled: enabled }),
+    },
+  )
 }
 
 export async function fetchPlatformExternalAccess() {

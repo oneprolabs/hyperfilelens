@@ -25,7 +25,8 @@ import AuthTurnstileField from '../../components/auth/AuthTurnstileField.vue'
 import EmailCodeLoginForm from '../../components/auth/EmailCodeLoginForm.vue'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import type { EmailCodeLoginData } from '../../lib/emailCodeLoginApi'
-import { chooseLoginOrganization, readStoredOrganizationKey } from '../../lib/organizationStorage'
+import { chooseLoginOrganization } from '../../lib/organizationStorage'
+import { readLoginOrganizationPreference } from '../../lib/loginOrganizationPreference'
 import ResetPasswordCard from '../../components/auth/ResetPasswordCard.vue'
 import { fetchDeployProfile } from '../../composables/useDeployProfile'
 import { appConfig } from '../../lib/appConfig'
@@ -62,9 +63,6 @@ const {
 } = useTurnstileConfig('login')
 
 const { setUser } = useAuth()
-// Capture before authentication clears stale request context. The server's
-// available_orgs remains authoritative; a removed choice falls back normally.
-const rememberedOrganization = readStoredOrganizationKey()
 setAuthenticatedLocaleApplicationSuppressed(true)
 const { syncAuthenticatedLocale } = useLocaleSwitch()
 const explicitlySelectedLocale = ref<string | null>(null)
@@ -577,7 +575,9 @@ async function handleSubmit() {
     // Prefer the last available organization without adding a login picker.
     const orgs = res.data.available_orgs || []
     if (orgs.length > 0) {
-      await completeLoginWithOrg(chooseLoginOrganization(orgs, rememberedOrganization))
+      await completeLoginWithOrg(chooseLoginOrganization(
+        orgs, readLoginOrganizationPreference(res.data.user?.id),
+      ))
       return
     }
 
@@ -694,7 +694,9 @@ async function handleEmailCodeVerified(data: EmailCodeLoginData) {
     return
   }
   try {
-    await completeLoginWithOrg(chooseLoginOrganization(orgs, rememberedOrganization))
+    await completeLoginWithOrg(chooseLoginOrganization(
+      orgs, readLoginOrganizationPreference(data.user?.id),
+    ))
   } finally {
     if (loginState.value === 'submitting' && !navigationFinished.value) {
       loginState.value = 'idle'

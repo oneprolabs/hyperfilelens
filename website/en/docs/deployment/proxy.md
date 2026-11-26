@@ -35,4 +35,6 @@ In the console, confirm that:
 - The expected folders are available from the relevant source or target page.
 - The Proxy reconnects automatically after its host or service restarts.
 
+After deployment, see [Repository cache settings](/docs/deployment/repository-cache) to adjust the local repository cache budget.
+
 If registration or storage validation fails, or the Proxy remains offline, see [Installation and nodes](/docs/troubleshooting/installation-nodes).

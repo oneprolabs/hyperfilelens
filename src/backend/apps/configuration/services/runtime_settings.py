@@ -45,6 +45,14 @@ KEY_AI_AZURE_BASE = "ai.azure_openai_api_base"
 KEY_AI_LANGFUSE_BASE = "ai.langfuse_base_url"
 KEY_AI_LANGFUSE_ENABLED = "ai.langfuse_enabled"
 
+KEY_ALIYUN_STS_PROXY_COMPATIBILITY = "storage.aliyun_sts_proxy_compatibility_enabled"
+
+
+def aliyun_sts_proxy_compatibility_enabled() -> bool:
+    """Opt-in EE STS process isolation; intentionally has no deployment fallback."""
+    return get_bool(KEY_ALIYUN_STS_PROXY_COMPATIBILITY, default=False)
+
+
 SECRET_KEYS = frozenset(
     {
         "email.host_password",

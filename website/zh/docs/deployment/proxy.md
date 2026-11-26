@@ -35,4 +35,6 @@ Proxy 部署在能够访问 NAS 或本地存储的 Linux 主机上，使 HyperFi
 - 可以从对应的备份源或目标存储页面访问预期目录。
 - 主机或 Proxy 服务重启后能够自动重新连接。
 
+部署完成后，如需调整本地仓库缓存预算，请查看[仓库缓存配置](/zh/docs/deployment/repository-cache)。
+
 注册失败、存储验证失败或 Proxy 离线时，进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)。

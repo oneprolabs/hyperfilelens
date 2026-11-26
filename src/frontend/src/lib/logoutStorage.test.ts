@@ -6,6 +6,7 @@ import {
   LOGIN_LOCALE_STORAGE_KEY,
 } from '../i18n'
 import { clearLogoutBrowserStorage } from './logoutStorage'
+import { readLoginOrganizationPreference, rememberLoginOrganization } from './loginOrganizationPreference'
 
 afterEach(() => {
   localStorage.clear()
@@ -33,5 +34,22 @@ describe('clearLogoutBrowserStorage', () => {
     clearLogoutBrowserStorage()
 
     expect(localStorage).toHaveLength(0)
+  })
+
+  it('retains account preferences but removes identity, active organization and malformed keys', () => {
+    rememberLoginOrganization(1, 'personal')
+    rememberLoginOrganization(2, 'enterprise')
+    localStorage.setItem('hfl_org_key', 'personal')
+    sessionStorage.setItem('hfl_org_key', 'personal')
+    localStorage.setItem('access_token', 'must-clear')
+    localStorage.setItem('hfl_login_org:token', 'must-clear')
+    clearLogoutBrowserStorage()
+    expect(readLoginOrganizationPreference(1)).toBe('personal')
+    expect(readLoginOrganizationPreference(2)).toBe('enterprise')
+    expect(localStorage.getItem('hfl_org_key')).toBeNull()
+    expect(sessionStorage.getItem('hfl_org_key')).toBeNull()
+    expect(localStorage.getItem('access_token')).toBeNull()
+    expect(localStorage.getItem('hfl_login_org:token')).toBeNull()
+    expect(localStorage.length).toBe(2)
   })
 })

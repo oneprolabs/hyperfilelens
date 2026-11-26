@@ -20,6 +20,7 @@ import { clearLogoutBrowserStorage } from '../lib/logoutStorage'
 import { resolveAuthenticatedLoginTarget } from '../lib/loginNavigation'
 import { operationsSiteRedirect } from '../lib/siteNavigation'
 import { isOrganizationContextFrozen, readStoredOrganizationKey } from '../lib/organizationStorage'
+import { rememberLoginOrganization } from '../lib/loginOrganizationPreference'
 import { insightPermissionHints, insightRouteRedirect } from '../lib/insightAccess'
 import { protectionRouteRedirect } from '../lib/protectionAccess'
 import { operationsRouteRedirect } from '../lib/operationsAccess'
@@ -102,13 +103,20 @@ export function getEffectiveOrgKey(): string {
 }
 
 // Module-level setter for use by setupAuthGuard
-function setUser(userData: User | null) {
+type UserLoadOptions = { rememberOrganization?: boolean }
+
+function setUser(userData: User | null, options: UserLoadOptions = {}) {
   currentUser.value = userData
   isLoggedIn.value = userData !== null
   setAuthenticatedLocalePreference(userData?.language)
   const orgKey = userData?.access_profile?.org_key?.trim()
-  if (orgKey) {
+  if (orgKey && userData) {
     setStoredOrgKey(orgKey)
+    if (!isOrganizationContextFrozen() && options.rememberOrganization !== false
+      && userData.access_profile?.authority_source !== 'support_readonly'
+      && userData.access_profile?.is_organization_member !== false) {
+      rememberLoginOrganization(userData.id, orgKey)
+    }
   }
   if (userData) clearSharedSessionNotice()
 }
@@ -172,7 +180,7 @@ async function readResponseJson(res: Response): Promise<unknown> {
   }
 }
 
-async function inspectCurrentSession(): Promise<CurrentUserFetchResult> {
+async function inspectCurrentSession(options: UserLoadOptions = {}): Promise<CurrentUserFetchResult> {
   const res = await fetch('/api/v1/auth/token/refresh', {
     credentials: 'include',
     headers: getCorrelationHeaders(),
@@ -195,7 +203,7 @@ async function inspectCurrentSession(): Promise<CurrentUserFetchResult> {
     : body
   const payload = parseUserPayload(session.user)
   if (payload?.id) {
-    setUser(payload)
+    setUser(payload, options)
     return {
       user: payload,
       status: res.status,
@@ -209,8 +217,8 @@ async function inspectCurrentSession(): Promise<CurrentUserFetchResult> {
   }
 }
 
-async function fetchCurrentUserWithRefresh(): Promise<CurrentUserFetchResult> {
-  const first = await inspectCurrentSession()
+async function fetchCurrentUserWithRefresh(options: UserLoadOptions = {}): Promise<CurrentUserFetchResult> {
+  const first = await inspectCurrentSession(options)
   if (first.user || !first.refreshAvailable) return first
 
   const refreshed = await refreshAuthToken()
@@ -224,13 +232,13 @@ async function fetchCurrentUserWithRefresh(): Promise<CurrentUserFetchResult> {
     }
   }
 
-  return inspectCurrentSession()
+  return inspectCurrentSession(options)
 }
 
 /** Load the signed-in user and sync org context from the backend access profile. */
-export async function fetchCurrentUser(): Promise<User | null> {
+export async function fetchCurrentUser(options: UserLoadOptions = {}): Promise<User | null> {
   try {
-    const result = await fetchCurrentUserWithRefresh()
+    const result = await fetchCurrentUserWithRefresh(options)
     return result.user
   } catch {
     return null

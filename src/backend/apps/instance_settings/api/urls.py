@@ -9,6 +9,7 @@ from django.urls import path
 from apps.instance_settings.api.views.settings import (
     PlatformOpsSettingsAiTestView,
     PlatformOpsSettingsAiView,
+    PlatformOpsSettingsConnectionCompatibilityView,
     PlatformOpsSettingsDefaultsView,
     PlatformOpsSettingsEmailTestView,
     PlatformOpsSettingsEmailView,
@@ -35,6 +36,11 @@ urlpatterns = [
         "ai/test",
         PlatformOpsSettingsAiTestView.as_view(),
         name="instance-settings-ai-test",
+    ),
+    path(
+        "external-access/compatibility",
+        PlatformOpsSettingsConnectionCompatibilityView.as_view(),
+        name="instance-settings-connection-compatibility",
     ),
     path(
         "external-access",

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import ModulePage from '../../../../components/ModulePage.vue'
@@ -14,7 +14,10 @@ import type {
   RuntimeStatusRow,
 } from '../../../components/runtimeStatus'
 import { useResolvedPlatformOpsSideNav } from '../../../composables/useResolvedPlatformOpsSideNav'
-import { fetchPlatformEnvironment, type PlatformEnvironmentSettings } from '../../../lib/platformOpsApi'
+import {
+  fetchPlatformEnvironment,
+  type PlatformEnvironmentSettings,
+} from '../../../lib/platformOpsApi'
 
 type TagType = 'success' | 'warning' | 'danger' | 'info'
 type ProbeRecord = Record<string, unknown>
@@ -23,6 +26,8 @@ const sideNav = useResolvedPlatformOpsSideNav()
 
 const busy = ref(false)
 const payload = ref<PlatformEnvironmentSettings | null>(null)
+let active = true
+onBeforeUnmount(() => { active = false })
 
 const health = computed(() => (payload.value?.health || {}) as ProbeRecord)
 const apiProbe = computed(() => asProbe(health.value.api))
@@ -319,12 +324,15 @@ function redisDetails(probe: ProbeRecord): string[] {
 async function load() {
   busy.value = true
   try {
-    payload.value = await fetchPlatformEnvironment()
+    const result = await fetchPlatformEnvironment()
+    if (!active) return
+    payload.value = result
   } catch (err) {
+    if (!active) return
     payload.value = null
     ElMessage.error({ message: apiErrorMessage(err, t('platformOps.settings.loadFailed')), grouping: true })
   } finally {
-    busy.value = false
+    if (active) busy.value = false
   }
 }
 

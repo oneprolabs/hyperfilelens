@@ -98,9 +98,21 @@ const operations: DefaultTheme.SidebarItem[] = [
   {
     text: '运行维护',
     items: [
+      { text: '仓库缓存配置', link: '/zh/docs/deployment/repository-cache' },
       { text: '任务、告警与审计', link: '/zh/docs/deployment/operations' },
       { text: '升级与恢复', link: '/zh/docs/deployment/lifecycle' },
       { text: '卸载社区版', link: '/zh/docs/deployment/uninstall' },
+    ],
+  },
+  {
+    text: '个人版运营',
+    items: [
+      { text: '托管存储概述', link: '/zh/docs/deployment/personal-edition/managed-storage/' },
+      { text: '华为云 OBS 接入', link: '/zh/docs/deployment/personal-edition/managed-storage/huawei' },
+      { text: '阿里云 OSS 接入', link: '/zh/docs/deployment/personal-edition/managed-storage/aliyun' },
+      { text: 'AWS S3 接入', link: '/zh/docs/deployment/personal-edition/managed-storage/aws' },
+      { text: 'RustFS 接入', link: '/zh/docs/deployment/personal-edition/managed-storage/rustfs' },
+      { text: 'MinIO 接入', link: '/zh/docs/deployment/personal-edition/managed-storage/minio' },
     ],
   },
 ]

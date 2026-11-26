@@ -33,7 +33,9 @@ vi.mock('./useDeployProfile', () => ({
   shouldForceDeployProfileRefresh: vi.fn().mockReturnValue(false),
 }))
 
-import { confirmCurrentSession, currentUser } from './useAuth'
+import { confirmCurrentSession, currentUser, fetchCurrentUser } from './useAuth'
+import { readLoginOrganizationPreference, rememberLoginOrganization } from '../lib/loginOrganizationPreference'
+import { freezeOrganizationContext, releaseOrganizationContext } from '../lib/organizationStorage'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -46,11 +48,17 @@ describe('confirmCurrentSession', () => {
   beforeEach(() => {
     mocks.refreshAuthToken.mockReset()
     currentUser.value = null
+    localStorage.clear()
+    sessionStorage.clear()
+    releaseOrganizationContext()
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
     currentUser.value = null
+    releaseOrganizationContext()
+    localStorage.clear()
+    sessionStorage.clear()
   })
 
   it('returns the authenticated user when the session can be inspected', async () => {
@@ -110,5 +118,47 @@ describe('confirmCurrentSession', () => {
     mocks.refreshAuthToken.mockResolvedValue({ ok: false, networkError: true })
 
     await expect(confirmCurrentSession()).resolves.toEqual({ state: 'unknown' })
+  })
+
+  it('remembers only the organization confirmed in the server access profile', async () => {
+    rememberLoginOrganization(8, 'another-account')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: { id: 7, access_profile: { org_key: 'verified-org' } },
+    })))
+    await fetchCurrentUser()
+    expect(readLoginOrganizationPreference(7)).toBe('verified-org')
+    expect(readLoginOrganizationPreference(8)).toBe('another-account')
+  })
+
+  it('does not overwrite a login preference during OAuth bootstrap', async () => {
+    rememberLoginOrganization(7, 'personal')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: { id: 7, access_profile: { org_key: 'server-default' } },
+    })))
+    await fetchCurrentUser({ rememberOrganization: false })
+    expect(readLoginOrganizationPreference(7)).toBe('personal')
+  })
+
+  it.each([
+    { authority_source: 'support_readonly' },
+    { is_organization_member: false },
+  ])('does not remember support or non-member organization contexts (%j)', async (profile) => {
+    rememberLoginOrganization(7, 'personal')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: { id: 7, access_profile: { org_key: 'support-org', ...profile } },
+    })))
+    await fetchCurrentUser()
+    expect(readLoginOrganizationPreference(7)).toBe('personal')
+  })
+
+  it('does not let a frozen old document overwrite the next login preference', async () => {
+    rememberLoginOrganization(7, 'personal')
+    sessionStorage.setItem('hfl_org_key', 'old-org')
+    freezeOrganizationContext()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      user: { id: 7, access_profile: { org_key: 'old-org' } },
+    })))
+    await fetchCurrentUser()
+    expect(readLoginOrganizationPreference(7)).toBe('personal')
   })
 })

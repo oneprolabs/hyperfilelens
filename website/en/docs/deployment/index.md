@@ -22,6 +22,13 @@ description: Deploy the HyperFileLens control plane, backup components, and Priv
 
 ## Operate HyperFileLens Community
 
+- [Repository cache settings](/docs/deployment/repository-cache): adjust per-repository cache budgets for Agents and Proxies, including allocation, application timing, and disk-space planning.
 - [Jobs, alerts, and audit logs](/docs/deployment/operations): review task status, alerts, and audit records; new organizations receive default alert rules. For members, roles, and quotas, see [Organization Management](/docs/governance/).
 - [Upgrade and recovery](/docs/deployment/lifecycle): upgrade HyperFileLens Community, verify the result, and respond safely to upgrade failures.
 - [Uninstall HyperFileLens Community](/docs/deployment/uninstall): remove the complete deployment, or remove the runtime while retaining configuration and business data.
+
+## Personal Edition Operations
+
+Authorized Personal Edition operators prepare managed object storage and temporary-credential issuance. This requires Enterprise and is not a setup task for ordinary personal users.
+
+Start with [Managed Storage Overview](/docs/deployment/personal-edition/managed-storage/), then follow the least-privilege procedure for [Huawei Cloud OBS](/docs/deployment/personal-edition/managed-storage/huawei), [Alibaba Cloud OSS](/docs/deployment/personal-edition/managed-storage/aliyun), [AWS S3](/docs/deployment/personal-edition/managed-storage/aws), [RustFS](/docs/deployment/personal-edition/managed-storage/rustfs), or [MinIO](/docs/deployment/personal-edition/managed-storage/minio).

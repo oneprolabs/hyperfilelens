@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 
-import { fetchCurrentUser, setStoredOrgKey } from '../../composables/useAuth'
+import { restoreOAuthOrganization } from '../../lib/oauthOrganization'
 import { useLocaleSwitch } from '../../composables/useLocaleSwitch'
 import { resolvePostLoginPath } from '../../composables/useDeployProfile'
 import { trackAppEvent } from '../../lib/analytics'
@@ -18,7 +18,6 @@ import { selectLocale } from '../../i18n'
 import { installedLangPacks } from '../../lib/langPacks'
 
 const { t } = useI18n()
-const route = useRoute()
 const router = useRouter()
 const { syncAuthenticatedLocale } = useLocaleSwitch()
 const loading = ref(true)
@@ -35,15 +34,8 @@ function syncPendingLoginLocale() {
 }
 
 onMounted(async () => {
-  const orgKey = route.query.org_key
-  if (typeof orgKey === 'string' && orgKey.trim()) {
-    setStoredOrgKey(orgKey.trim())
-  }
-
-  const user = await fetchCurrentUser()
-  loading.value = false
-
-  if (user) {
+  try {
+    await restoreOAuthOrganization()
     const pendingLocale = getPendingLoginLocale()
     if (pendingLocale) selectLocale(pendingLocale)
     if (!syncPendingLoginLocale()) {
@@ -53,14 +45,15 @@ onMounted(async () => {
     }
     clearPendingLoginLocale()
     trackAppEvent('login', { method: 'google' })
-    router.replace(await resolvePostLoginPath())
-    return
+    await router.replace(await resolvePostLoginPath())
+  } catch {
+    clearLoginLocaleSelection()
+    clearPendingLoginLocale()
+    ElMessage.error({ message: t('login.googleLoginFailed'), grouping: true })
+    await router.replace('/login')
+  } finally {
+    loading.value = false
   }
-
-  clearLoginLocaleSelection()
-  clearPendingLoginLocale()
-  ElMessage.error({ message: t('login.googleLoginFailed'), grouping: true })
-  router.replace('/login')
 })
 
 onUnmounted(() => {

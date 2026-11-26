@@ -99,9 +99,21 @@ const enOperations = [
   {
     text: 'Operations',
     items: [
+      { text: 'Repository cache settings', link: '/docs/deployment/repository-cache' },
       { text: 'Jobs, alerts, and audit logs', link: '/docs/deployment/operations' },
       { text: 'Upgrade and recovery', link: '/docs/deployment/lifecycle' },
       { text: 'Uninstall Community', link: '/docs/deployment/uninstall' },
+    ],
+  },
+  {
+    text: 'Personal Edition Operations',
+    items: [
+      { text: 'Managed Storage Overview', link: '/docs/deployment/personal-edition/managed-storage/' },
+      { text: 'Connect Huawei Cloud OBS', link: '/docs/deployment/personal-edition/managed-storage/huawei' },
+      { text: 'Connect Alibaba Cloud OSS', link: '/docs/deployment/personal-edition/managed-storage/aliyun' },
+      { text: 'Connect AWS S3', link: '/docs/deployment/personal-edition/managed-storage/aws' },
+      { text: 'Connect RustFS', link: '/docs/deployment/personal-edition/managed-storage/rustfs' },
+      { text: 'Connect MinIO', link: '/docs/deployment/personal-edition/managed-storage/minio' },
     ],
   },
 ]

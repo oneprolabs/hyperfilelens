@@ -7844,6 +7844,8 @@ export const en = {
       saveFailed: 'Failed to save settings',
       source: 'Source: {source}',
       externalAccess: {
+        aliyunStsProxyCompatibility: 'Alibaba Cloud STS Proxy Compatibility',
+        aliyunStsProxyCompatibilityHint: 'Enable if Alibaba Cloud STS requests do not respect NO_PROXY. Applies only to temporary credential requests, not object storage traffic.',
         productWebsiteUrl: 'Product Website URL',
         productWebsiteHint: 'The Product Website link in the user menu opens this URL in a new tab. Defaults to {url}. This setting affects only the menu link.',
         configurationTitle: 'Access Configuration',

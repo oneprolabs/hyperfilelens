@@ -29,4 +29,6 @@ In the console, confirm that:
 - You can browse the required folders and select the intended backup paths.
 - For a persistent installation, the Agent reconnects automatically after the host or service restarts.
 
+After deployment, see [Repository cache settings](/docs/deployment/repository-cache) to adjust the local repository cache budget.
+
 If registration fails or the Agent remains offline, see [Installation and nodes](/docs/troubleshooting/installation-nodes).

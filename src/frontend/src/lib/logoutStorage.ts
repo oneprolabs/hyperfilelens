@@ -3,8 +3,9 @@ import {
   clearLoginLocaleSelection,
   clearPendingLoginLocale,
 } from '../i18n'
+import { isLoginOrganizationPreferenceKey } from './loginOrganizationPreference'
 
-/** Clear browser-local user state while retaining the anonymous language preference. */
+/** Clear identity and tenant state, retaining language and account-scoped login hints. */
 export function clearLogoutBrowserStorage(): void {
   try {
     const keys = Array.from(
@@ -13,7 +14,7 @@ export function clearLogoutBrowserStorage(): void {
     ).filter((key): key is string => Boolean(key))
 
     for (const key of keys) {
-      if (key !== LANG_STORAGE_KEY) localStorage.removeItem(key)
+      if (key !== LANG_STORAGE_KEY && !isLoginOrganizationPreferenceKey(key)) localStorage.removeItem(key)
     }
   } catch {
     /* Storage may be unavailable in privacy-restricted browser contexts. */

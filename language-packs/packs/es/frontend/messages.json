@@ -10022,6 +10022,8 @@
       "saveFailed": "Error al guardar la configuración",
       "source": "Fuente: {source}",
       "externalAccess": {
+        "aliyunStsProxyCompatibility": "Compatibilidad de proxy de Alibaba Cloud STS",
+        "aliyunStsProxyCompatibilityHint": "Active esta opción si las solicitudes a Alibaba Cloud STS no respetan NO_PROXY. Solo afecta a las solicitudes de credenciales temporales, no al tráfico del almacenamiento de objetos.",
         "configurationTitle": "Configuración de acceso",
         "managed": "Los cambios de acceso externo están deshabilitados por la política de despliegue.",
         "urlLabel": "URL de acceso externo",
