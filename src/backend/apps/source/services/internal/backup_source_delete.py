@@ -69,6 +69,7 @@ from apps.storage.services.interface import (
     run_repository_cleanup_task,
 )
 from apps.task.constants import RESTORE_TASK_TYPES
+from apps.task.error_contract import sanitize_task_detail
 from apps.task.models import Task, TaskDependency, TaskResource, TaskStep
 from apps.task.services.interface import (
     append_task_step_event,
@@ -3832,7 +3833,11 @@ def _repository_unreachable_preflight_risks(
 
 def _snapshot_delete_error_detail(task: Task, result: dict[str, Any]) -> str:
     parts: list[str] = []
-    last_error = str(getattr(task, "last_error", "") or "").strip()
+    last_error = str(
+        getattr(task, "error_message", "")
+        or getattr(task, "last_error", "")
+        or ""
+    ).strip()
     if last_error:
         parts.append(last_error)
     item_results = (
@@ -3851,7 +3856,7 @@ def _snapshot_delete_error_detail(task: Task, result: dict[str, Any]) -> str:
     if task_uuid:
         parts.append(f"(task {task_uuid})")
     if parts:
-        return " ".join(parts)[:2000]
+        return str(sanitize_task_detail(" ".join(parts)))[:2000]
     return "One or more physical snapshots failed to delete."
 
 

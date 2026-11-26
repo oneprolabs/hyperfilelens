@@ -41,6 +41,7 @@ from apps.source.services.internal.backup_source_delete import (
     _prepare_delete_batch,
     _repository_purge_idempotency_key,
     _resolve_context,
+    _snapshot_delete_error_detail,
     _snapshot_delete_for_unregister,
     _snapshot_delete_owned_by_unregister_attempt,
     delete_backup_sources,
@@ -183,6 +184,53 @@ class BackupSourceDeleteSnapshotTaskTests(TestCase):
             selectable_id=f"nas:{self.resource.id}",
             force=False,
         )
+
+    def test_failed_snapshot_cleanup_preserves_child_error_in_unregister_reason(self):
+        parent = self._create_unregister_parent()
+        child = create_snapshot_delete_task(
+            source_snapshot=self.snapshot, source_unregister_task=parent,
+        )
+        error = "Kopia S3 capability check timed out; retry the operation."
+        Task.objects.filter(pk=child.pk).update(
+            status=Task.Status.FAILED,
+            error_code="SNAPSHOT_DELETE_FAILED",
+            error_message=error,
+            result_payload={"results": [], "failed_count": 1},
+        )
+        state, detail, payload = _snapshot_delete_for_unregister(
+            source_snapshot=self.snapshot, unregister_task=parent,
+        )
+        self.assertFalse(state)
+        self.assertIn(error, detail)
+        self.assertIn(str(child.task_uuid), detail)
+        self.assertEqual(payload["error_message"], error)
+        self.assertTrue(BackupConfig.objects.filter(pk=self.config.pk).exists())
+        self.snapshot.refresh_from_db()
+        self.assertNotEqual(self.snapshot.status, "deleted")
+
+    def test_snapshot_cleanup_error_supports_legacy_tasks_and_result_items(self):
+        detail = _snapshot_delete_error_detail(
+            SimpleNamespace(last_error="Legacy task failure", task_uuid="child-task"),
+            {"results": [{
+                "status": "failed", "kopia_snapshot_id": "snapshot-one",
+                "error_message": "Physical cleanup failed",
+            }]},
+        )
+        self.assertIn("Legacy task failure", detail)
+        self.assertIn("snapshot-one: Physical cleanup failed", detail)
+        self.assertIn("(task child-task)", detail)
+
+    def test_snapshot_cleanup_error_redacts_sensitive_child_details(self):
+        detail = _snapshot_delete_error_detail(
+            SimpleNamespace(
+                error_message="Request failed with secret=private-value",
+                task_uuid="child-task",
+            ),
+            {},
+        )
+        self.assertIn("Request failed", detail)
+        self.assertIn("[REDACTED]", detail)
+        self.assertNotIn("private-value", detail)
 
     def _create_agent_unregister_with_snapshot_delete(
         self,
