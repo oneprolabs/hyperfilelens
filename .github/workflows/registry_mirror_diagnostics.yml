@@ -1,4 +1,4 @@
-name: Diagnose registry mirror transport
+name: Diagnose staged registry copy
 
 on:
   push:
@@ -11,24 +11,20 @@ permissions:
   contents: read
 
 jobs:
-  copy-http1:
-    name: HTTP/1.1 copy · ${{ matrix.name }}
+  staged-gateway:
+    name: Stage and copy Gateway assets
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Enterprise Backend
-            repository: hyperfilelens-backend
-            digest: sha256:a2f58173d88e7b901db82f4bc20167f3979f3e46862e2c1c80b6f46b30a029fc
-          - name: Gateway assets
-            repository: hyperfilelens-gateway-assets
-            digest: sha256:e626773d47c86e27132cec87f9f68c797424672b069271a3b7ee7a7f47bf77a9
+    env:
+      REPOSITORY: hyperfilelens-gateway-assets
+      EXPECTED_DIGEST: sha256:e626773d47c86e27132cec87f9f68c797424672b069271a3b7ee7a7f47bf77a9
+      GODEBUG: http2client=0
     steps:
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
-        with:
-          version: v0.39.0
+      - name: Install the registry copy diagnostic tool
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends skopeo
+          skopeo --version
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with:
           registry: docker.io
@@ -39,23 +35,31 @@ jobs:
           registry: registry.cn-beijing.aliyuncs.com
           username: ${{ secrets.CN_REGISTRY_USERNAME }}
           password: ${{ secrets.CN_REGISTRY_PASSWORD }}
-      - name: Copy immutable source to a diagnostic tag
-        env:
-          REPOSITORY: ${{ matrix.repository }}
-          EXPECTED_DIGEST: ${{ matrix.digest }}
-          GODEBUG: http2client=0
+      - name: Download and verify the complete immutable source
         shell: bash
         run: |
           set -euo pipefail
           source="docker.io/oneprolabs/$REPOSITORY@$EXPECTED_DIGEST"
-          destination="registry.cn-beijing.aliyuncs.com/oneprolabs/$REPOSITORY:diag-http1-$GITHUB_RUN_ID"
-          printf 'Source: %s\nDiagnostic destination: %s\n' "$source" "$destination"
-          docker buildx version
-          timeout 20m docker buildx imagetools create \
-            --prefer-index=false --tag "$destination" "$source"
-          actual="$(timeout 60s docker buildx imagetools inspect \
-            "$destination" --format '{{json .Manifest}}' | jq -r .digest)"
+          started=$SECONDS
+          timeout 10m skopeo copy --preserve-digests \
+            --authfile "$HOME/.docker/config.json" \
+            "docker://$source" "dir:$RUNNER_TEMP/gateway-image"
+          actual="sha256:$(sha256sum "$RUNNER_TEMP/gateway-image/manifest.json" | cut -d' ' -f1)"
           [[ "$actual" == "$EXPECTED_DIGEST" ]]
-          printf 'Verified immutable digest: %s\n' "$actual"
-          printf '## %s\n\nHTTP/1.1 copy and digest verification passed.\n' \
-            "$REPOSITORY" >>"$GITHUB_STEP_SUMMARY"
+          printf 'Source staged and verified in %ss: %s\n' "$((SECONDS-started))" "$actual"
+      - name: Upload staged source to a diagnostic tag and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          destination="registry.cn-beijing.aliyuncs.com/oneprolabs/$REPOSITORY:diag-staged-$GITHUB_RUN_ID"
+          started=$SECONDS
+          timeout 10m skopeo copy --preserve-digests \
+            --authfile "$HOME/.docker/config.json" \
+            "dir:$RUNNER_TEMP/gateway-image" "docker://$destination"
+          actual="sha256:$(timeout 60s skopeo inspect --raw \
+            --authfile "$HOME/.docker/config.json" \
+            "docker://$destination" | sha256sum | cut -d' ' -f1)"
+          [[ "$actual" == "$EXPECTED_DIGEST" ]]
+          printf 'Destination copied and verified in %ss: %s\n' "$((SECONDS-started))" "$actual"
+          printf '## Gateway staged copy\n\nBoth phases passed; source and destination digest: `%s`.\n' \
+            "$actual" >>"$GITHUB_STEP_SUMMARY"
