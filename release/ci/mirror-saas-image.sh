@@ -95,11 +95,13 @@ if [[ "${if_missing}" == --if-missing ]]; then
 fi
 
 copy_status=1
+copy_godebug="${GODEBUG:-}"
+copy_http1_fallback=0
 for ((attempt = 1; attempt <= attempts; attempt++)); do
 	: >"${copy_log}"
 	printf '[....] Mirroring image (attempt %s/%s): %s -> %s\n' \
 		"${attempt}" "${attempts}" "${source_repository}@${digest}" "${destination_ref}"
-	if docker buildx imagetools create \
+	if GODEBUG="${copy_godebug}" docker buildx imagetools create \
 		--prefer-index=false \
 		--tag "${destination_ref}" \
 		"${source_repository}@${digest}" 2>&1 | tee "${copy_log}"; then
@@ -122,6 +124,14 @@ for ((attempt = 1; attempt <= attempts; attempt++)); do
 	fi
 	if ((attempt == attempts)); then
 		break
+	fi
+	if ((copy_http1_fallback == 0)) && grep -Eiq \
+		'stream error[^[:cntrl:]]*internal_error' "${copy_log}"; then
+		# Scope the transport fallback to the copying client, retaining all
+		# caller GODEBUG options. Do not alter registry, TLS, or digest checks.
+		copy_godebug="${copy_godebug:+${copy_godebug},}http2client=0"
+		copy_http1_fallback=1
+		printf 'WARN: HTTP/2 stream reset during registry copy; remaining copy attempts will use HTTP/1.1\n' >&2
 	fi
 	wait_before_retry "${attempt}" mirror
 done

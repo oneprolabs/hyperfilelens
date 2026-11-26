@@ -209,7 +209,20 @@ case "${1:-} ${2:-}" in
 			|| count="$(cat "${HFL_TEST_MIRROR_MARKER}")"
 		count=$((count + 1))
 		printf '%s\n' "${count}" >"${HFL_TEST_MIRROR_MARKER}"
+		if [[ -n "${HFL_TEST_MIRROR_TRANSPORT_MARKER:-}" ]]; then
+			printf '%s\n' "${GODEBUG:-}" >>"${HFL_TEST_MIRROR_TRANSPORT_MARKER}"
+		fi
 		case "${HFL_TEST_MIRROR_MODE:-success}" in
+		http2Stream)
+			if [[ "${GODEBUG:-}" != http2client=0 && "${GODEBUG:-}" != *,http2client=0 ]]; then
+				printf 'failed to copy: stream error: stream ID 3; INTERNAL_ERROR; received from peer\n' >&2
+				exit 1
+			fi
+			;;
+		alwaysStream)
+			printf 'failed to copy: stream error: stream ID 3; INTERNAL_ERROR; received from peer\n' >&2
+			exit 1
+			;;
 		flaky429 | always429 | flakyStream)
 			if [[ "${count}" -lt 3 ]]; then
 				if [[ "${HFL_TEST_MIRROR_MODE}" == "flakyStream" ]]; then
@@ -233,6 +246,9 @@ case "${1:-} ${2:-}" in
 		esac
 		;;
 	inspect)
+		if [[ -n "${HFL_TEST_MIRROR_INSPECT_TRANSPORT_MARKER:-}" ]]; then
+			printf '%s\n' "${GODEBUG:-}" >>"${HFL_TEST_MIRROR_INSPECT_TRANSPORT_MARKER}"
+		fi
 		count=0
 		[[ ! -f "${HFL_TEST_MIRROR_INSPECT_MARKER}" ]] \
 			|| count="$(cat "${HFL_TEST_MIRROR_INSPECT_MARKER}")"
@@ -414,6 +430,75 @@ HFL_TEST_MIRROR_MODE=flaky429 \
 		"${digest}" \
 		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
 [[ "$(cat "${mirror_marker}")" -eq 3 ]]
+
+transport_marker="${tmp}/mirror-transport"
+inspect_transport_marker="${tmp}/mirror-inspect-transport"
+for caller_godebug in "" "gctrace=0" "gctrace=0,http2client=1"; do
+	printf '0\n' >"${mirror_marker}"
+	printf '0\n' >"${mirror_inspect_marker}"
+	: >"${transport_marker}"
+	: >"${inspect_transport_marker}"
+	GODEBUG="${caller_godebug}" \
+		HFL_TEST_MIRROR_MODE=http2Stream \
+		HFL_TEST_MIRROR_TRANSPORT_MARKER="${transport_marker}" \
+		HFL_TEST_MIRROR_INSPECT_TRANSPORT_MARKER="${inspect_transport_marker}" \
+		HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+		HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+		"${ROOT}/release/ci/mirror-saas-image.sh" \
+			docker.io/example/hyperfilelens-backend:1.0.0-ee \
+			"${digest}" \
+			registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
+	[[ "$(cat "${mirror_marker}")" -eq 2 ]]
+	[[ "$(sed -n '1p' "${transport_marker}")" == "${caller_godebug}" ]]
+	[[ "$(sed -n '2p' "${transport_marker}")" == "${caller_godebug:+${caller_godebug},}http2client=0" ]]
+	[[ "$(cat "${inspect_transport_marker}")" == "${caller_godebug}" ]]
+done
+
+printf '0\n' >"${mirror_marker}"
+: >"${transport_marker}"
+GODEBUG=gctrace=0 \
+	HFL_TEST_MIRROR_MODE=flaky429 \
+	HFL_TEST_MIRROR_TRANSPORT_MARKER="${transport_marker}" \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee
+[[ "$(cat "${mirror_marker}")" -eq 3 ]]
+[[ "$(sort -u "${transport_marker}")" == gctrace=0 ]]
+
+printf '0\n' >"${mirror_marker}"
+if HFL_TEST_MIRROR_MODE=alwaysStream \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee \
+		>/dev/null 2>&1; then
+	printf 'ERROR: registry mirror accepted persistent HTTP/2 stream failures\n' >&2
+	exit 1
+fi
+[[ "$(cat "${mirror_marker}")" -eq 5 ]]
+
+printf '0\n' >"${mirror_marker}"
+printf '0\n' >"${mirror_inspect_marker}"
+if GODEBUG= \
+	HFL_TEST_MIRROR_MODE=http2Stream \
+	HFL_TEST_MIRROR_INSPECT_MODE=mismatch \
+	HFL_REGISTRY_MIRROR_RETRY_BASE_SECONDS=0 \
+	HFL_REGISTRY_MIRROR_RETRY_JITTER_SECONDS=0 \
+	"${ROOT}/release/ci/mirror-saas-image.sh" \
+		docker.io/example/hyperfilelens-backend:1.0.0-ee \
+		"${digest}" \
+		registry.example.cn/example/hyperfilelens-backend:1.0.0-ee \
+		>/dev/null 2>&1; then
+	printf 'ERROR: HTTP/1.1 fallback accepted a mismatched manifest digest\n' >&2
+	exit 1
+fi
+[[ "$(cat "${mirror_marker}")" -eq 2 ]]
+[[ "$(cat "${mirror_inspect_marker}")" -eq 1 ]]
 
 printf '0\n' >"${mirror_marker}"
 HFL_TEST_MIRROR_MODE=flakyStream \
