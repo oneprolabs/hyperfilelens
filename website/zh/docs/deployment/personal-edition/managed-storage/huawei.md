@@ -18,6 +18,14 @@ description: 准备普通账号委托、专用 IAM 调用用户和 OBS 最小权
 - 由有 IAM 管理权限的云管理员确认可用委托关系；同账号部署也要按实际 IAM 能力和管理要求确认，不能把普通账号委托配置为云服务委托。
 - 控制端需要访问 IAM Endpoint，执行组件需要访问 Bucket 的 OBS Endpoint；长期密钥不需要拥有 IAM 用户／委托管理权限。
 
+## 创建专用的空 Bucket
+
+1. 使用资源账号打开 **OBS → 桶列表 → 创建桶**，选择所需区域并填写唯一的桶名，记录实际桶名、地域与 OBS Endpoint。
+2. 选择**标准存储**与**私有**访问，保持公共访问关闭。基础方案不启用 WORM、归档转换、自动删除对象或自定义 KMS 加密；如需这些功能，须单独验证。
+3. 创建后确认桶为空。创建桶由存储管理员执行，不需要给签名用户或委托添加建桶权限。
+
+`hfl-backups-prod` 只是示例，不是预留桶名。策略与表单必须统一替换为实际桶名。`personal/` 是对象键前缀，不需要预先创建目录。已有专用桶仅在确认归属、私有访问、无冲突数据或保留规则后复用。
+
 ## 创建专用调用用户
 
 1. 在被委托账号的 **IAM → 用户** 创建 `hfl-sts-controller`，仅用于程序访问，不提供普通控制台登录权限。
@@ -32,6 +40,12 @@ description: 准备普通账号委托、专用 IAM 调用用户和 OBS 最小权
 4. 创建后给委托授权：使用下面的 OBS 自定义策略，并按 OBS 的全局服务授权范围操作。不要添加 `OBS Administrator` 或 `Security Administrator`。
 
 按[创建委托并授权](https://support.huaweicloud.com/usermanual-iam/iam_06_0002.html)核对账号关系；若控制台不接受所选账号关系，应由管理员确认受支持的账号安排，应使用受支持的普通账号委托配置，不应改用云服务委托。
+
+### 账号关系示例
+
+**账号 A** 持有桶并创建委托 `hfl-managed-storage`；**账号 B** 创建 IAM 用户 `hfl-sts-controller` 并保存其 AK/SK。在 A 的委托中，「委托的账号」填写 **B 的华为云账号名**。表单的 Domain ID 填写 **A 的账号 ID**，Agency Name 填写 A 的委托名，AK/SK 使用 B 的专用 IAM 用户密钥。B 的专用用户组只获得调用该名称委托的权限。这里采用官方跨账号委托流程，不代表任意同账号委托配置都可用。
+
+下面的 OBS JSON 是绑定给委托的 **IAM 自定义策略**，应在 IAM 策略编辑器中配置，不是 OBS 桶策略；二者格式不能混用。
 
 ## 给委托授予 OBS 前缀权限
 
@@ -98,7 +112,7 @@ description: 准备普通账号委托、专用 IAM 调用用户和 OBS 最小权
 - **Bucket 级元数据**：`obs:bucket:ListBucketMultipartUploads` 是当前控制端清理会话使用的指定 Bucket 元数据权限，不带普通对象列举的前缀条件；桶信息查询也属于桶级权限。因此建议使用专用 Bucket；权限范围同时包含前缀级对象权限与上述 Bucket 级元数据权限。
 - **对象访问范围**：对象内容的读取、写入、删除，以及对象／版本列举，均受策略中的前缀限制。连接身份不应获得 Bucket 创建、删除、策略管理或全局管理员权限。
 
-华为 OBS 的条件运算符不能照搬 AWS 的 `StringLike` 通配符语义。这里的连接级父策略使用 `StringStartWith` 限定 `personal/repositories/`；当前产品签发单仓库会话时使用对应仓库精确根路径的 `StringLike`，不在该条件值后追加 AWS 风格的 `*`。对象资源中的 `*` 与列举条件是两回事。参考 [OBS 自定义策略和条件](https://support.huaweicloud.com/perms-cfg-obs/obs_40_0004.html)。
+华为 OBS 的条件运算符不能照搬 AWS 的 `StringLike` 通配符语义。这里的连接级父策略使用 `StringStartWith` 限定 `personal/repositories/`；当前产品签发单仓库会话时使用对应仓库精确根路径的 `StringLike`，不在该条件值后追加 AWS 风格的 `*`。对象资源中的 `*` 与列举条件是两回事。参考 [OBS 自定义策略和条件](https://support.huaweicloud.com/usermanual-iam/iam_01_0019.html)。
 
 ## 仅允许调用用户使用指定委托
 
@@ -123,6 +137,8 @@ description: 准备普通账号委托、专用 IAM 调用用户和 OBS 最小权
 ```
 
 上面的 `/iam/agencies/hfl-managed-storage` 使用官方指定委托授权指南中的委托资源形式；委托名称不是该值时替换为实际名称。OBS 数据策略绑定给**委托**，`iam:tokens:assume` 策略授权给**调用用户所在组**，两者不能对调。官方步骤见[将委托权限分配给 IAM 用户](https://support.huaweicloud.com/usermanual-iam/iam_01_0063.html)。
+
+调用策略中的 `/iam/agencies/hfl-managed-storage` 最后一段是**委托名称**，不是委托 ID；名称不同须同步修改。
 
 ## 获取账号信息并填写 Add Object Storage
 
@@ -210,6 +226,7 @@ description: 准备普通账号委托、专用 IAM 调用用户和 OBS 最小权
 - [创建普通账号委托](https://support.huaweicloud.com/usermanual-iam/iam_06_0002.html)
 - [指定委托的细粒度调用授权](https://support.huaweicloud.com/usermanual-iam/iam_01_0063.html)
 - [IAM API 授权项](https://support.huaweicloud.com/intl/zh-cn/api-iam/iam_19_0001.html)
-- [OBS 自定义策略与条件](https://support.huaweicloud.com/perms-cfg-obs/obs_40_0004.html)
+- [IAM 自定义策略语法与条件运算符](https://support.huaweicloud.com/usermanual-iam/iam_01_0019.html)
+- [OBS IAM 权限与资源范围](https://support.huaweicloud.com/perms-cfg-obs/obs_40_0053.html)
 - [账号、项目和委托信息](https://support.huaweicloud.com/api-iam/iam_17_0002.html)
 - [IAM 接入点](https://support.huaweicloud.com/intl/en-us/api-iam/iam_01_0001.html)

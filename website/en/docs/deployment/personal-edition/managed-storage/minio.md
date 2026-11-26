@@ -19,6 +19,19 @@ This guide is for Personal Edition operators. It requires Enterprise and the app
 - Use HTTPS in production. The current version allows HTTP only for localhost, loopback, or permitted private IP literals; a hostname resolving privately is not automatically accepted over HTTP. Do not disable certificate verification.
 - This guide is not a compatibility promise for every MinIO release. Record and test the actual server version, IAM configuration, and renewal. Other identity modes in provider documentation are not necessarily implemented by this integration.
 
+## Create a Dedicated Empty Bucket
+
+1. On the approved administrator terminal, configure the management alias described below and create a dedicated bucket. Replace the example name with an unused name; do not use an option that silently accepts an existing bucket:
+
+   ```bash
+   mc mb hfl-admin/hfl-backups-prod
+   ```
+
+2. Keep anonymous access disabled. Review any deployment-wide policy that could make the bucket public; do not configure anonymous download access. Do not enable Object Lock, automatic deletion, archive transitions, or customer-managed KMS encryption without separate validation.
+3. Confirm the bucket is empty using the administrator alias. Bucket creation is an administrator operation; the signing user does not receive this permission.
+
+`hfl-backups-prod` is an example, not a reserved name. Replace it everywhere in the policies and form with your actual bucket. The prefix `personal/` is an object-key prefix, not a directory to create. An existing dedicated bucket may be reused only after verifying ownership, private access, and the absence of conflicting data or retention rules.
+
 ## Create and Authorize the Dedicated User
 
 1. Record the MinIO server and `mc` versions. Confirm built-in-user signed AssumeRole, inline Policy, session-token validation, and the listing/version/multipart actions below. Existing S3 access does not prove these capabilities.
@@ -116,7 +129,7 @@ Select **MinIO**:
 | Form field | Value and source |
 | --- | --- |
 | Endpoint URL | Actual S3 API host and port, for example `minio.example.com:9000`; the TLS switch controls the scheme |
-| Region | Actual signing region. The form defaults to `us-east-1` and uses it when blank; match any custom server region |
+| Region | Actual signing region. The field may be blank; the server uses `us-east-1` when no region is supplied. A selected custom catalog region is retained; match the actual server region |
 | Access Key / Secret Key | Dedicated regular user `hfl-sts-controller` access key and secret, not administrator/root or Service Account credentials |
 | S3 URL Style | Path Style, required by the current managed integration |
 | Use TLS (HTTPS) | On for production with trusted certificates; private HTTP only under the stated conditions |
@@ -190,3 +203,4 @@ Some official MinIO command references now live on the AIStor documentation site
 - [Create a policy](https://docs.min.io/aistor/reference/cli/admin/mc-admin-policy/mc-admin-policy-create/)
 - [Attach a policy](https://docs.min.io/aistor/reference/cli/admin/mc-admin-policy/mc-admin-policy-attach/)
 - [Configure an alias](https://docs.min.io/aistor/reference/cli/mc-alias/mc-alias-set/)
+- [Create a bucket with mc mb](https://docs.min.io/aistor/reference/cli/mc-mb/)

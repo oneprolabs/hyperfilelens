@@ -28,6 +28,93 @@ function array(value) {
   return Array.isArray(value) ? value : [value]
 }
 
+test('each provider starts with concrete empty private bucket preparation', () => {
+  for (const provider of providers) {
+    const en = docs.en[provider]
+    const zh = docs.zh[provider]
+    assert.match(en, /## Create a Dedicated Empty Bucket/)
+    assert.ok(zh.includes(zhCopy.emptyBucketHeading))
+    assert.match(en, /prefix `personal\/` is an object-key prefix, not a directory to create/)
+    assert.ok(zh.includes(zhCopy.noPrecreatedDirectory))
+    assert.match(en, /existing dedicated bucket may be reused only after verifying/)
+    assert.ok(en.indexOf('## Create a Dedicated Empty Bucket') < en.indexOf('```json'))
+    // Preparation uses an administrator, but runtime policies must not gain
+    // any bucket/user administration actions (covered separately below).
+    assert.match(en, /administrator/)
+  }
+  assert.match(docs.en.minio, /mc mb hfl-admin\/hfl-backups-prod/)
+  assert.match(docs.zh.minio, /mc mb hfl-admin\/hfl-backups-prod/)
+})
+
+test('Alibaba distinguishes key ownership, caller authorization, trust, and proxy errors', () => {
+  for (const locale of ['en', 'zh']) {
+    const source = docs[locale].aliyun
+    assert.match(source, /aliyun sts GetCallerIdentity --profile hfl-sts-controller/)
+    for (const field of ['IdentityType', 'RAMUser', 'AccountId', 'Arn', 'NoPermission']) {
+      assert.ok(source.includes(field), field)
+    }
+    assert.match(source, /Admin Console → External Access → Access Configuration → Alibaba Cloud STS Proxy Compatibility/)
+    assert.match(source, /NO_PROXY/)
+    assert.match(source, /Request ID/)
+    assert.doesNotMatch(source, /--AccessKeySecret|--access-key-secret|aliyun sts AssumeRole/)
+  }
+  assert.match(docs.en.aliyun, /grant the role-call policy at \*\*account scope\*\*/)
+  assert.match(docs.en.aliyun, /This setting fixes neither IAM permissions nor `NoPermission`/)
+  assert.ok(docs.zh.aliyun.includes(zhCopy.actualKeyOwnerHeading))
+  assert.ok(docs.zh.aliyun.includes(zhCopy.accountScopeBinding))
+  assert.ok(docs.zh.aliyun.includes(zhCopy.noIamProxyFix))
+})
+
+test('AWS documents endpoint-derived STS signing scope and preserves existing settings', () => {
+  for (const locale of ['en', 'zh']) {
+    const source = docs[locale].aws
+    assert.match(source, /\| `https:\/\/sts.amazonaws.com`.*\| `us-east-1` \|/)
+    assert.match(source, /\| `https:\/\/sts.ap-southeast-1.amazonaws.com` \| `ap-southeast-1` \|/)
+    assert.match(source, /https:\/\/sts.cn-north-1.amazonaws.com.cn/)
+    assert.match(source, /aws sts get-caller-identity --profile hfl-sts-controller/)
+    assert.match(source, /id_credentials_temp_region-endpoints.html/)
+  }
+  assert.match(docs.en.aws, /Existing connections and manually edited STS endpoints are preserved/)
+})
+
+test('Huawei uses the IAM policy reference and explains the resource and caller accounts', () => {
+  for (const locale of ['en', 'zh']) {
+    const source = docs[locale].huawei
+    assert.match(source, /usermanual-iam\/iam_01_0019.html/)
+    assert.doesNotMatch(source, /perms-cfg-obs\/obs_40_0004.html/)
+  }
+  assert.match(docs.en.huawei, /the final component is the \*\*agency name\*\*, not its ID/)
+  assert.ok(docs.zh.huawei.includes(zhCopy.huaweiAccountExample))
+  assert.ok(docs.zh.huawei.includes(zhCopy.huaweiAgencyNameNotId))
+})
+
+test('self-hosted region guidance matches optional form input and server defaults', () => {
+  for (const provider of ['rustfs', 'minio']) {
+    assert.match(docs.en[provider], /field may be blank/)
+    assert.doesNotMatch(docs.en[provider], /form defaults to `us-east-1`/)
+    assert.ok(docs.zh[provider].includes(zhCopy.selfHostedOptionalRegion))
+  }
+  assert.match(docs.en.index, /### Reproducible Lifecycle Test/)
+  assert.match(docs.en.index, /longer than one issued token's lifetime/)
+  assert.match(docs.en.index, /Save-time checks do not establish that the bucket is empty or private/)
+  assert.ok(docs.zh.index.includes(zhCopy.lifecycleTestHeading))
+  assert.ok(docs.zh.index.includes(zhCopy.renewalTest))
+  assert.ok(docs.zh.index.includes(zhCopy.saveDoesNotProvePrivate))
+})
+
+test('cross-prefix isolation is tested with repository-scoped temporary credentials, not parent keys', () => {
+  const en = docs.en.index
+  const zh = docs.zh.index
+  assert.match(en, /repository A's temporary credentials/)
+  assert.match(en, /reading a known test object in A must succeed/)
+  assert.match(en, /reading a known test object in repository B must be denied/)
+  assert.match(en, /Do not use administrator credentials or connection-wide signing credentials/)
+  assert.ok(zh.includes(zhCopy.isolationTemporaryIdentity))
+  assert.ok(zh.includes(zhCopy.isolationOwnObjectAllowed))
+  assert.ok(zh.includes(zhCopy.isolationOtherObjectDenied))
+  assert.ok(zh.includes(zhCopy.isolationNoParentIdentity))
+})
+
 test('all six operator guides have matching translations and provider ordering', async () => {
   const enNav = await readFile(new URL('.vitepress/config.mts', website), 'utf8')
   const zhNav = await readFile(new URL('.vitepress/navigation/zh.ts', website), 'utf8')

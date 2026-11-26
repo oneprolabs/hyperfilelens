@@ -18,6 +18,14 @@ description: 创建最小权限 RAM 用户与角色，为 Personal Edition 配�
 - 本页以同账号 RAM 用户与角色为例；跨账号时分别使用调用用户账号与角色所属账号的真实 ARN，并检查 Bucket Policy。
 - 确认控制端可访问阿里云 STS，所有执行组件可访问 Bucket 对应外网 Endpoint。不要默认使用 OSS 内网地址。
 
+## 创建专用的空 Bucket
+
+1. 打开 **OSS → Bucket 列表 → 创建 Bucket**，选择生产地域和唯一桶名。创建后从**概览 → 外网访问 Endpoint**记录地域及地址；不要复制带桶名的 URL，云外执行组件不要填写内网地址。
+2. 选择**标准存储**、**私有**读写权限并保持公共访问关闭。基础方案不启用保留策略／WORM、归档转换、自动删除对象或自定义 KMS 加密；如需这些功能，须单独验证。
+3. 确认新桶为空。创建桶由存储管理员执行，不需要给签名 RAM 用户或被扮演角色添加建桶权限。
+
+`hfl-backups-prod` 只是示例，不是预留桶名。策略与表单必须统一替换为实际桶名。`personal/` 是对象键前缀，不需要预先创建目录。已有专用桶仅在确认归属、私有访问、无冲突数据或保留规则后复用。
+
 ## 创建专用 RAM 用户
 
 1. 打开 **访问控制 RAM → 身份管理 → 用户 → 创建用户**，创建 `hfl-sts-controller`，只供程序调用，不需要控制台登录。
@@ -137,6 +145,20 @@ description: 创建最小权限 RAM 用户与角色，为 Personal Edition 配�
 
 不要用 MFA、ExternalId 或 SourceIdentity 等当前表单没有提供的条件直接替换此机器调用流程。若组织强制要求这些条件，应先适配签发流程，而不是移除公司的安全要求。调用用户授权和角色信任策略都必须匹配，临时会话不能扩大角色权限。参考[扮演 RAM 角色](https://help.aliyun.com/zh/ram/user-guide/assume-a-ram-role)和[OSS 权限策略](https://help.aliyun.com/zh/oss/user-guide/ram-policy)。
 
+## 核对 AccessKey 的真实所属用户
+
+填写密钥前，由 RAM 管理员在目标 RAM 用户的 AccessKey 页核对**实际 AccessKey ID**。登录邮箱、显示名或同项目另建的用户名都不能代替密钥归属核对。
+
+也可在受控终端使用安全配置的阿里云 CLI 专用 Profile（配置这对密钥，不能使用管理员 Profile），调用 [GetCallerIdentity](https://help.aliyun.com/zh/ram/developer-reference/api-sts-2015-04-01-getcalleridentity)：
+
+```bash
+aliyun sts GetCallerIdentity --profile hfl-sts-controller
+```
+
+确认 `IdentityType` 为 `RAMUser`，返回的 `AccountId`、完整 `Arn` 与调用账号、角色信任 Principal 精确一致。这个接口仅核对调用身份，不代表已获得 AssumeRole 权限。不要把密钥放在命令行中，不开启 SDK 调试日志，不将包含临时凭据的响应粘贴到工单。
+
+在 RAM 中重新核对**实际密钥所属用户**：用户的 `sts:AssumeRole` 策略仅指向完整目标角色 ARN，角色精确信任该用户 ARN。本方案的调用策略按**账号范围**绑定，同时通过 Resource 收窄为一个角色 ARN；不要误绑定在无关资源组下。OSS 数据策略绑定给角色，不绑定给签名用户；显式拒绝仍优先。
+
 ## 填写 Add Object Storage
 
 选择 **Alibaba Cloud** 和 Bucket 的实际地域。
@@ -181,6 +203,12 @@ description: 创建最小权限 RAM 用户与角色，为 Personal Edition 配�
 
 **连接保存成功只代表签发和只读访问检查通过，不等于已经验证写入、完整仓库生命周期或所有客户端网络。** 完整验收步骤见[托管存储概述](./index#验证与上线)。
 
+### 代理兼容设置
+
+配置了 HTTPS 代理、且 `NO_PROXY` 匹配实际 STS 主机时，可在 **Admin Console → External Access → Access Configuration → Alibaba Cloud STS Proxy Compatibility** 开启兼容设置。默认关闭；必要时仅对本次 STS 调用启动短生命周期隔离进程，仍使用原始阿里云 SDK。没有 HTTPS 代理或旁路不匹配时不使用隔离进程，不改变 OSS 流量或全局代理参数。
+
+此开关不解决 IAM 权限和 `NoPermission`。STS 返回带 Request ID 的 `NoPermission`／AssumeRole 拒绝，说明请求已到达 STS，应核对真实密钥归属、调用策略绑定、完整角色 ARN 与信任 Principal。STS 成功后 OSS AccessDenied，应检查角色数据策略、桶策略和前缀；代理连接错误则属于独立的传输问题。
+
 ## 常见错误
 
 | 问题 | 检查 |
@@ -214,6 +242,7 @@ description: 创建最小权限 RAM 用户与角色，为 Personal Edition 配�
 
 ## 官方参考
 
+- [RAM 用户授权范围与权限诊断](https://help.aliyun.com/zh/ram/user-guide/grant-permissions-to-the-ram-user)
 - [RAM 用户与指定角色授权](https://help.aliyun.com/zh/ram/support/faq-about-ram-roles-and-sts-tokens)
 - [自定义权限策略](https://help.aliyun.com/zh/ram/create-a-custom-policy)
 - [OSS 权限策略](https://help.aliyun.com/zh/oss/user-guide/ram-policy)

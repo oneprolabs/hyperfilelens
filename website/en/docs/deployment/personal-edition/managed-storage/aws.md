@@ -18,6 +18,14 @@ This guide is for Personal Edition operators. It requires Enterprise and the app
 - This guide assumes the standard AWS partition and a same-account user and role. For China, GovCloud, or cross-account use, first check product catalog, ARN partition, session policy, and bucket-policy compatibility. Replacing a hostname alone is not enough.
 - Evaluate SSE-KMS, Object Lock, and archival storage separately. These examples include neither KMS nor retention-bypass permissions.
 
+## Create a Dedicated Empty Bucket
+
+1. Open **S3 → Buckets → Create bucket**, select **General purpose**, the required AWS Region, and a unique name. Record the actual name and Region.
+2. Keep **Block all public access** enabled and the default **Bucket owner enforced** Object Ownership. Use the default S3-managed encryption (SSE-S3) for this baseline. Do not enable Object Lock or introduce SSE-KMS, archive transitions, or lifecycle deletion without a separately validated configuration.
+3. Create the bucket and confirm it is empty. Bucket creation belongs to the storage administrator; neither the signing IAM user nor the assumed role needs that permission.
+
+`hfl-backups-prod` is an example, not a reserved name. Replace it everywhere in the policies and form with your actual bucket. The prefix `personal/` is an object-key prefix, not a directory to create. An existing dedicated bucket may be reused only after verifying ownership, private access, and the absence of conflicting data or retention rules.
+
 ## Create an IAM User and a Narrowly Trusted Role
 
 1. Open **IAM → Users → Create user**, create `hfl-sts-controller`, and leave console sign-in disabled. Do not add privileged groups.
@@ -127,6 +135,16 @@ This policy defines the connection-wide permission ceiling for backup, restore, 
 
 This does not grant `s3:ListAllMyBuckets`, bucket creation/deletion, bucket-policy administration, or IAM management. Apply `s3:prefix` to listing statements, not `GetBucketLocation` or object-content statements. See [AssumeRole](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html) for trust and permission intersections.
 
+## Verify the Signing Identity
+
+On a controlled terminal, configure a dedicated AWS CLI profile with the same IAM-user keys, then run:
+
+```bash
+aws sts get-caller-identity --profile hfl-sts-controller --region us-east-1 --endpoint-url https://sts.us-east-1.amazonaws.com
+```
+
+This standard-partition example returns identity information, not temporary keys. Verify `Account` and the complete user `Arn` match the caller policy and role trust; a different CLI administrator profile proves nothing about the configured key. For China, use the matching regional endpoint and account partition. Do not put keys in command arguments, print AssumeRole credential responses, or enable SDK debug logs. Identity lookup does not itself prove role assumption or S3 access.
+
 ## Complete Add Object Storage
 
 Select **AWS** and the bucket's actual region.
@@ -138,10 +156,23 @@ Select **AWS** and the bucket's actual region.
 | Access Key / Secret Key | Dedicated IAM user's Access key ID / Secret access key, securely stored at creation |
 | S3 URL Style | Keep the regional catalog preset; if choosing Virtual Hosted Style manually, verify bucket DNS and TLS compatibility |
 | Use TLS (HTTPS) | On |
-| Identity Service Endpoint | Current default `https://sts.amazonaws.com`, or an appropriate regional endpoint such as `https://sts.us-east-1.amazonaws.com`, confirmed against IAM and network requirements |
+| Identity Service Endpoint | For new connections, selecting Region suggests a regional endpoint, for example `https://sts.ap-southeast-1.amazonaws.com`. Confirm STS availability for the account; an explicit endpoint remains editable |
 | Role ARN | Copy **IAM → Roles → hfl-managed-storage → Summary → ARN**; do not enter the user ARN |
 
 A normal one-hour role maximum is sufficient for the default 15-minute requests. Multi-day tasks are not a reason to lengthen each token. See [STS regional configuration](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_enable-regions.html).
+
+### STS Endpoint and Signing Region
+
+New AWS connections suggest STS in the selected bucket region. Existing connections and manually edited STS endpoints are preserved. S3 Region still identifies the bucket; the Controller derives the **STS signing region from the STS endpoint**, not from the bucket:
+
+| Identity Service Endpoint | STS signing region |
+| --- | --- |
+| `https://sts.amazonaws.com` (existing global configuration) | `us-east-1` |
+| `https://sts.ap-southeast-1.amazonaws.com` | `ap-southeast-1` |
+| `https://sts.eu-west-1.amazonaws.com` | `eu-west-1`, even when the bucket is in another region |
+| `https://sts.cn-north-1.amazonaws.com.cn` | `cn-north-1`; requires the China account, `aws-cn` ARNs, matching catalog and policies |
+
+Prefer regional STS. Check [STS endpoints and activation](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_region-endpoints.html), especially for opt-in regions. The global endpoint's signing scope remains `us-east-1`; this does not claim that AWS always routes its traffic to that physical region. GovCloud and other partitions are not covered by this guide.
 
 ### Storage Configuration
 
@@ -175,7 +206,7 @@ To restore an existing Disabled connection, select it and use **More Actions →
 | --- | --- |
 | AssumeRole AccessDenied | Role ARN in caller policy, user ARN in trust policy, SCPs, permission boundaries, and additional conditions |
 | Read-only check AccessDenied | Role's S3 policy, bucket policy, and `s3:prefix`; allow `personal/repositories/*`, not only listing the `personal/` root |
-| Endpoint/Region mismatch | Correct the actual region; preflight does not conceal the error with automatic SDK redirects |
+| Endpoint/Region mismatch | S3 endpoint and bucket Region must match; STS signs for its own endpoint. Check regional STS activation and partition, not extra S3 permissions |
 | Writes or deletion fail | DeleteObject, multipart and version permissions, plus separate KMS, Object Lock, or retention restrictions |
 
 ## Configuration Checklist

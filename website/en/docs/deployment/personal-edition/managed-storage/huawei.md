@@ -18,6 +18,14 @@ This guide is for Personal Edition operators. It requires Enterprise and the app
 - An IAM administrator must confirm a supported account delegation arrangement. Also confirm same-account arrangements against the actual IAM deployment; do not substitute a cloud-service agency.
 - The Controller must reach IAM, and executors must reach OBS. The long-lived caller does not need user or agency administration privileges.
 
+## Create a Dedicated Empty Bucket
+
+1. In the resource account, open **OBS → Buckets → Create Bucket**, choose the required region, and enter a unique bucket name. Record the actual name and regional OBS endpoint.
+2. Select **Standard** storage and **Private** access. Keep public access blocked. For this baseline, do not enable WORM, archive transitions, automatic object deletion, or customer-managed KMS encryption without a separately validated configuration.
+3. Create the bucket and confirm it is empty. Creating the bucket is an administrator operation, not a permission for the signing user or agency.
+
+`hfl-backups-prod` is an example, not a reserved name. Replace it everywhere in the policies and form with your actual bucket. The prefix `personal/` is an object-key prefix, not a directory to create. An existing dedicated bucket may be reused only after verifying ownership, private access, and the absence of conflicting data or retention rules.
+
 ## Create the Dedicated Caller
 
 1. In the delegated account's **IAM → Users**, create `hfl-sts-controller` for programmatic access without ordinary console access.
@@ -32,6 +40,12 @@ This guide is for Personal Edition operators. It requires Enterprise and the app
 4. Authorize the new agency with the OBS custom policy below, using the global-service scope appropriate to OBS. Do not add `OBS Administrator` or `Security Administrator`.
 
 Check [Create an agency](https://support.huaweicloud.com/intl/en-us/usermanual-iam/iam_06_0002.html). If the console rejects the account arrangement, have the administrator confirm a supported arrangement rather than trying a cloud-service agency.
+
+### Account Example
+
+Account **A** owns the bucket and creates agency `hfl-managed-storage`. Account **B** owns IAM user `hfl-sts-controller` and its AK/SK. In A's agency, enter **B's account name** as the delegated account. In the form, use **A's account ID** for Domain ID, A's agency name, and B's IAM-user keys. B's dedicated user group receives only permission to assume that named agency. This is the documented cross-account arrangement; do not assume that an arbitrary same-account arrangement is supported.
+
+The OBS JSON below is an **IAM custom policy** attached to the agency, not an OBS bucket-policy document. Use the IAM policy editor; these two policy formats are not interchangeable.
 
 ## Attach OBS Prefix Permissions to the Agency
 
@@ -98,7 +112,7 @@ This policy defines the connection-wide permission ceiling for backup, restore, 
 - **Bucket metadata:** `obs:bucket:ListBucketMultipartUploads` is bucket-scoped metadata access used by the current Controller cleanup session, without the normal object-listing prefix condition. Bucket information is also bucket-scoped. Use a dedicated bucket: the policy includes both prefix-scoped object access and the bucket-scoped metadata permissions described above.
 - **Object access:** Object content operations and object/version listings remain prefix-restricted. Do not grant the connection identity bucket creation, deletion, policy management, or global administration.
 
-OBS conditions do not use AWS wildcard semantics unchanged. This connection-wide parent policy uses `StringStartWith` for `personal/repositories/`. The current per-repository session uses `StringLike` with that repository's exact root, without appending an AWS-style wildcard. Wildcards in object resources are separate from listing conditions. See [OBS custom policies and conditions](https://support.huaweicloud.com/intl/en-us/perms-cfg-obs/obs_40_0004.html).
+OBS conditions do not use AWS wildcard semantics unchanged. This connection-wide parent policy uses `StringStartWith` for `personal/repositories/`. The current per-repository session uses `StringLike` with that repository's exact root, without appending an AWS-style wildcard. Wildcards in object resources are separate from listing conditions. See [OBS custom policies and conditions](https://support.huaweicloud.com/intl/en-us/usermanual-iam/iam_01_0019.html).
 
 ## Allow Only This Agency for the Calling User
 
@@ -122,7 +136,7 @@ In the delegated account, create a dedicated IAM group and add `hfl-sts-controll
 }
 ```
 
-`/iam/agencies/hfl-managed-storage` follows the agency-resource form in Huawei's specific-agency authorization guide; replace it when the agency name differs. The OBS data policy belongs to the **agency**, while `iam:tokens:assume` belongs to the **caller's group**. See [Assign agency permissions to IAM users](https://support.huaweicloud.com/intl/en-us/usermanual-iam/iam_01_0063.html).
+`/iam/agencies/hfl-managed-storage` follows the agency-resource form in Huawei's specific-agency authorization guide; the final component is the **agency name**, not its ID. Replace it when the agency name differs. The OBS data policy belongs to the **agency**, while `iam:tokens:assume` belongs to the **caller's group**. See [Assign agency permissions to IAM users](https://support.huaweicloud.com/intl/en-us/usermanual-iam/iam_01_0063.html).
 
 ## Obtain Account Details and Complete Add Object Storage
 
@@ -210,6 +224,7 @@ Configure keys on the Controller through a secure channel. Do not include keys i
 - [Create an account agency](https://support.huaweicloud.com/intl/en-us/usermanual-iam/iam_06_0002.html)
 - [Agency-specific caller authorization](https://support.huaweicloud.com/intl/en-us/usermanual-iam/iam_01_0063.html)
 - [IAM API permissions](https://support.huaweicloud.com/intl/en-us/api-iam/iam_19_0001.html)
-- [OBS custom policies](https://support.huaweicloud.com/intl/en-us/perms-cfg-obs/obs_40_0004.html)
+- [IAM custom-policy syntax and condition operators](https://support.huaweicloud.com/intl/en-us/usermanual-iam/iam_01_0019.html)
+- [OBS IAM permissions and resource scope](https://support.huaweicloud.com/intl/en-us/perms-cfg-obs/obs_40_0003.html)
 - [Account and agency information](https://support.huaweicloud.com/intl/en-us/api-iam/iam_17_0002.html)
 - [IAM endpoints](https://support.huaweicloud.com/intl/en-us/api-iam/iam_01_0001.html)

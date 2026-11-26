@@ -19,6 +19,14 @@ This guide is for Personal Edition operators. It requires Enterprise and the app
 - Use HTTPS in production. The current version allows HTTP only for localhost, loopback, or permitted private IP literals; a hostname resolving privately is not automatically accepted over HTTP. Do not disable certificate verification.
 - This guide is not a compatibility promise for every RustFS release. Record and test the actual server version, IAM configuration, and renewal. Other identity modes in provider documentation are not necessarily implemented by this integration.
 
+## Create a Dedicated Empty Bucket
+
+1. Sign in to the RustFS **Console** as a storage administrator. Open **Buckets → Create Bucket**, enter a unique name, and create a dedicated bucket. Confirm the actual region against the server configuration.
+2. Keep bucket access private; do not add anonymous/public-read policies. For the baseline, do not enable Object Lock, automatic deletion, archive transitions, or customer-managed KMS encryption without separate validation.
+3. Open the bucket and confirm it is empty. Use the Console's installed-version labels if they differ. Do not grant bucket administration to the dedicated signing user.
+
+`hfl-backups-prod` is an example, not a reserved name. Replace it everywhere in the policies and form with your actual bucket. The prefix `personal/` is an object-key prefix, not a directory to create. An existing dedicated bucket may be reused only after verifying ownership, private access, and the absence of conflicting data or retention rules.
+
 ## Create and Authorize the Dedicated User
 
 1. Record the RustFS server version and configuration. Have the administrator confirm signed AssumeRole for **regular IAM users**, inline Policy support, session-token validation, and this guide's listing/version/multipart actions. An S3 upload alone does not establish compatibility.
@@ -105,7 +113,7 @@ Select **RustFS**:
 | Form field | Value and source |
 | --- | --- |
 | Endpoint URL | Actual S3 API host and port, for example `rustfs.example.com:9000`; the TLS switch controls the scheme |
-| Region | Actual signing region. The form defaults to `us-east-1` and uses it when blank; match any custom server region |
+| Region | Actual signing region. The field may be blank; the server uses `us-east-1` when no region is supplied. A selected custom catalog region is retained; match the actual server region |
 | Access Key / Secret Key | Dedicated regular user `hfl-sts-controller` access key and secret, not administrator/root or Service Account credentials |
 | S3 URL Style | Path Style, required by the current managed integration |
 | Use TLS (HTTPS) | On for production with trusted certificates; private HTTP only under the stated conditions |
@@ -176,3 +184,4 @@ Configure keys on the Controller through a secure channel. Do not include keys i
 - [RustFS service accounts and STS](https://docs.rustfs.com/en/security-compliance/iam/sts)
 - [RustFS access keys](https://docs.rustfs.com/en/security-compliance/iam/access-token)
 - [RustFS TLS](https://docs.rustfs.com/en/integration/tls-configured)
+- [RustFS Console and bucket administration](https://docs.rustfs.com/en/administration/console)

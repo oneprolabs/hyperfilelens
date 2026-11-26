@@ -18,6 +18,14 @@ This guide is for Personal Edition operators. It requires Enterprise and the app
 - This example uses a same-account user and role. For cross-account use, distinguish the caller's account from the role's account and check the bucket policy.
 - The Controller must reach STS and all executors must reach the storage endpoint. Do not assume that an OSS internal endpoint is reachable outside Alibaba Cloud.
 
+## Create a Dedicated Empty Bucket
+
+1. Open **OSS → Buckets → Create Bucket**. Choose the production region and a unique name, then record the bucket's **Overview → Public Endpoint** and region. Do not copy a bucket-qualified URL or an internal endpoint for executors outside the cloud network.
+2. Use **Standard** storage and **Private** ACL; keep public access blocked. For this baseline, do not enable retention/WORM, archive transitions, automatic object deletion, or customer-managed KMS encryption without a separately validated configuration.
+3. Create the bucket and confirm it is empty. This operation belongs to the storage administrator, not the signing RAM user or assumed role.
+
+`hfl-backups-prod` is an example, not a reserved name. Replace it everywhere in the policies and form with your actual bucket. The prefix `personal/` is an object-key prefix, not a directory to create. An existing dedicated bucket may be reused only after verifying ownership, private access, and the absence of conflicting data or retention rules.
+
 ## Create the Dedicated RAM User
 
 1. Open **RAM → Identities → Users → Create User**. Create `hfl-sts-controller` for programmatic use without console sign-in.
@@ -137,6 +145,20 @@ This policy defines the connection-wide permission ceiling for backup, restore, 
 
 Do not require MFA, ExternalId, or SourceIdentity in this example without adapting issuance: the current form does not supply them. If your organization mandates such conditions, adapt the integration rather than removing the security requirement. Both the user's permission and role trust must match; a session cannot expand role permissions. See [Assume a RAM role](https://help.aliyun.com/en/ram/user-guide/assume-a-ram-role) and [OSS policies](https://help.aliyun.com/en/oss/user-guide/ram-policy).
 
+## Verify the Actual AccessKey Owner
+
+Before entering keys, have the RAM administrator locate the **actual AccessKey ID** under the intended RAM user's AccessKey tab. A login email, display name, or a different user created for the same project does not establish ownership.
+
+Optionally, use a dedicated, securely configured Alibaba Cloud CLI profile containing that same key pair (not an administrator profile) to call [GetCallerIdentity](https://help.aliyun.com/en/ram/developer-reference/api-sts-2015-04-01-getcalleridentity):
+
+```bash
+aliyun sts GetCallerIdentity --profile hfl-sts-controller
+```
+
+Check `IdentityType` is `RAMUser`. Its `AccountId` and complete `Arn` must match the caller account and the role trust's Principal exactly. This response identifies the caller; it does not grant or prove AssumeRole permission. Do not put secrets on the command line, enable SDK debug logging, or paste temporary-credential responses into tickets.
+
+In RAM, recheck the binding on **that user**: `sts:AssumeRole` targets the exact role ARN, and the role trusts that exact user ARN. For this setup, grant the role-call policy at **account scope**, while keeping its Resource restricted to the one role ARN; do not mistakenly restrict the binding to an unrelated resource group. Attach the OSS policy to the role, not to the signing user. An explicit deny still takes precedence.
+
 ## Complete Add Object Storage
 
 Select **Alibaba Cloud** and the bucket's actual region.
@@ -181,6 +203,12 @@ To restore an existing Disabled connection, select it and use **More Actions →
 
 **Saving a connection verifies issuance and read accessibility, not write access, the complete repository lifecycle, or connectivity from every client.** See the [rollout checklist](./index#verify-before-rollout).
 
+### Proxy Compatibility
+
+If an HTTPS proxy is configured but `NO_PROXY` matches the actual STS host, open **Admin Console → External Access → Access Configuration → Alibaba Cloud STS Proxy Compatibility**. This opt-in setting is disabled by default. It lets the original Alibaba SDK honor the bypass through a short-lived isolated process for that STS call; without an HTTPS proxy, or without a matching bypass, no isolated process is used. It does not alter OSS traffic or global proxy settings.
+
+This setting fixes neither IAM permissions nor `NoPermission`. If STS returns `NoPermission` / AssumeRole denial with a Request ID, connectivity has reached STS: check actual key ownership, caller-policy binding, exact role ARN and trust Principal. If STS succeeds but OSS returns AccessDenied, inspect the role's data policy, bucket policy and prefix. A proxy connection error is a separate transport problem.
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -214,6 +242,7 @@ Configure keys on the Controller through a secure channel. Do not include keys i
 
 ## Official References
 
+- [Grant permissions to the actual RAM user](https://help.aliyun.com/en/ram/user-guide/grant-permissions-to-the-ram-user)
 - [RAM user and role restrictions](https://help.aliyun.com/en/ram/support/faq-about-ram-roles-and-sts-tokens)
 - [Custom policies](https://help.aliyun.com/en/ram/create-a-custom-policy)
 - [OSS policies](https://help.aliyun.com/en/oss/user-guide/ram-policy)
