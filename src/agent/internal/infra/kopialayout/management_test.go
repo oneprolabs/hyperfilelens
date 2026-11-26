@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -129,7 +130,15 @@ func TestManagementRelocationPreservesStateAndCacheIdentity(t *testing.T) {
 	root, parent := managementFixture(t)
 	config := filepath.Join(ConfigDir(root), "repo-1.config")
 	oldCache := CacheDir(root, config)
-	if err := saveJSON(root, config, map[string]any{"storage": map[string]any{"type": "filesystem", "config": map[string]any{"path": filepath.Join(filepath.Dir(root), "real-repository")}}, "caching": map[string]any{"cacheDirectory": oldCache}, "password": "must-remain-private"}); err != nil {
+	connection := map[string]any{
+		"storage": map[string]any{
+			"type":   "filesystem",
+			"config": map[string]any{"path": filepath.Join(filepath.Dir(root), "real-repository")},
+		},
+		"caching":  map[string]any{"cacheDirectory": oldCache},
+		"password": "must-remain-private",
+	}
+	if err := saveJSON(root, config, connection); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "identity"), []byte("identity"), 0o600); err != nil {
@@ -152,8 +161,20 @@ func TestManagementRelocationPreservesStateAndCacheIdentity(t *testing.T) {
 		t.Fatalf("bad cutover: %+v", data)
 	}
 	raw, err := os.ReadFile(config)
-	if err != nil || !strings.Contains(string(raw), "must-remain-private") || !strings.Contains(string(raw), v.Destination) {
-		t.Fatalf("connection lost: %s %v", raw, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var relocated map[string]any
+	if err := json.Unmarshal(raw, &relocated); err != nil {
+		t.Fatalf("decode relocated connection: %v", err)
+	}
+	// Compare decoded values: JSON escapes Windows path separators. Only the
+	// cache directory may change; credentials and storage must remain intact.
+	connection["caching"] = map[string]any{
+		"cacheDirectory": filepath.Join(v.Destination, "repositories", filepath.Base(oldCache)),
+	}
+	if !reflect.DeepEqual(relocated, connection) {
+		t.Fatal("relocated connection changed protected fields or has the wrong cache directory")
 	}
 	if _, err := os.Stat(filepath.Join(root, "identity")); err != nil {
 		t.Fatal("identity deleted")

@@ -138,15 +138,16 @@ class SeedInitialDataCommandTests(TestCase):
         self.assertTrue(membership.is_active)
         self.assertEqual(membership.organization.name, "HyperFileLens")
         from apps.alert.models import AlertPolicy
+        from apps.alert.services.defaults import default_catalog
+        from common.resource_scope import ResourceScope
 
-        self.assertEqual(
+        self.assertCountEqual(
             AlertPolicy.objects.filter(
                 organization=membership.organization,
                 default_key__isnull=False,
-            ).count(),
-            8,
+            ).values_list("default_key", flat=True),
+            [rule["default_key"] for rule in default_catalog(owner_scope=ResourceScope.ORGANIZATION)],
         )
-        from common.resource_scope import ResourceScope
 
         self.assertEqual(
             AlertPolicy.objects.filter(
