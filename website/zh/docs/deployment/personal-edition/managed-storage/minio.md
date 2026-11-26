@@ -19,6 +19,19 @@ description: 为 Personal Edition 配置 MinIO 普通用户、仓库前缀策略
 - HTTPS 推荐用于生产。当前版本仅对 localhost、回环或允许的私有 IP 字面量开放 HTTP 例外；域名即使解析到内网，也不自动符合 HTTP 例外条件。不要关闭证书校验。
 - MinIO 兼容性取决于实际部署版本和配置。记录并验证实际服务端版本、IAM 配置和 Token 续签；官方文档中列出的其他身份模式不一定受当前集成支持。
 
+## 创建专用的空 Bucket
+
+1. 在受控管理员终端配置下文的管理别名，使用未占用的桶名创建专用桶。不要增加忽略桶已存在错误的选项：
+
+   ```bash
+   mc mb hfl-admin/hfl-backups-prod
+   ```
+
+2. 保持匿名访问关闭，核对部署级策略不会将该桶公开，不配置匿名下载。基础方案不启用 Object Lock、自动删除、归档转换或自定义 KMS 加密；需要时单独验证。
+3. 使用管理员别名确认桶为空。建桶是管理员操作，不需要给专用签名用户授予建桶权限。
+
+`hfl-backups-prod` 只是示例，不是预留桶名。策略与表单必须统一替换为实际桶名。`personal/` 是对象键前缀，不需要预先创建目录。已有专用桶仅在确认归属、私有访问、无冲突数据或保留规则后复用。
+
 ## 创建专用用户并绑定策略
 
 1. 记录 MinIO 服务端和 `mc` 客户端版本。由管理员确认该部署支持内置用户签名的 AssumeRole、内联 Policy、会话 Token 校验，以及本页列举／版本／Multipart 操作。已有 S3 访问能力不等于这些能力已通过验证。
@@ -116,7 +129,7 @@ MinIO 当前集成通过其 S3 API 根地址调用 AWS 兼容的 AssumeRole；Ro
 | 页面字段 | 内容与获取位置 |
 | --- | --- |
 | Endpoint URL | 实际 S3 API 主机与端口，例如 `minio.example.com:9000`；输入主机端口后通过 TLS 开关决定协议 |
-| Region | 实际签名地域；当前表单默认 `us-east-1`，留空会使用该值，有自定义服务端地域时必须一致 |
+| Region | 实际签名 Region。字段可以留空，未提供时后端使用 `us-east-1`；选择目录中的自定义 Region 时保留所选值，须与服务端一致 |
 | Access Key / Secret Key | 专用普通用户 `hfl-sts-controller` 的 access key 和 secret，不是管理员／root 或 Service Account |
 | S3 URL Style | Path Style，当前托管集成固定使用该方式 |
 | Use TLS (HTTPS) | 生产开启，配置可信证书；内网 HTTP 只在上述受支持条件下使用 |
@@ -173,7 +186,7 @@ MinIO 当前集成通过其 S3 API 根地址调用 AWS 兼容的 AssumeRole；Ro
 | --- | --- |
 | 服务端版本与部署方式 | 实际 MinIO 版本、部署方式及已验证的 STS 能力 |
 | Endpoint URL / Use TLS (HTTPS) | 所有执行组件可达的 S3 API 主机、端口和协议，不是管理 Console 地址 |
-| Region | 实际签名地域；默认 `us-east-1`，须与服务端配置一致 |
+| Region | 实际签名 Region。字段可以留空，未提供时后端使用 `us-east-1`；选择目录中的自定义 Region 时保留所选值，须与服务端一致 |
 | Bucket | 已创建的专用私有 Bucket 名称 |
 | Access Key / Secret Key | 专用普通用户自身的 access key 和 secret，通过安全渠道配置 |
 | TLS 与网络 | 证书信任链、DNS、防火墙及可达性要求 |
@@ -190,3 +203,4 @@ MinIO 的部分官方命令文档已归入 AIStor 文档站。这里引用其命
 - [创建策略](https://docs.min.io/aistor/reference/cli/admin/mc-admin-policy/mc-admin-policy-create/)
 - [绑定策略](https://docs.min.io/aistor/reference/cli/admin/mc-admin-policy/mc-admin-policy-attach/)
 - [配置管理 alias](https://docs.min.io/aistor/reference/cli/mc-alias/mc-alias-set/)
+- [使用 mc mb 创建桶](https://docs.min.io/aistor/reference/cli/mc-mb/)

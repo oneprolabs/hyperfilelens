@@ -25,5 +25,20 @@
   "credentialManagementHeading": "配置准备与凭据管理",
   "internalCommunicationTerms": ["同事", "交付", "碰运气", "凭空", "不能声称", "宣称"],
   "secureChannel": "安全渠道",
-  "readOnlyCaveat": "不等于已经验证写入"
+  "readOnlyCaveat": "不等于已经验证写入",
+  "emptyBucketHeading": "创建专用的空 Bucket",
+  "noPrecreatedDirectory": "不需要预先创建目录",
+  "actualKeyOwnerHeading": "核对 AccessKey 的真实所属用户",
+  "accountScopeBinding": "按**账号范围**绑定",
+  "noIamProxyFix": "此开关不解决 IAM 权限",
+  "huaweiAccountExample": "账号关系示例",
+  "huaweiAgencyNameNotId": "委托名称**，不是委托 ID",
+  "selfHostedOptionalRegion": "字段可以留空",
+  "lifecycleTestHeading": "可复现的生命周期验证",
+  "renewalTest": "确认发生续签并最终完成",
+  "saveDoesNotProvePrivate": "保存时不会证明桶为空、访问为私有",
+  "isolationTemporaryIdentity": "使用仓库 A 的临时凭据",
+  "isolationOwnObjectAllowed": "读取 A 内已知测试对象应成功",
+  "isolationOtherObjectDenied": "读取仓库 B 内已知测试对象应被拒绝",
+  "isolationNoParentIdentity": "不要使用管理员凭据或连接级长期签名凭据"
 }

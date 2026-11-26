@@ -19,6 +19,14 @@ description: 为 Personal Edition 配置 RustFS 普通用户、仓库前缀策�
 - HTTPS 推荐用于生产。当前版本仅对 localhost、回环或允许的私有 IP 字面量开放 HTTP 例外；域名即使解析到内网，也不自动符合 HTTP 例外条件。不要关闭证书校验。
 - RustFS 兼容性取决于实际部署版本和配置。记录并验证实际服务端版本、IAM 配置和 Token 续签；官方文档中列出的其他身份模式不一定受当前集成支持。
 
+## 创建专用的空 Bucket
+
+1. 使用存储管理员登录 RustFS **Console**，打开 **Buckets → Create Bucket**，填写唯一桶名并创建专用桶，按服务端配置确认实际 Region。
+2. 保持桶私有，不添加匿名／公开读取策略。基础方案不启用 Object Lock、自动删除、归档转换或自定义 KMS 加密；需要时单独验证。
+3. 打开桶确认其为空；菜单以已安装版本为准。不要给专用签名用户授予桶管理权限。
+
+`hfl-backups-prod` 只是示例，不是预留桶名。策略与表单必须统一替换为实际桶名。`personal/` 是对象键前缀，不需要预先创建目录。已有专用桶仅在确认归属、私有访问、无冲突数据或保留规则后复用。
+
 ## 创建专用用户并绑定策略
 
 1. 记录 RustFS 服务端版本和部署配置，由管理员确认支持**普通 IAM 用户签名的 AssumeRole**、内联 Policy、会话 Token 校验，以及本页列举／版本／Multipart 权限。不要仅凭 S3 上传成功判断托管兼容。
@@ -105,7 +113,7 @@ RustFS 当前集成以 `s3` 服务名进行 SigV4 签名，在同一个 S3 服�
 | 页面字段 | 内容与获取位置 |
 | --- | --- |
 | Endpoint URL | 实际 S3 API 主机与端口，例如 `rustfs.example.com:9000`；输入主机端口后通过 TLS 开关决定协议 |
-| Region | 实际签名地域；当前表单默认 `us-east-1`，留空会使用该值，有自定义服务端地域时必须一致 |
+| Region | 实际签名 Region。字段可以留空，未提供时后端使用 `us-east-1`；选择目录中的自定义 Region 时保留所选值，须与服务端一致 |
 | Access Key / Secret Key | 专用普通用户 `hfl-sts-controller` 的 access key 和 secret，不是管理员／root 或 Service Account |
 | S3 URL Style | Path Style，当前托管集成固定使用该方式 |
 | Use TLS (HTTPS) | 生产开启，配置可信证书；内网 HTTP 只在上述受支持条件下使用 |
@@ -162,7 +170,7 @@ RustFS 当前集成以 `s3` 服务名进行 SigV4 签名，在同一个 S3 服�
 | --- | --- |
 | 服务端版本与部署方式 | 实际 RustFS 版本、部署方式及已验证的 STS 能力 |
 | Endpoint URL / Use TLS (HTTPS) | 所有执行组件可达的 S3 API 主机、端口和协议，不是管理 Console 地址 |
-| Region | 实际签名地域；默认 `us-east-1`，须与服务端配置一致 |
+| Region | 实际签名 Region。字段可以留空，未提供时后端使用 `us-east-1`；选择目录中的自定义 Region 时保留所选值，须与服务端一致 |
 | Bucket | 已创建的专用私有 Bucket 名称 |
 | Access Key / Secret Key | 专用普通用户自身的 access key 和 secret，通过安全渠道配置 |
 | TLS 与网络 | 证书信任链、DNS、防火墙及可达性要求 |
@@ -176,3 +184,4 @@ RustFS 当前集成以 `s3` 服务名进行 SigV4 签名，在同一个 S3 服�
 - [RustFS Service Account 与 STS](https://docs.rustfs.com/en/security-compliance/iam/sts)
 - [RustFS Access Keys](https://docs.rustfs.com/en/security-compliance/iam/access-token)
 - [RustFS TLS](https://docs.rustfs.com/en/integration/tls-configured)
+- [RustFS Console 与桶管理](https://docs.rustfs.com/zh/administration/console)

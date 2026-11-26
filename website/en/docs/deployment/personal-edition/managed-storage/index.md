@@ -20,6 +20,15 @@ This guide is for Personal Edition operators. It requires Enterprise and the app
 
 Managed Storage is not available in every Enterprise organization. Access requires Enterprise, the current organization's capability, and effective organization administration grants. A platform identity in the 11444 Admin Console does not replace authorization in the current organization on 11443. See [Roles and permissions](/docs/governance/roles).
 
+## Setup Order and Authorization Checks
+
+1. **Bucket:** an administrator creates a dedicated, empty private bucket and records its actual region and API endpoint. No repository directories need to be created.
+2. **Identity:** create the dedicated signing user. For AWS/Alibaba, verify the actual key owner's ARN, then configure both the user's role-call permission and the role's exact trust. For Huawei, verify the two accounts, agency name and caller-group grant. RustFS/MinIO use a regular built-in user's policy instead of a cloud role.
+3. **Data policy:** bind the provider guide's complete prefix policy to the role, agency, or regular user as specified. Merely allowing STS, uploading an object as an administrator, or attaching the policy to the wrong identity is insufficient.
+4. **Form:** use the provider-specific field mapping, save, then validate the repository lifecycle below. Save-time checks do not establish that the bucket is empty or private, or that retention rules are suitable; the storage administrator must verify those properties.
+
+The examples deliberately separate storage administration from runtime access. Do not add bucket creation, full-storage access, or unrestricted role-assumption privileges to make setup pass.
+
 ## Connection Workflow
 
 ```text
@@ -106,6 +115,17 @@ A count of zero does not necessarily allow connection deletion. Historical bindi
 | Lifecycle | Where required, test maintenance, renewal, cancellation, and physical cleanup on disposable data | Deletion is not reversible; do not run destructive tests on production repositories |
 
 Keep personal registration disabled while preparing and validating the initial connection, or perform validation in a controlled test environment. The first saved connection is automatically the default when none exists; do not assume there is a separate activation step. Complete the tests above and confirm the production default before enabling personal registration. Record provider, server version, region, endpoint type, policy revision, and results. These guides describe supported configuration procedures. Complete the validation above in the target environment before production rollout.
+
+### Reproducible Lifecycle Test
+
+Use a disposable repository owned by an existing test member, keeping personal registration closed. Record the provider, actual server/client versions where applicable, region, endpoints and policy revision, without recording secrets.
+
+1. Confirm initialization succeeds with the intended bucket and UUID prefix. A saved connection alone is not sufficient.
+2. Back up a small file and restore it to a separate location; compare its contents or checksum. Confirm a second ordinary member cannot select or browse the first member's repository. Separately, an authorized administrator should test storage isolation in a controlled environment using **repository A's temporary credentials**: reading a known test object in A must succeed; reading a known test object in repository B must be denied. Do not use administrator credentials or connection-wide signing credentials for this check: their permission scope can legitimately cover multiple repositories. The administrator runs the test, but the request identity must remain A's restricted temporary session. Do not print, log, or distribute these credentials.
+3. Run a backup or restore longer than one issued token's lifetime (normally 15 minutes). Confirm renewal occurs and the task completes without distributing long-lived keys or logging temporary keys/tokens. Repeat after relevant Agent, gateway, storage-server or proxy upgrades.
+4. Exercise maintenance and cancellation on test data. If physical cleanup is required, delete only the explicitly identified disposable repository and verify cleanup completes, including versions and incomplete multipart uploads where applicable. Do not delete the bucket or use production objects for this test.
+
+These checks must be performed in the target deployment. Policy parsing and SDK request tests do not establish live compatibility with every provider version, region, network or retention configuration.
 
 ## Configuration Preparation and Credential Management
 

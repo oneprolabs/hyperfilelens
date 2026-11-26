@@ -18,6 +18,14 @@ description: 为 Personal Edition 创建专用 IAM 用户、精确信任的角�
 - 本页以标准 AWS 分区、同账号用户和角色为例。中国区、GovCloud 或跨账号接入应先核对当前产品目录、ARN 分区、会话策略及 Bucket Policy 支持，不能仅替换域名就视为兼容。
 - 如启用 SSE-KMS、Object Lock 或归档存储，单独评估所需权限及仓库生命周期；此示例不包含 KMS 或绕过保留期权限。
 
+## 创建专用的空 Bucket
+
+1. 打开 **S3 → Buckets → Create bucket**，选择 **General purpose**、实际 AWS Region 和唯一桶名，记录桶名与 Region。
+2. 保持 **Block all public access** 全部开启，保留默认 **Bucket owner enforced** 对象所有权。基础方案使用默认 SSE-S3 加密；Object Lock、SSE-KMS、归档转换和生命周期自动删除须单独验证后再启用。
+3. 创建后确认桶为空。创建桶由存储管理员执行，签名 IAM 用户和被扮演角色都不需要建桶权限。
+
+`hfl-backups-prod` 只是示例，不是预留桶名。策略与表单必须统一替换为实际桶名。`personal/` 是对象键前缀，不需要预先创建目录。已有专用桶仅在确认归属、私有访问、无冲突数据或保留规则后复用。
+
 ## 创建 IAM 用户和精确信任角色
 
 1. 打开 **IAM → Users → Create user**，创建 `hfl-sts-controller`，不启用 AWS Management Console 登录，不添加高权限用户组。
@@ -127,6 +135,16 @@ description: 为 Personal Edition 创建专用 IAM 用户、精确信任的角�
 
 该策略不包括 `s3:ListAllMyBuckets`、Bucket 创建删除、Bucket Policy 或 IAM 管理权限。`s3:prefix` 条件应放在列举语句，不放到 `GetBucketLocation` 或对象内容语句。权限、信任和会话交集规则见 [AssumeRole](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html)。
 
+## 核对签名身份
+
+在受控终端使用与表单相同的 IAM 用户密钥安全配置 AWS CLI 专用 Profile，然后运行：
+
+```bash
+aws sts get-caller-identity --profile hfl-sts-controller --region us-east-1 --endpoint-url https://sts.us-east-1.amazonaws.com
+```
+
+这是标准分区示例，只返回身份信息，不返回临时密钥。核对 `Account` 和完整用户 `Arn` 与调用策略及角色信任一致；不能用另一个管理员 Profile 的成功结果代替。中国区须改为对应地域端点和账号分区。不要在命令参数中放密钥、输出 AssumeRole 凭据响应或启用 SDK 调试日志。身份查询成功不代表角色扮演或 S3 访问已通过。
+
 ## 填写 Add Object Storage
 
 选择 **AWS**，再选择 Bucket 真实地域：
@@ -138,10 +156,23 @@ description: 为 Personal Edition 创建专用 IAM 用户、精确信任的角�
 | Access Key / Secret Key | 专用 IAM 用户的 Access key ID / Secret access key，首次创建时安全保存 |
 | S3 URL Style | 保留对应地域目录默认值；手动选择 Virtual Hosted Style 时确认 Bucket DNS 名与 TLS 匹配 |
 | Use TLS (HTTPS) | 开启 |
-| Identity Service Endpoint | 可使用当前默认 `https://sts.amazonaws.com`；需地域化时使用实际 AWS STS Endpoint，例如 `https://sts.us-east-1.amazonaws.com`，按 IAM/网络要求确认 |
+| Identity Service Endpoint | 新建连接选择 Region 后建议使用地域化 STS，例如 `https://sts.ap-southeast-1.amazonaws.com`；须确认账号可用性，仍可手动修改 |
 | Role ARN | **IAM → Roles → hfl-managed-storage → Summary → ARN**，完整复制，不填用户 ARN |
 
 角色的最大会话时长可保持正常的 1 小时设置；HyperFileLens 当前默认请求 15 分钟，不需要长时间任务而延长单次云 Token 的有效期。参考 [AWS STS 地域](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_enable-regions.html)。
+
+### STS Endpoint 与签名 Region
+
+新建 AWS 连接根据所选 Bucket Region 建议地域化 STS；不修改已有连接或手动输入的 STS 地址。S3 Region 仍表示桶的地域，控制端根据 **STS Endpoint 推导 STS 签名 Region**，不再使用 Bucket Region 代替：
+
+| Identity Service Endpoint | STS 签名 Region |
+| --- | --- |
+| `https://sts.amazonaws.com`（已有全局地址配置） | `us-east-1` |
+| `https://sts.ap-southeast-1.amazonaws.com` | `ap-southeast-1` |
+| `https://sts.eu-west-1.amazonaws.com` | `eu-west-1`，即使桶在其他地域 |
+| `https://sts.cn-north-1.amazonaws.com.cn` | `cn-north-1`；须使用中国区账号、`aws-cn` ARN 以及配套目录和策略 |
+
+优先使用地域化 STS，并按[官方端点与启用说明](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_temp_region-endpoints.html)核对账号和需要手动启用的地域。全局地址的签名范围为 `us-east-1`，不等同于请求一定在该物理地域处理。本指南不覆盖 GovCloud 等其他分区。
 
 ### 存储配置
 
