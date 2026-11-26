@@ -4,10 +4,10 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { flushPromises, mount } from '@vue/test-utils'
 import { ElDrawer } from 'element-plus'
-import { defineComponent, effectScope, h, nextTick, ref } from 'vue'
+import { defineComponent, effectScope, h, nextTick, ref, shallowRef } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import { i18n } from '../i18n'
-import { LazyDrawerFrame } from '../components/feedback/LazyDrawerFrame'
+import { LazyDrawerContentHost, LazyDrawerFrame, type DrawerFrameContent } from '../components/feedback/LazyDrawerFrame'
 import { defineLazyDrawer, useDrawerDetailRequest, useDrawerMounted } from './useLazyDrawer'
 
 const global = { plugins: [i18n], stubs: { teleport: true } }
@@ -108,6 +108,83 @@ describe('on-demand business detail drawers', () => {
       await nextTick()
       expect(wrapper.get('.el-drawer__body button').text()).toBe('Open')
       expect(load).toHaveBeenCalledOnce()
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('syncs a conditional footer after details load without replacing the drawer shell', async () => {
+    const detailsLoaded = ref(false)
+    const editableTab = ref(true)
+    const changed = ref(false)
+    const saving = ref(false)
+    const detail = defineComponent({
+      props: { modelValue: Boolean },
+      setup: props => () => h(LazyDrawerFrame, { modelValue: props.modelValue }, {
+        default: () => h('p', detailsLoaded.value ? 'Details loaded' : 'Loading details'),
+        ...(detailsLoaded.value && editableTab.value ? {
+          footer: () => h('button', { disabled: !changed.value || saving.value }, saving.value ? 'Saving changes' : 'Confirm changes'),
+        } : {}),
+      }),
+    })
+    const Drawer = defineLazyDrawer(async () => ({ default: detail }))
+    const wrapper = mount(Drawer, { props: { modelValue: true }, global })
+    try {
+      await flushPromises()
+      const shell = wrapper.getComponent(ElDrawer).vm
+      expect(wrapper.find('.el-drawer__footer').exists()).toBe(false)
+
+      detailsLoaded.value = true
+      await flushPromises()
+      expect(wrapper.get('.el-drawer__body').text()).toBe('Details loaded')
+      expect(wrapper.get('.el-drawer__footer button').text()).toBe('Confirm changes')
+      expect(wrapper.get('.el-drawer__footer button').attributes('disabled')).toBeDefined()
+
+      changed.value = true
+      await nextTick()
+      expect(wrapper.get('.el-drawer__footer button').attributes('disabled')).toBeUndefined()
+      saving.value = true
+      await nextTick()
+      expect(wrapper.get('.el-drawer__footer button').text()).toBe('Saving changes')
+      expect(wrapper.get('.el-drawer__footer button').attributes('disabled')).toBeDefined()
+      saving.value = false
+      await nextTick()
+      expect(wrapper.get('.el-drawer__footer button').attributes('disabled')).toBeUndefined()
+
+      editableTab.value = false
+      await flushPromises()
+      expect(wrapper.find('.el-drawer__footer').exists()).toBe(false)
+      editableTab.value = true
+      await flushPromises()
+      expect(wrapper.get('.el-drawer__footer button').text()).toBe('Confirm changes')
+      expect(wrapper.getComponent(ElDrawer).vm).toBe(shell)
+      expect(wrapper.findAllComponents(ElDrawer)).toHaveLength(1)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  it('does not re-register a frame when attrs and slot names are unchanged', async () => {
+    const frame = shallowRef<DrawerFrameContent>()
+    const content = ref('Initial details')
+    const wrapper = mount(defineComponent({
+      setup: () => () => {
+        const text = content.value
+        return h(LazyDrawerContentHost, { frame }, {
+          default: () => h(LazyDrawerFrame, { modelValue: true }, {
+            default: () => h('p', text),
+            footer: () => h('button', 'Confirm changes'),
+          }),
+        })
+      },
+    }))
+    try {
+      await nextTick()
+      const initialFrame = frame.value
+      expect(initialFrame).toBeDefined()
+      content.value = 'Updated details'
+      await nextTick()
+      expect(frame.value).toBe(initialFrame)
     } finally {
       wrapper.unmount()
     }

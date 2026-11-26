@@ -26,11 +26,17 @@ export const LazyDrawerFrame = defineComponent({
 
     const scopeId = getCurrentInstance()?.vnode.scopeId
     let current: DrawerFrameContent | undefined
+    // Vue mutates slots in place; preserve the previously registered names.
+    let registeredSlotNames: string[] = []
 
     function register() {
       const bindings = { ...attrs, ...(scopeId ? { [scopeId]: '' } : {}) }
+      const slotNames = Object.keys(slots)
       if (current && Object.keys(current.attrs).length === Object.keys(bindings).length
-        && Object.keys(bindings).every(key => current?.attrs[key] === bindings[key])) return
+        && Object.keys(bindings).every(key => current?.attrs[key] === bindings[key])
+        && slotNames.length === registeredSlotNames.length
+        && slotNames.every(name => registeredSlotNames.includes(name))) return
+      registeredSlotNames = slotNames
       current = { attrs: bindings, slots }
       frame.value = current
     }
