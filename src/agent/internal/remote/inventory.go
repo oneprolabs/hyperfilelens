@@ -111,9 +111,14 @@ func SendInventory(
 	} {
 		payload[key] = value
 	}
-	if cache := engine.CacheInventory(ctx, dataDir, cfg.KopiaPath); cache != nil && (cfg.Role == model.RoleAgent || cfg.Role == model.RoleProxy) {
-		payload["cache_status"] = cache
-		payload["capabilities"] = append(SupportedCapabilities(), kopialayout.CacheManagementCapability)
+	if cfg.Role == model.RoleAgent || cfg.Role == model.RoleProxy {
+		cache, supported := engine.CacheInventory(ctx, dataDir, cfg.KopiaPath)
+		if cache != nil {
+			payload["cache_status"] = cache
+		}
+		if supported {
+			payload["capabilities"] = append(SupportedCapabilities(), kopialayout.CacheManagementCapability)
+		}
 	}
 	preferredAddress := ""
 	if reporter, ok := sink.(interface{ LocalIPAddress() string }); ok {

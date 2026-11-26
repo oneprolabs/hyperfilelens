@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,15 +64,23 @@ func loadJSON(root, path string, v any) error {
 	return json.Unmarshal(data, v)
 }
 func ReadPolicy(root string) (Policy, error) {
-	p := DefaultPolicy()
+	p, _, err := ReadAppliedPolicy(root)
+	return p, err
+}
+
+// ReadAppliedPolicy distinguishes a validated, persisted opt-in from the
+// implicit default. An unreadable or malformed policy must never imply legacy
+// mode, nor may an empty document inherit valid opt-in fields from defaults.
+func ReadAppliedPolicy(root string) (Policy, bool, error) {
+	var p Policy
 	err := loadJSON(root, managementPath(root, "policy"), &p)
 	if os.IsNotExist(err) {
-		return p, nil
+		return DefaultPolicy(), false, nil
 	}
 	if err != nil {
-		return p, err
+		return p, true, err
 	}
-	return p, p.Validate()
+	return p, true, p.Validate()
 }
 func ApplyPolicy(ctx context.Context, root string, p Policy) error {
 	if err := p.Validate(); err != nil {
@@ -165,48 +171,6 @@ func CheckSpace(root string, reader func(string) (uint64, uint64, uint64, error)
 	}
 	return check, nil
 }
-
-var binarySupport sync.Map
-
-// SupportsDemandDriven probes the actual binary, bounded by time and cached by
-// binary identity. A version string alone never activates a new cache protocol.
-func SupportsDemandDriven(ctx context.Context, bin string) bool {
-	info, err := os.Stat(bin)
-	if err != nil {
-		return false
-	}
-	key := fmt.Sprintf("%s:%d:%d", bin, info.Size(), info.ModTime().UnixNano())
-	if value, ok := binarySupport.Load(key); ok {
-		return value.(bool)
-	}
-	probe, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(probe, bin, "--disable-file-logging", "--disable-content-log", "cache", "set", "--help")
-	var output limitedOutput
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	_ = cmd.Run()
-	supported := probe.Err() == nil && strings.Contains(output.String(), "cache-demand-driven")
-	if probe.Err() == nil {
-		binarySupport.Store(key, supported)
-	}
-	return supported
-}
-
-type limitedOutput struct{ data []byte }
-
-func (b *limitedOutput) Write(p []byte) (int, error) {
-	n := len(p)
-	remaining := 65536 - len(b.data)
-	if remaining > 0 {
-		if len(p) > remaining {
-			p = p[:remaining]
-		}
-		b.data = append(b.data, p...)
-	}
-	return n, nil
-}
-func (b *limitedOutput) String() string { return string(b.data) }
 
 // Unknown is null, never a fabricated zero or an inferred low-space reading.
 func (c SpaceCheck) MarshalJSON() ([]byte, error) {
