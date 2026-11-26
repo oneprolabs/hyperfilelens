@@ -94,7 +94,6 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 	if strings.HasPrefix(kind, "cache.") {
 		return e.runCacheManagement(ctx, cmd, p, sink)
 	}
-	supportedCache := e.cacheManagementSupported(ctx)
 	if p.Extra == nil {
 		p.Extra = map[string]any{}
 	} else {
@@ -104,8 +103,6 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		}
 		p.Extra = cloned
 	}
-	p.Extra["_cache_demand_driven"] = supportedCache
-
 	var scopeErr error
 	p, scopeErr = e.applyUserInstallationScope(kind, p)
 	if scopeErr != nil {
@@ -115,14 +112,34 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 			Error:  scopeErr.Error(),
 		}
 	}
+	cacheMode := cacheExecutionMode{}
+	backupCache := kind != "repository.server.stop" && backupCacheUse(kind, p)
+	cacheUse := kind != "repository.server.stop" &&
+		(p.Extra["repository"] != nil || p.ConfigFile != "" || backupCache)
+	if cacheUse {
+		var modeErr error
+		cacheMode, modeErr = e.resolveCacheExecutionMode(ctx)
+		if modeErr != nil {
+			if errors.Is(modeErr, errCacheBinaryIncompatible) {
+				return Result{Status: "failed", Result: map[string]any{"error_code": "AGENT_UPGRADE_REQUIRED"}, Error: modeErr.Error()}
+			}
+			if backupCache && ctx.Err() == nil {
+				if data, checkErr := e.backupCacheCheck(ctx, p, sink, cacheMode.enabled); checkErr != nil {
+					return Result{Status: "failed", Result: data, Error: checkErr.Error()}
+				}
+			}
+			return Result{Status: "failed", Error: modeErr.Error()}
+		}
+	}
+	p.Extra["_cache_demand_driven"] = cacheMode.enabled
 	if (p.Extra["repository"] != nil || p.ConfigFile != "") && kind != "repository.server.stop" {
 		usageCtx, release, err := kopialayout.AcquireUsageContext(ctx, agentDataDir(e.current()))
 		if err != nil {
 			// A missing/unverifiable cache mount can fail admission before
 			// ordinary preflight. Still report a truthful space-check failure,
 			// not a fabricated numeric reading or a silent generic abort.
-			if supportedCache && backupCacheUse(kind, p) && ctx.Err() == nil {
-				if data, checkErr := e.backupCachePreflight(ctx, p, sink); checkErr != nil {
+			if backupCache && ctx.Err() == nil {
+				if data, checkErr := e.backupCacheCheck(ctx, p, sink, cacheMode.enabled); checkErr != nil {
 					return Result{Status: "failed", Result: data, Error: checkErr.Error()}
 				}
 			}
@@ -131,19 +148,21 @@ func (e *Engine) Run(ctx context.Context, cmd Command, sink ExecutionSink) Resul
 		defer release()
 		ctx = usageCtx
 	}
-	if supportedCache && kind != "repository.server.stop" {
+	if cacheMode.applyPolicy {
 		if err := e.applyCachePayload(ctx, p); err != nil {
 			return Result{Status: "failed", Error: err.Error()}
 		}
 	}
-	if supportedCache && backupCacheUse(kind, p) {
-		data, err := e.backupCachePreflight(ctx, p, sink)
+	if backupCache {
+		data, err := e.backupCacheCheck(ctx, p, sink, cacheMode.enabled)
 		if err != nil {
 			return Result{Status: "failed", Result: data, Error: err.Error()}
 		}
 	}
-	if supportedCache && backupCacheUse(kind, p) {
-		ctx = context.WithValue(ctx, backupSpaceCheckKey{}, func() (map[string]any, error) { return e.backupCachePreflight(ctx, p, sink) })
+	if backupCache {
+		ctx = context.WithValue(ctx, backupSpaceCheckKey{}, func() (map[string]any, error) {
+			return e.backupCacheCheck(ctx, p, sink, cacheMode.enabled)
+		})
 	}
 	if spec, ok, parseErr := parseRepositorySpec(p.Extra["repository"]); parseErr != nil {
 		return Result{Status: "failed", Error: parseErr.Error()}

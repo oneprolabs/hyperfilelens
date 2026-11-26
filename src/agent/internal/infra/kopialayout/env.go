@@ -57,10 +57,9 @@ func ProcessEnv(root, logDir string, input map[string]string) (map[string]string
 	// Only this installation's validated persisted policy enables managed mode;
 	// never inherit an opt-in from an unrelated caller's environment.
 	env["KOPIA_CACHE_DEMAND_DRIVEN"] = ""
-	if _, err := os.Stat(managementPath(root, "policy")); err == nil {
-		if _, err := ReadPolicy(root); err != nil {
-			return nil, err
-		}
+	if _, applied, err := ReadAppliedPolicy(root); err != nil {
+		return nil, err
+	} else if applied {
 		env["KOPIA_CACHE_DEMAND_DRIVEN"] = "1"
 	}
 	env["KOPIA_LOG_DIR"] = filepath.Join(logDir, "kopia")

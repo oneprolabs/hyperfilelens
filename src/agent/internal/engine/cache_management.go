@@ -3,9 +3,9 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"log/slog"
 
 	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
@@ -13,13 +13,49 @@ import (
 	"hyperfilelens/agent/internal/platform/vfs"
 )
 
-func (e *Engine) cacheManagementSupported(ctx context.Context) bool {
+func (e *Engine) cacheManagementSupport(ctx context.Context) (bool, error) {
 	if role := e.current().Role; role != model.RoleAgent && role != model.RoleProxy {
-		return false
+		return false, nil
 	}
 	bin, err := e.kopiaBin(ctx)
-	return err == nil && kopialayout.SupportsDemandDriven(ctx, bin)
+	if err != nil {
+		return false, err
+	}
+	return kopialayout.ProbeDemandDriven(ctx, bin)
 }
+
+var errCacheBinaryIncompatible = errors.New("the installed Kopia does not support the applied cache policy; restore a compatible Agent/Kopia package")
+
+type cacheExecutionMode struct {
+	enabled     bool
+	applyPolicy bool
+}
+
+// Capability evidence authorizes enabling/changing policy. A persisted opt-in
+// independently requires retaining demand-driven mode and backup protection
+// when a transient help probe fails.
+func (e *Engine) resolveCacheExecutionMode(ctx context.Context) (cacheExecutionMode, error) {
+	if role := e.current().Role; role != model.RoleAgent && role != model.RoleProxy {
+		return cacheExecutionMode{}, nil
+	}
+	_, applied, err := kopialayout.ReadAppliedPolicy(agentDataDir(e.current()))
+	if err != nil {
+		return cacheExecutionMode{enabled: true}, err
+	}
+	supported, probeErr := e.cacheManagementSupport(ctx)
+	if err := ctx.Err(); err != nil {
+		return cacheExecutionMode{}, err
+	}
+	if probeErr != nil {
+		slog.WarnContext(ctx, "kopia_cache_capability_check_deferred", "preserving_applied_policy", applied)
+		return cacheExecutionMode{enabled: applied}, nil
+	}
+	if applied && !supported {
+		return cacheExecutionMode{}, errCacheBinaryIncompatible
+	}
+	return cacheExecutionMode{enabled: supported, applyPolicy: supported}, nil
+}
+
 func (e *Engine) applyCachePayload(ctx context.Context, p Payload) error {
 	root := agentDataDir(e.current())
 	policy, err := kopialayout.ReadPolicy(root)
@@ -52,7 +88,11 @@ func (e *Engine) cacheVerifier(ctx context.Context) func(string) error {
 }
 func (e *Engine) runCacheManagement(ctx context.Context, cmd Command, p Payload, sink ExecutionSink) Result {
 	root := agentDataDir(e.current())
-	if !e.cacheManagementSupported(ctx) {
+	supported, probeErr := e.cacheManagementSupport(ctx)
+	if probeErr != nil {
+		return Result{Status: "failed", Error: probeErr.Error()}
+	}
+	if !supported {
 		return Result{Status: "failed", Error: "CACHE_MANAGEMENT_UNSUPPORTED: upgrade the Agent/Proxy and bundled Kopia"}
 	}
 	logs := e.current().LogDir
@@ -136,6 +176,22 @@ func (e *Engine) cacheStatus(ctx context.Context, usage bool) map[string]any {
 func backupCacheUse(kind string, p Payload) bool {
 	return kind == "backup" || kind == "backup.snapshot.create" || p.Extra["cache_use_context"] == "backup"
 }
+
+// Recheck persisted opt-in at each backup checkpoint. A policy can be enabled
+// after admission; protection must not depend on an earlier capability snapshot.
+func (e *Engine) backupCacheCheck(ctx context.Context, p Payload, sink ExecutionSink, enabled bool) (map[string]any, error) {
+	if role := e.current().Role; role != model.RoleAgent && role != model.RoleProxy {
+		return nil, nil
+	}
+	if !enabled {
+		_, applied, err := kopialayout.ReadAppliedPolicy(agentDataDir(e.current()))
+		if !applied && err == nil {
+			return nil, nil
+		}
+	}
+	return e.backupCachePreflight(ctx, p, sink)
+}
+
 func (e *Engine) backupCachePreflight(ctx context.Context, p Payload, sink ExecutionSink) (map[string]any, error) {
 	root := agentDataDir(e.current())
 	check, err := kopialayout.CheckSpace(root, nil)
@@ -156,40 +212,40 @@ func (e *Engine) backupCachePreflight(ctx context.Context, p Payload, sink Execu
 
 // CacheInventory is a bounded projection. Usage is measured by explicit status
 // tasks, never by recurring full filesystem walks in heartbeat generation.
-func CacheInventory(ctx context.Context, root, bin string) map[string]any {
+func CacheInventory(ctx context.Context, root, bin string) (map[string]any, bool) {
+	policy, applied, policyErr := kopialayout.ReadAppliedPolicy(root)
+	var supported bool
+	var probeErr error
 	if resolved, err := kopia.Resolve(bin); err == nil {
-		bin = resolved
+		supported, probeErr = kopialayout.ProbeDemandDriven(ctx, resolved)
+	} else {
+		probeErr = err
 	}
-	if !kopialayout.SupportsDemandDriven(ctx, bin) {
-		return nil
+	if !supported && !applied && policyErr == nil {
+		return nil, false
 	}
-	policy, err := kopialayout.ReadPolicy(root)
 	state := "applied"
-	if _, e := os.Stat(filepath.Join(vfs.AgentDataStoreDir(root), "kopia", "cache-management", "policy.json")); os.IsNotExist(e) {
+	if !applied {
 		state = "pending"
 	}
-	if err != nil {
+	if policyErr != nil || probeErr != nil || !supported {
 		state = "failed"
 	}
 	if _, activeErr := kopialayout.ReadActiveRoot(root); activeErr != nil {
 		state = "failed"
 	}
-	return map[string]any{"policy": policy, "application_state": state, "mode": "demand_driven", "active_cache_root": kopialayout.ActiveCacheRoot(root), "relocation": kopialayout.RelocationStatus(root)}
+	data := map[string]any{"policy": policy, "application_state": state, "mode": "demand_driven", "active_cache_root": kopialayout.ActiveCacheRoot(root), "relocation": kopialayout.RelocationStatus(root)}
+	if policyErr != nil {
+		// Invalid bytes are not an authoritative new policy for the server.
+		data["policy"] = nil
+	}
+	return data, supported
 }
 
 // Used by startup recovery without exposing connection material.
-func RecoverCacheRelocation(ctx context.Context, cfgRoot, logs, bin string) error {
+func RecoverCacheRelocation(ctx context.Context, cfgRoot, logs string) error {
 	return kopialayout.RecoverRelocation(ctx, cfgRoot, logs, func(config string) error {
-		resolved, err := kopia.Resolve(bin)
-		if err != nil {
-			return err
-		}
-		env, err := kopialayout.ProcessEnv(cfgRoot, logs, map[string]string{"KOPIA_CACHE_DIRECTORY": kopialayout.CacheDir(cfgRoot, config)})
-		if err != nil {
-			return err
-		}
-		_, err = runProcessWithTimeout(ctx, kopiaCacheSetTimeout, resolved, []string{"--config-file=" + config, "cache", "info"}, env, "")
-		return err
+		return kopialayout.VerifyCacheConnection(ctx, cfgRoot, config)
 	})
 }
 func (e *Engine) validateCacheRestoreTarget(path string) error {

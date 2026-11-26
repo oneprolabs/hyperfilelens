@@ -78,6 +78,16 @@ download and other content reads remain cached. Invalid data and explicit cache
 invalidation retain their existing behavior. Upgrade does not clear warm caches.
 Legacy Kopia's zero-size arguments still disable caching; zero is NOT unlimited.
 
+Capability probes cache only successful help invocations, including a confirmed
+absence of the feature. Execution failures and cancellations remain retryable;
+concurrent callers share observations by binary identity. A failed probe is not
+evidence that an already enabled installation has reverted to legacy mode.
+Valid persisted policies retain their mode and backup-space protection without
+authorizing new policy changes on an unverified binary. Confirmed incompatible
+binaries require a compatible Agent/Kopia package rather than silent downgrade.
+Implicit defaults are not persisted opt-in; malformed policies fail closed.
+Inventory keeps applied-mode evidence separate from verified binary capability.
+
 Each installation has a separate versioned cache policy. The backup-blocking
 threshold B defaults to 10 GiB; warning W is B + 10 GiB (20 GiB by default).
 One GiB is 1,073,741,824 bytes. Existing byte-valued policies remain readable
@@ -141,6 +151,8 @@ repositories or run `kopia cache info`: those operations need transient backup
 credentials and repository availability unrelated to moving local cache. No
 password is stored or requested by relocation. Shutdown/stop operations remain available during draining;
 already admitted nested clients and detached servers retain their usage leases.
+Startup recovery uses the same local verification, without resolving or starting
+Kopia and without requesting repository passwords or temporary credentials.
 Unclassified content is retained. New cache is warmed again, not copied, so
 relocation can cause additional downloads.
 
