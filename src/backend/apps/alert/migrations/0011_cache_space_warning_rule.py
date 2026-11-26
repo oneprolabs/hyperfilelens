@@ -44,6 +44,6 @@ def add_cache_warning_rule(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-    dependencies = [("alerts", "0008_default_key")]
+    dependencies = [("alerts", "0010_seed_ai_model_credit_rule")]
     # Keep any rule that an operator may subsequently customize on rollback.
     operations = [migrations.RunPython(add_cache_warning_rule, migrations.RunPython.noop)]

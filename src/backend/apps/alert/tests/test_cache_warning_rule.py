@@ -4,6 +4,7 @@ from importlib import import_module
 
 from django.apps import apps
 from django.db import connection
+from django.db.migrations.loader import MigrationLoader
 from django.test import TestCase
 
 from apps.alert.models import AlertPolicy
@@ -12,8 +13,18 @@ from apps.iam.models import Organization
 
 
 class CacheWarningRuleMigrationTests(TestCase):
+    def test_cache_warning_is_the_single_leaf_after_ai_credit_migrations(self):
+        loader = MigrationLoader(None)
+        target = ("alerts", "0011_cache_space_warning_rule")
+        migration = loader.disk_migrations[target]
+
+        self.assertEqual(migration.dependencies, [("alerts", "0010_seed_ai_model_credit_rule")])
+        self.assertEqual(loader.graph.leaf_nodes("alerts"), [target])
+        self.assertNotIn(("alerts", "0009_cache_space_warning_rule"), loader.disk_migrations)
+        self.assertNotIn(("alerts", "0011_merge_ai_credit_cache_space"), loader.disk_migrations)
+
     def test_seed_is_idempotent_and_preserves_existing_rules_and_custom_warning(self):
-        migration = import_module("apps.alert.migrations.0009_cache_space_warning_rule")
+        migration = import_module("apps.alert.migrations.0011_cache_space_warning_rule")
         organization = Organization.objects.create(key="cache-rule-migration", name="Migration")
         missing = Organization.objects.create(key="cache-rule-missing", name="Missing")
         existing = AlertPolicy.objects.create(
