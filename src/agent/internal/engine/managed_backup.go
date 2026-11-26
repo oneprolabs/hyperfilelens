@@ -104,10 +104,9 @@ type repositoryOwnership struct {
 }
 
 var (
-	kopiaS3URLStyleCapabilities sync.Map
-	activeSnapshotDownloadDirs  sync.Map
-	backupOperationIDPattern    = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
-	snapshotFatalCountPattern   = regexp.MustCompile(`(?i)found\s+(\d+)\s+fatal\s+error`)
+	activeSnapshotDownloadDirs sync.Map
+	backupOperationIDPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	snapshotFatalCountPattern  = regexp.MustCompile(`(?i)found\s+(\d+)\s+fatal\s+error`)
 )
 
 func parseRepositorySpec(raw any) (repositorySpec, bool, error) {
@@ -221,34 +220,17 @@ func resolveKopiaS3URLStyleCapability(ctx context.Context, bin string, spec *rep
 	if spec == nil || spec.Type != "s3" || spec.S3URLStyle == "auto" {
 		return nil
 	}
-	cacheKey := kopiaCapabilityCacheKey(bin)
-	if cached, ok := kopiaS3URLStyleCapabilities.Load(cacheKey); ok {
-		if cached.(bool) {
-			spec.S3URLStyleFlag = true
-			return nil
+	capabilities, err := managedKopiaS3Capabilities.load(ctx, bin)
+	if err != nil {
+		if spec.S3URLStyle == "virtual_hosted" || spec.CredentialLease != nil {
+			return err
 		}
-		if spec.S3URLStyle == "virtual_hosted" {
-			return fmt.Errorf(
-				"repository requires virtual-hosted S3 URLs, but Kopia does not support --url-style; use the HyperFileLens-built Kopia artifact",
-			)
-		}
+		// Legacy path-style repositories can work without the optional flag.
 		return nil
 	}
-	res, err := runProcessWithTimeout(
-		ctx,
-		10*time.Second,
-		bin,
-		[]string{"repository", "create", "s3", "--help"},
-		nil,
-		"",
-	)
-	supports := strings.Contains(res.Stdout+"\n"+res.Stderr, "--url-style")
-	if err == nil {
-		kopiaS3URLStyleCapabilities.Store(cacheKey, supports)
-		if supports {
-			spec.S3URLStyleFlag = true
-			return nil
-		}
+	if capabilities.urlStyle {
+		spec.S3URLStyleFlag = true
+		return nil
 	}
 	if spec.S3URLStyle == "virtual_hosted" {
 		return fmt.Errorf(
@@ -256,14 +238,6 @@ func resolveKopiaS3URLStyleCapability(ctx context.Context, bin string, spec *rep
 		)
 	}
 	return nil
-}
-
-func kopiaCapabilityCacheKey(bin string) string {
-	info, err := os.Stat(bin)
-	if err != nil {
-		return filepath.Clean(bin)
-	}
-	return fmt.Sprintf("%s\x00%d\x00%d", filepath.Clean(bin), info.Size(), info.ModTime().UnixNano())
 }
 
 func s3ConnectionFingerprint(spec repositorySpec) (string, error) {
@@ -395,7 +369,7 @@ func runProcessWithTimeout(
 	defer cancel()
 	res, err := process.Run(runCtx, bin, args, env, workDir)
 	if runCtx.Err() == context.DeadlineExceeded {
-		return res, fmt.Errorf("process timed out after %s", timeout)
+		return res, fmt.Errorf("process timed out after %s: %w", timeout, runCtx.Err())
 	}
 	return res, err
 }
@@ -529,9 +503,8 @@ func (e *Engine) prepareManagedRepository(
 		if spec.CredentialsFile == "" {
 			return "", nil, nil, repositorySpec{}, "temporary repository credential lease is not active"
 		}
-		res, err := runProcessWithTimeout(ctx, 10*time.Second, bin, []string{"repository", "create", "s3", "--help"}, nil, "")
-		if err != nil || !strings.Contains(res.Stdout+"\n"+res.Stderr, "--credentials-file") {
-			return "", nil, nil, repositorySpec{}, "Kopia does not support refreshable S3 credentials; update the Kopia artifact"
+		if err := requireKopiaRefreshableS3Credentials(ctx, bin); err != nil {
+			return "", nil, nil, repositorySpec{}, err.Error()
 		}
 	}
 

@@ -10715,7 +10715,7 @@
     "providerCatalogLoadFailed": "无法加载提供商目录。您可以手动填写连接信息。",
     "endpointHint": "此连接使用的对象存储访问端点。",
     "regionHint": "存储桶所在的物理区域。示例：cn-shanghai、us-east-1。",
-    "selfHostedRegionHint": "默认为 us-east-1。如果服务端使用了其他区域，请填写对应值。",
+    "selfHostedRegionHint": "选填。留空时使用 us-east-1。",
     "urlStyleHint": "定义存储桶请求的访问地址格式。",
     "tlsHint": "此平台要求使用 HTTPS。",
     "namePlaceholder": "例如：主对象存储",

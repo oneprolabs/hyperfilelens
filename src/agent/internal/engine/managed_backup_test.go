@@ -420,7 +420,7 @@ func TestResolveKopiaS3URLStyleCapabilityCachesByBinaryIdentity(t *testing.T) {
 	commandLog := filepath.Join(tempDir, "commands.log")
 	kopiaPath := filepath.Join(tempDir, "kopia")
 	script := fmt.Sprintf(
-		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\necho '--url-style string'\nexit 0\n",
+		"#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\necho '--url-style string --credentials-file string'\nexit 0\n",
 		commandLog,
 	)
 	if err := os.WriteFile(kopiaPath, []byte(script), 0o700); err != nil {
@@ -434,6 +434,9 @@ func TestResolveKopiaS3URLStyleCapabilityCachesByBinaryIdentity(t *testing.T) {
 		if !spec.S3URLStyleFlag {
 			t.Fatal("expected cached capability to set S3 URL style flag")
 		}
+		if err := requireKopiaRefreshableS3Credentials(context.Background(), kopiaPath); err != nil {
+			t.Fatal(err)
+		}
 	}
 	raw, err := os.ReadFile(commandLog)
 	if err != nil {
@@ -441,6 +444,20 @@ func TestResolveKopiaS3URLStyleCapabilityCachesByBinaryIdentity(t *testing.T) {
 	}
 	if got := strings.Count(string(raw), "repository create s3 --help"); got != 1 {
 		t.Fatalf("capability probe ran %d times, want 1: %q", got, string(raw))
+	}
+}
+
+func TestRequireKopiaRefreshableS3CredentialsRejectsUnsupportedBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Kopia shell script is Unix-only")
+	}
+	kopiaPath := filepath.Join(t.TempDir(), "kopia")
+	if err := os.WriteFile(kopiaPath, []byte("#!/bin/sh\necho '--url-style string'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := requireKopiaRefreshableS3Credentials(context.Background(), kopiaPath)
+	if err == nil || !strings.Contains(err.Error(), "does not support refreshable S3 credentials") {
+		t.Fatalf("unpatched binary = %v, want fail-closed unsupported error", err)
 	}
 }
 
@@ -1176,6 +1193,9 @@ func TestRunProcessWithTimeoutReturnsTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "process timed out after 10ms") {
 		t.Fatalf("unexpected error: %s", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout must preserve its cause: %v", err)
 	}
 }
 

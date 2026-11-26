@@ -79,7 +79,7 @@ export const enManagedStorage = {
   endpointHint: "Storage access endpoint for this connection.",
   providerCatalogLoadFailed: "Unable to load the provider catalog. You can enter the connection manually.",
   regionHint: "Physical region of the bucket. Examples: cn-shanghai, us-east-1.",
-  selfHostedRegionHint: "Defaults to us-east-1. Change it if your server uses a different region.",
+  selfHostedRegionHint: "Optional. Leave blank to use us-east-1.",
   credentialIssuance: "Credential Issuance",
   credentialIssuanceHint: "Short-lived credentials are generated automatically for each repository and restricted to its Object Prefix. Configure the identity service below to issue them.",
   awsIssuerHint: "AWS STS endpoint for issuing temporary credentials. A regional endpoint is recommended.",

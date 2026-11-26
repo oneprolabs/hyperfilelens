@@ -10715,7 +10715,7 @@
     "providerCatalogLoadFailed": "No se pudo cargar el catálogo de proveedores. Puede introducir la conexión manualmente.",
     "endpointHint": "Punto de conexión de acceso al almacenamiento para esta conexión.",
     "regionHint": "Región física del contenedor. Ejemplos: cn-shanghai, us-east-1.",
-    "selfHostedRegionHint": "El valor predeterminado es us-east-1. Cámbielo si su servidor usa otra región.",
+    "selfHostedRegionHint": "Opcional. Déjelo en blanco para usar us-east-1.",
     "urlStyleHint": "Define cómo se direccionan las solicitudes al contenedor.",
     "tlsHint": "Este proveedor requiere HTTPS.",
     "namePlaceholder": "p. ej., Almacenamiento de objetos principal",

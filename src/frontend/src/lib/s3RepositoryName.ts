@@ -2,5 +2,5 @@ export function buildS3RepositoryName(platformName: string | undefined, bucket: 
   const prefix = (platformName || '').trim()
   const bucketName = (bucket || '').trim()
   if (!prefix) return ''
-  return bucketName ? `${prefix}(${bucketName})` : prefix
+  return bucketName ? `${prefix} (${bucketName})` : prefix
 }
