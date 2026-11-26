@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/vfs"
 )
@@ -28,7 +29,11 @@ func resolveLayout(cfg *model.AgentConfig) (dataRoot, logDir, cacheDir string, e
 	} else {
 		logDir = filepath.Clean(vfs.AgentLogDir(dataRoot))
 	}
-	cacheDir = filepath.Clean(vfs.AgentCacheDir(dataRoot))
+	active, err := kopialayout.ReadActiveRoot(dataRoot)
+	if err != nil {
+		return "", "", "", err
+	}
+	cacheDir = active.Path
 	return dataRoot, logDir, cacheDir, nil
 }
 

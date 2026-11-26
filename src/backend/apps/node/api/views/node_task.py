@@ -69,6 +69,8 @@ class NodeTaskViewSet(OrgScopedMixin, viewsets.ModelViewSet):
         ser = NodeTaskDispatchSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         body = ser.validated_data
+        if str(body.get("kind", "")).startswith("cache."):
+            raise ValidationError("Use the permission-scoped node cache management endpoint.")
 
         org = self.org
         hdr_org = resolve_org_key(request).strip()

@@ -1059,6 +1059,8 @@ def _deliver_agent_task(
         ephemeral_delivery_payload = delivery_payload is not None
         if delivery_payload is None:
             delivery_payload = _resolve_task_delivery_payload(task.payload)
+        from apps.node.services.internal.cache_management import attach_cache_context
+        delivery_payload = attach_cache_context(node=task.node, payload=delivery_payload, kind=task.kind, correlation_type=task.correlation_type)
         route_state = _node_route_state(task=task)
         if route_state == _RouteState.RECONNECTING:
             if ephemeral_delivery_payload:
@@ -1484,6 +1486,9 @@ def record_task_progress(
             or task.created_at
             or now
         )
+    if isinstance(progress, dict) and isinstance(progress.get("cache_space_check"), dict):
+        from apps.node.services.internal.cache_management import project_cache_status
+        project_cache_status(task, progress)
     task.status = NodeTask.Status.RUNNING
     task.accepted_at = task.accepted_at or now
     task.last_progress_at = now
@@ -1871,6 +1876,8 @@ def complete_task(
     task.save(
         update_fields=["status", "accepted_at", "result", "last_error", "updated_at"]
     )
+    from apps.node.services.internal.cache_management import project_cache_status
+    project_cache_status(task, task.result)
     _sync_task_info(task)
     redis_store.push_task_stream(
         task_id=str(task.id),

@@ -5,6 +5,7 @@ import { createI18n } from 'vue-i18n'
 import { describe, expect, it } from 'vitest'
 import { en } from '../../../locales/en'
 import zh from '../../../../../../language-packs/packs/zh-hans/frontend/messages.json'
+import es from '../../../../../../language-packs/packs/es/frontend/messages.json'
 import TaskEventFailureDetails from './TaskEventFailureDetails.vue'
 
 describe('TaskEventFailureDetails', () => {
@@ -37,6 +38,44 @@ describe('TaskEventFailureDetails', () => {
     expect(box.get('details').attributes('open')).toBeUndefined()
     wrapper.unmount()
   })
+  it.each([['en', en], ['zh-hans', zh], ['es', es]])('renders readable cache-space failures and specific advice in %s', (locale, messages) => {
+    const diagnostic = 'CACHE_SPACE_INSUFFICIENT: cache "/Users/test/a-long-cache-path" has 48494751744 available bytes; backup requires 53687091200 bytes (warning 64424509440); free space, expand the volume or safely relocate cache, then run a new backup'
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: { error_code: 'CACHE_SPACE_INSUFFICIENT', error_message: diagnostic }, terminalResolutions: ['Generic backup advice'] },
+      global: { plugins: [createI18n({ legacy: false, locale, messages: { [locale]: messages } })] },
+    })
+    const copy = messages.ops.task.failureDetails.cache
+    const box = wrapper.get('.task-event-failure__terminal-box')
+    expect(box.get('.task-event-failure__summary--terminal').text()).toContain(copy.insufficientTitle)
+    expect(box.get('.task-event-failure__summary--terminal').text()).not.toContain('CACHE_SPACE_INSUFFICIENT')
+    expect(box.get('.task-event-failure__terminal-path').text()).toContain('/Users/test/a-long-cache-path')
+    expect(box.get('.task-event-failure__cache-facts').text()).toContain('45.16 GiB')
+    expect(box.get('.task-event-failure__cache-facts').text()).toContain('50 GiB')
+    expect(box.get('.task-event-failure__cache-facts').text()).toContain('60 GiB')
+    expect(box.get('.task-event-failure__remediation-list').findAll('li').map(item => item.text()))
+      .toEqual([copy.freeSpace, copy.relocate, copy.lowerBlocking, copy.retry])
+    expect(box.text()).not.toContain('Generic backup advice')
+    expect(box.get('.task-event-failure__technical').text()).toContain(diagnostic)
+    wrapper.unmount()
+  })
+
+  it('shows an unknown check result with mount and account advice instead of disk-full guidance', () => {
+    const wrapper = mount(TaskEventFailureDetails, {
+      props: { metadata: { error_code: 'CACHE_SPACE_CHECK_FAILED', error_message: 'CACHE_SPACE_CHECK_FAILED: cannot query available space for cache "C:\\cache"; check mount and executing-account permissions', cache_space_check: { available_bytes: 0 } }, terminalResolutions: ['Generic backup advice'] },
+      global: { plugins: [createI18n({ legacy: false, locale: 'zh-hans', messages: { 'zh-hans': zh } })] },
+    })
+    const copy = zh.ops.task.failureDetails.cache
+    expect(wrapper.text()).toContain(copy.checkFailedTitle)
+    expect(wrapper.text()).toContain(copy.checkMount)
+    expect(wrapper.text()).toContain(copy.checkPermissions)
+    expect(wrapper.get('.task-event-failure__cache-facts').text()).toContain(copy.unknown)
+    expect(wrapper.get('.task-event-failure__cache-facts').text()).not.toContain('0 GiB')
+    expect(wrapper.text()).not.toContain(copy.freeSpace)
+    expect(wrapper.text()).not.toContain(copy.lowerBlocking)
+    expect(wrapper.text()).not.toContain('Generic backup advice')
+    wrapper.unmount()
+  })
+
   it('renders offline deregistration reasons instead of a generic English error and unrelated advice', () => {
     const diagnostic = 'Agent "Test Host" is offline — remote uninstall is required in strict mode.'
     const wrapper = mount(TaskEventFailureDetails, {

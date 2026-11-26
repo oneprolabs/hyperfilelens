@@ -3,6 +3,7 @@ package remote
 import (
 	"testing"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	agentdisk "hyperfilelens/agent/internal/platform/disk"
 )
 
@@ -67,6 +68,20 @@ func TestStorageInventoryPayloadClearsLegacySummaryWhenLocalPoolsEmpty(t *testin
 	} {
 		if got := payload[key]; got != uint64(0) && got != 0 {
 			t.Fatalf("%s = %v, want 0", key, got)
+		}
+	}
+}
+
+func TestBinaryCachePolicyCapabilityIsStableAndUnique(t *testing.T) {
+	for i := 0; i < 3; i++ {
+		count := 0
+		for _, capability := range SupportedCapabilities() {
+			if capability == kopialayout.GiBPolicyCapability {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("stable GiB capability count = %d", count)
 		}
 	}
 }

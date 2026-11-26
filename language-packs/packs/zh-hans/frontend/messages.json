@@ -4562,7 +4562,6 @@
     "tabPerformance": "性能设置",
     "perfNetSection": "网络性能",
     "perfResSection": "资源限制",
-    "perfCacheSection": "仓库缓存",
     "perfLogSection": "日志设置",
     "perfBandwidth": "带宽限制",
     "perfBandwidthSub": "Max Speed",
@@ -4588,7 +4587,7 @@
     "perfDescConcurrency": "同一节点并行执行的备份任务数量上限。",
     "perfDescCpu": "在支持的环境中限制 CPU 时间预算；无法应用时业务继续运行。",
     "perfDescMem": "驻留内存软预算；压力下适度调节，不是硬上限。",
-    "perfKopiaCache": "每个仓库的 Kopia 缓存",
+    "perfKopiaCache": "每个仓库的缓存",
     "perfDescKopiaCache": "每个仓库连接的本地缓存目标，将在下一次仓库操作时生效。设为 0 可关闭内容和元数据缓存。",
     "perfDescLogLevel": "控制信息记录详略",
     "perfDescLogRetention": "过期日志自动清理",
@@ -4610,7 +4609,7 @@
     "perfQuotaRangeError": "请输入 {min} 到 {max} 之间的整数。",
     "perfPending": "设置已保存，等待 Agent 应用；业务继续运行。",
     "perfReported": "Agent 上报的应用状态。这些辅助策略失败时会安全降级。",
-    "perfSaveSuccess": "设置已保存，Agent 将单独上报应用结果。",
+    "perfSaveSuccess": "设置已保存",
     "perfLegacy": "以前保存的设置不会自动启用。请核对并保存以应用。",
     "perfStale": "应用状态已过期，当前显示最后一次上报结果；业务继续运行。",
     "perfResourceScope": "仅作用于 Agent 及其受管工作进程。",
@@ -4622,7 +4621,12 @@
       "degraded": "未应用／已降级",
       "monitoring": "软预算监测",
       "disabled": "已禁用"
-    }
+    },
+    "perfStatusHealthy": "Agent 配置已应用。",
+    "perfStatusAttention": "部分 Agent 配置需要关注。",
+    "perfStatusDetails": "查看应用详情",
+    "perfSaving": "保存中…",
+    "perfSavePartial": "资源限制和日志设置已保存，但缓存阈值保存失败：{detail}"
   },
   "nodesDeploy": {
     "enrollHint": "安装命令由后端 Enrollment API 实时生成；切换系统或角色将重新签发入网令牌。",
@@ -7517,7 +7521,25 @@
         "provisionFailedTitle": "配置下发失败",
         "provisionFailedSummary": "“{name}”的配置下发失败。",
         "provisionUpgradeAgent": "请升级源主机上的 Agent 后重试。",
-        "provisionConfigDiscarded": "多次失败后，备份配置已被丢弃。"
+        "provisionConfigDiscarded": "多次失败后，备份配置已被丢弃。",
+        "cache": {
+          "insufficientTitle": "缓存磁盘可用空间不足",
+          "insufficientDescription": "缓存所在磁盘的可用空间低于配置的备份阻止阈值，因此未启动备份。这不是备份目标仓库容量不足。",
+          "checkFailedTitle": "无法检查缓存磁盘可用空间",
+          "checkFailedDescription": "无法以执行账户确定缓存磁盘的可用空间，因此未启动备份。这不代表磁盘已满。",
+          "directory": "缓存目录",
+          "available": "磁盘可用空间",
+          "blocking": "备份阻止阈值",
+          "warning": "空间预警阈值",
+          "unknown": "未知",
+          "freeSpace": "释放缓存目录所在磁盘的空间，或扩容该磁盘。不要手动删除正在使用的缓存目录。",
+          "relocate": "也可以在实际执行备份的源端主机或代理主机中打开“缓存管理”，通过“更换缓存目录”选择可用空间充足的磁盘。",
+          "retry": "释放空间、更换缓存目录或使新的阻止备份阈值生效后，重新发起备份；系统会按当前生效的阈值再次检查可用空间。",
+          "checkMount": "在实际执行备份的源端主机或代理主机上，确认缓存磁盘已挂载且缓存目录可以访问。",
+          "checkPermissions": "检查运行 Agent 或代理服务的账户是否有权访问缓存目录，并查询其所在文件系统的可用空间。",
+          "retryCheck": "恢复访问后，重新发起备份以再次检查空间。空间未知不等于可用空间为零。",
+          "lowerBlocking": "评估磁盘空间需求后，也可在实际执行备份的源端主机或代理主机“缓存管理”中，适当调低“阻止备份阈值”并保存。调低阈值不会增加实际可用空间，请为缓存增长和其他业务保留足够空间。"
+        }
       },
       "resourceValue": {
         "s3": "对象存储",
@@ -7924,7 +7946,8 @@
         "license": "许可证",
         "repository": "仓库",
         "configuration": "配置",
-        "security": "安全"
+        "security": "安全",
+        "protection": "备份保护"
       },
       "events": {
         "user_created": "用户创建",
@@ -7956,7 +7979,8 @@
         "api_token_created": "API 令牌创建",
         "api_token_deleted": "API 令牌删除",
         "permission_changed": "权限变更",
-        "ai_model_insufficient_credit": "AI 模型账户余额不足"
+        "ai_model_insufficient_credit": "AI 模型账户余额不足",
+        "backup_space_check_warning": "备份空间检查告警"
       }
     },
     "alerts": {
@@ -10818,5 +10842,116 @@
     "storageUnavailable": "暂时无法获取您的备份存储用量，请稍后重试或联系管理员。",
     "backupStopped": "仓库所有者的备份存储用量已达到上限。",
     "backupResolution": "请查看仓库所有者的资源用量或联系管理员。恢复和清理仍可使用。计量用量降至上限以下或管理员提高额度后，可重试备份。"
+  },
+  "nodeCache": {
+    "title": "缓存管理",
+    "legacy": "当前节点使用旧版固定容量缓存，下方仍可继续使用原有缓存配置。",
+    "unknown": "尚未确认缓存管理能力，现有配置保持不变。",
+    "upgradeHelp": "请升级源端主机或代理主机，以启用备份前剩余空间检查和安全更换缓存目录。旧节点不具备这些保护能力。",
+    "activeRoot": "当前缓存目录",
+    "usage": "当前缓存使用空间",
+    "available": "缓存所在磁盘剩余可用空间",
+    "complete": "完整测量",
+    "partial": "缓存用量为部分测量结果，实际用量可能更大。",
+    "blocking": "阻止备份阈值",
+    "warning": "警告阈值",
+    "rule": "警告阈值 = 阻止阈值 + 10 GiB。1 GiB = 1,073,741,824 字节，阻止阈值必须大于零。",
+    "refresh": "刷新缓存状态",
+    "relocationTitle": "更换缓存目录",
+    "destination": "目标父目录的绝对路径",
+    "destinationHelp": "系统将在已存在且可写的目标父目录下创建当前安装专属的缓存目录，不会接管任意非空目录。",
+    "validate": "验证目标目录",
+    "relocate": "更换目录",
+    "validationExpires": "验证有效期至：",
+    "confirmRelocation": "系统将等待现有缓存使用者退出，切换到已验证的新目录并验证，随后删除旧托管缓存。不会复制缓存数据，重新预热可能增加下载量。持久配置和备份不会被删除。是否继续？",
+    "retryCleanup": "重试清理旧缓存",
+    "task": "持久任务",
+    "offline": "节点当前离线，上报信息可能已过期；新操作需要节点在线。",
+    "operationFailed": "缓存操作失败。",
+    "states": {
+      "applied": "已应用",
+      "pending": "待应用",
+      "failed": "应用失败",
+      "unsupported": "需要升级"
+    },
+    "spaceStates": {
+      "normal": "上次检查空间充足",
+      "warning": "上次检查空间不足警告",
+      "blocked": "上次检查已阻止备份",
+      "check_error": "空间检查失败"
+    },
+    "stages": {
+      "waiting_for_users": "等待缓存使用者退出",
+      "revalidating": "重新验证目标",
+      "preparing": "准备托管目录",
+      "switching": "切换缓存引用",
+      "verifying": "验证新目录",
+      "cleaning_old": "清理旧缓存",
+      "completed": "已完成",
+      "failed": "失败，保留旧目录",
+      "switched_cleanup_pending": "新目录已生效，旧缓存待清理"
+    },
+    "loading": "正在检查缓存能力…",
+    "blockingHelp": {
+      "purpose": "每次备份前，检查缓存目录所在磁盘的剩余可用空间。低于此阈值时，阻止启动备份。",
+      "example": "以阻止备份阈值 10 GiB 为例：",
+      "blocked": "剩余 8 GiB：阻止备份。",
+      "warning": "剩余 15 GiB：允许备份，产生空间警告。",
+      "normal": "剩余 20 GiB 及以上：正常执行。",
+      "note": "此检查不会预留备份运行期间的磁盘空间。"
+    },
+    "warningFormula": "警告阈值 = 阻止阈值 + 10 GiB",
+    "warningActual": "保留现有策略，原字节阈值未修改",
+    "lastChecked": "上次检查时间",
+    "changeDirectory": "更换缓存目录",
+    "confirmChange": "确定",
+    "destinationLabel": "目标缓存目录",
+    "cancelChange": "取消",
+    "validatingChange": "正在验证并更换…",
+    "invalidBlocking": "请输入有效的正数 GiB 阈值（1 GiB = 1,073,741,824 字节）。",
+    "waitForOperation": "请等待当前缓存操作完成后再保存。",
+    "operationPending": "缓存操作仍在执行，重新打开此页可获取最新结果。",
+    "gibUpgradeRequired": "请升级源端主机或代理主机后再编辑 GiB 阈值，现有字节阈值保持不变。",
+    "warningHelp": {
+      "purpose": "备份前检查时，缓存所在磁盘的剩余可用空间低于警告阈值、但未低于阻止备份阈值时，会记录空间警告，备份仍可继续。",
+      "formula": "新策略：警告阈值 = 阻止阈值 + 10 GiB。保留的旧策略以页面实际显示的阈值为准。",
+      "example": "以阻止阈值 10 GiB、警告阈值 20 GiB 为例：",
+      "blocked": "剩余 8 GiB：阻止备份。",
+      "warning": "剩余 15 GiB：允许备份，产生空间警告。",
+      "normal": "剩余 20 GiB 及以上：正常执行。",
+      "note": "是否发送通知由现有告警规则决定。此值不是缓存容量上限，也不会预留磁盘空间。"
+    },
+    "directoryHelp": {
+      "purpose": "此目录用于保存仓库索引、元数据及读取内容等本地缓存，以加快仓库访问、备份与恢复，并减少重复下载。",
+      "heading": "缓存与备份数据的区别：",
+      "backup": "缓存不是备份仓库，备份数据仍保存在配置的备份目标中。",
+      "disk": "缓存会占用此目录所在磁盘的空间，下方显示缓存用量及该磁盘的剩余可用空间。",
+      "relocate": "需要调整位置时，请使用“更换缓存目录”，不要手工移动正在使用的目录。",
+      "note": "更换后缓存会按需重新生成，首次操作可能较慢并增加下载量；仓库中的备份数据不会因此被迁移或删除。"
+    },
+    "errors": {
+      "protectedPath": "目标目录与受保护的安装、配置、日志或仓库数据重叠，请选择独立的缓存位置。",
+      "systemPath": "不能将受保护的系统目录用作缓存位置。",
+      "absolutePath": "请输入目标目录的绝对路径。",
+      "aliasPath": "目标目录不能使用符号链接、别名或重解析点。",
+      "parentUnavailable": "目标父目录必须已存在，并且源端主机或代理主机的运行账户可访问。",
+      "unownedPath": "目标目录包含未被确认为当前安装所有的缓存数据，请选择空目录或当前安装拥有的缓存目录。",
+      "sameOrNested": "目标目录必须与当前缓存目录不同，且两者不能互相包含。",
+      "insufficientSpace": "目标磁盘的剩余可用空间低于阻止备份阈值，请先释放空间或核对阈值后重试。",
+      "spaceUnavailable": "无法检查目标磁盘的剩余可用空间，请检查挂载状态和运行账户权限。",
+      "layoutNotReady": "缓存目录整理尚未完成，完成后才能更换缓存目录。",
+      "policyChanged": "缓存策略已更改，请重新验证目标目录。",
+      "validationExpired": "目标目录验证已过期，请再次点击确定以重新验证。",
+      "mountChanged": "缓存所在文件系统已变化或不可用，请检查挂载状态后重新验证。",
+      "directoryInUse": "该目录仍被进程占用，暂时无法清理。请在占用解除后重试，不要手动删除正在使用的缓存目录。"
+    },
+    "refreshingStatus": "正在更新缓存信息…",
+    "directoryOperationPending": "缓存目录操作进行中，完成后可修改设置。",
+    "operationInProgress": "缓存操作进行中，请稍候。",
+    "cleanupPendingHelp": "新缓存目录已生效，旧缓存尚未清理完成。系统不会回退到旧目录；请处理下方原因后重试清理。",
+    "relocationFailedHelp": "缓存目录更换未完成，原目录已保留。请处理下方原因后重试。",
+    "relocationProgressHelp": "正在安全更换缓存目录，请等待操作完成。",
+    "relocationSource": "原缓存目录",
+    "destinationValidationFailed": "目标目录校验失败"
   }
 }

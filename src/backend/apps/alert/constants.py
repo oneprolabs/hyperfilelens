@@ -111,8 +111,9 @@ AVAILABILITY_CHECK_TYPES = list(HEALTH_CHECK_TYPES)
 SYSTEM_CHECK_TYPES = [c for c in PLATFORM_HEALTH_CHECK_TYPES if c != "heartbeat"]
 TASK_TYPES = ["backup", "restore", "repository_operation"]
 TASK_EVENT_TYPES = ["task_failed", "task_timeout", "retry_exceeded", "partial_success"]
-EVENT_CATEGORIES = ["user", "license", "repository", "configuration", "security"]
+EVENT_CATEGORIES = ["user", "license", "repository", "configuration", "security", "protection"]
 EVENT_TYPES = {
+    "protection": ["backup_space_check_warning"],
     "user": [
         "user_created",
         "user_deleted",

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/vfs"
 )
@@ -76,6 +77,27 @@ func newBackupPathBoundary(cfg *model.AgentConfig, sourcePath string, nasSource 
 			errAgentPathForbidden,
 			root,
 		)
+	}
+	cacheInstallation := agentDataDir(cfg)
+	if cfg == nil || cfg.DataDir == "" {
+		cacheInstallation = root
+	}
+	cacheRoot, cacheErr := canonicalPath(kopialayout.ActiveCacheRoot(cacheInstallation))
+	if cacheErr != nil {
+		return backupPathBoundary{}, cacheErr
+	}
+	if !isWithin(cacheRoot, b.agentRoot) {
+		if isWithin(path, cacheRoot) {
+			return backupPathBoundary{}, fmt.Errorf("%w: backup source is inside active cache", errAgentPathForbidden)
+		}
+		if isWithin(cacheRoot, path) {
+			rel, err := filepath.Rel(path, cacheRoot)
+			if err != nil {
+				return backupPathBoundary{}, err
+			}
+			b.ignorePatterns = append(b.ignorePatterns, normalizeIgnorePattern(rel))
+			b.excludedPaths = append(b.excludedPaths, cacheRoot)
+		}
 	}
 	systemPatterns, systemExclusions, forbiddenSystemPath, systemErr := systemBackupBoundaryRules(b.agentRoot, path)
 	if systemErr != nil {

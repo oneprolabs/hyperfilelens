@@ -24,6 +24,7 @@ KOPIA_PATCH_FILES=(
 	"${KOPIA_TOOLS_DIR}/patches/0007-add-creation-session-statistics.patch"
 	"${KOPIA_TOOLS_DIR}/patches/0008-shared-backup-bandwidth.patch"
 	"${KOPIA_TOOLS_DIR}/patches/0009-refreshable-s3-credentials.patch"
+	"${KOPIA_TOOLS_DIR}/patches/0009-demand-driven-cache.patch"
 )
 KOPIA_DEFAULT_MATRIX="linux:amd64 linux:arm64 darwin:amd64 darwin:arm64 windows:amd64"
 

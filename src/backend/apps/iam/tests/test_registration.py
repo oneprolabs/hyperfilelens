@@ -462,13 +462,15 @@ class RegistrationServiceTests(APITestCase):
         self.assertEqual(org1.id, org2.id)
         self.assertEqual(membership1.id, membership2.id)
         from apps.alert.models import AlertPolicy
+        from apps.alert.services.defaults import default_catalog
+        from common.resource_scope import ResourceScope
 
-        self.assertEqual(
+        self.assertCountEqual(
             AlertPolicy.objects.filter(
                 organization=org1,
                 default_key__isnull=False,
-            ).count(),
-            8,
+            ).values_list("default_key", flat=True),
+            [rule["default_key"] for rule in default_catalog(owner_scope=ResourceScope.ORGANIZATION)],
         )
 
     def test_complete_user_registration_creates_unique_org_from_email(self):

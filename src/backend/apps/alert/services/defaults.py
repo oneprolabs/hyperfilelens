@@ -209,6 +209,32 @@ PLATFORM_DEFAULT_ALERT_RULES: tuple[dict[str, Any], ...] = (
 )
 
 
+ORGANIZATION_DEFAULT_ALERT_RULES += ({
+    "default_key": "backup.space_check_warning",
+    "name": "Backup Space Check Warning",
+    "description": "Alert when available cache space is near the required backup minimum.",
+    "type": AlertType.EVENT,
+    "severity": AlertSeverity.WARNING,
+    "enabled": True,
+    "resource_type": ResourceType.TASK,
+    "scope": PolicyScope.ALL,
+    "resource_ids": [],
+    "trigger_rule": {
+        "event_category": "protection",
+        "event_types": ["backup_space_check_warning"],
+        "repeat_interval_seconds": 7200,
+        "merge_enabled": True,
+        "merge_window_seconds": 300,
+        "merge_key": "",
+    },
+    "recovery_rule": {
+        "enabled": False,
+        "notify_on_firing": True,
+        "notify_on_resolved": False,
+    },
+},)
+
+
 def default_catalog(*, owner_scope: str) -> tuple[dict[str, Any], ...]:
     if owner_scope == ResourceScope.PLATFORM:
         return PLATFORM_DEFAULT_ALERT_RULES

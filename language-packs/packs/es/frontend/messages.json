@@ -4562,7 +4562,6 @@
     "tabPerformance": "Ejecución",
     "perfNetSection": "Ejecución de la red",
     "perfResSection": "Cuotas de recursos",
-    "perfCacheSection": "Caché del repositorio",
     "perfLogSection": "Ajustes de registro",
     "perfBandwidth": "Límite de ancho de banda",
     "perfBandwidthSub": "Herramienta de copia de seguridad de pico",
@@ -4588,7 +4587,7 @@
     "perfDescConcurrency": "Max tareas paralelas de copia de seguridad en este nodo.",
     "perfDescCpu": "Presupuesto de CPU cuando es compatible; las tareas continúan si no está disponible.",
     "perfDescMem": "Presupuesto flexible de memoria residente; regulación bajo presión, no un límite estricto.",
-    "perfKopiaCache": "Caché de Kopia por repositorio",
+    "perfKopiaCache": "Caché por repositorio",
     "perfDescKopiaCache": "Objetivo de caché para cada conexión de repositorio. Los cambios se aplican en la siguiente operación del repositorio. Establézcalo en 0 para desactivar la caché de contenido y metadatos.",
     "perfDescLogLevel": "Controla el nivel de detalle de los registros",
     "perfDescLogRetention": "Registros caducados depuración automática",
@@ -4610,7 +4609,7 @@
     "perfQuotaRangeError": "Introduzca un número entero entre {min} y {max}.",
     "perfPending": "Configuración guardada. Pendiente de aplicación por el Agent; las tareas continúan.",
     "perfReported": "Estado de aplicación informado por el Agent. Estas políticas son opcionales y no bloquean las tareas si fallan.",
-    "perfSaveSuccess": "Configuración guardada. El Agent informa la aplicación por separado.",
+    "perfSaveSuccess": "Configuración guardada.",
     "perfLegacy": "La configuración guardada anteriormente no se activa automáticamente. Revísela y guárdela para aplicarla.",
     "perfStale": "El informe de aplicación está desactualizado. Se muestra el último estado; las tareas continúan.",
     "perfResourceScope": "Solo se aplica al Agent y a sus procesos de trabajo administrados.",
@@ -4622,7 +4621,12 @@
       "degraded": "No aplicado / degradado",
       "monitoring": "Supervisión de presupuesto flexible",
       "disabled": "Deshabilitado"
-    }
+    },
+    "perfStatusHealthy": "La configuración del Agent está aplicada.",
+    "perfStatusAttention": "Algunos ajustes del Agent requieren atención.",
+    "perfStatusDetails": "Ver detalles de aplicación",
+    "perfSaving": "Guardando…",
+    "perfSavePartial": "Se guardaron los límites de recursos y la configuración de registros, pero no se pudo guardar el umbral de caché: {detail}"
   },
   "nodesDeploy": {
     "enrollHint": "Enrollment API genera el script de instalación; al cambiar el sistema operativo o el rol se emite un token nuevo.",
@@ -7517,7 +7521,25 @@
         "provisionFailedTitle": "El aprovisionamiento falló",
         "provisionFailedSummary": "El aprovisionamiento de «{name}» falló.",
         "provisionUpgradeAgent": "Actualice el agente en el host de origen y vuelva a intentarlo.",
-        "provisionConfigDiscarded": "La configuración de copia de seguridad se descartó tras varios fallos."
+        "provisionConfigDiscarded": "La configuración de copia de seguridad se descartó tras varios fallos.",
+        "cache": {
+          "insufficientTitle": "Espacio libre insuficiente en el disco de caché",
+          "insufficientDescription": "La copia de seguridad no se inició porque el espacio disponible en el disco de caché está por debajo del umbral de bloqueo configurado. No es un problema de capacidad del repositorio de copias de seguridad.",
+          "checkFailedTitle": "No se puede comprobar el espacio libre del disco de caché",
+          "checkFailedDescription": "La copia de seguridad no se inició porque no se pudo determinar el espacio disponible para la cuenta de ejecución. Esto no significa que el disco esté lleno.",
+          "directory": "Directorio de caché",
+          "available": "Espacio disponible en disco",
+          "blocking": "Umbral de bloqueo de copias de seguridad",
+          "warning": "Umbral de advertencia",
+          "unknown": "Desconocido",
+          "freeSpace": "Libere espacio en el disco que contiene el directorio de caché o amplíe ese volumen. No elimine manualmente un directorio de caché en uso.",
+          "relocate": "También puede abrir Gestión de caché en el host de origen o proxy que ejecuta la tarea y usar Cambiar directorio de caché para elegir un disco con suficiente espacio libre.",
+          "retry": "Tras liberar espacio, cambiar el directorio de caché o aplicar un nuevo umbral de bloqueo, inicie una nueva copia de seguridad. Se volverá a comprobar el espacio disponible con el umbral vigente.",
+          "checkMount": "En el host de origen o proxy que ejecuta la tarea, confirme que el disco de caché esté montado y que se pueda acceder al directorio de caché.",
+          "checkPermissions": "Compruebe que la cuenta del servicio Agent o proxy pueda acceder al directorio de caché y consultar el espacio disponible en su sistema de archivos.",
+          "retryCheck": "Tras restablecer el acceso, inicie una nueva copia de seguridad para repetir la comprobación. Una lectura desconocida no equivale a cero espacio libre.",
+          "lowerBlocking": "Tras evaluar las necesidades de espacio en disco, también puede reducir y guardar el Umbral de bloqueo de copias de seguridad en Gestión de caché del host de origen o proxy que ejecuta la tarea. Reducirlo no libera espacio; reserve suficiente espacio para el crecimiento de la caché y otras cargas de trabajo."
+        }
       },
       "resourceValue": {
         "s3": "Almacenamiento de objetos",
@@ -7924,7 +7946,8 @@
         "license": "Licencia",
         "repository": "Repositorio",
         "configuration": "Configuración",
-        "security": "Seguridad"
+        "security": "Seguridad",
+        "protection": "Protección de copias"
       },
       "events": {
         "user_created": "Usuario creado",
@@ -7956,7 +7979,8 @@
         "api_token_created": "Token API creado",
         "api_token_deleted": "Token API eliminado",
         "permission_changed": "Permiso cambiado",
-        "ai_model_insufficient_credit": "Crédito insuficiente del modelo de IA"
+        "ai_model_insufficient_credit": "Crédito insuficiente del modelo de IA",
+        "backup_space_check_warning": "Advertencia de espacio de copia"
       }
     },
     "alerts": {
@@ -10818,5 +10842,116 @@
     "storageUnavailable": "El uso de su almacenamiento de copias de seguridad no está disponible temporalmente. Inténtelo más tarde o contacte con su administrador.",
     "backupStopped": "Se ha alcanzado el límite de almacenamiento de copias de seguridad del propietario del repositorio.",
     "backupResolution": "Consulte el uso de recursos del propietario del repositorio o contacte con su administrador. La restauración y la limpieza siguen disponibles. Reintente cuando el uso medido sea inferior al límite o el administrador lo aumente."
+  },
+  "nodeCache": {
+    "title": "Gestión de caché",
+    "legacy": "Este nodo utiliza caché heredada de tamaño fijo. Debajo puede seguir usando la configuración de caché existente.",
+    "unknown": "La capacidad de caché aún no está confirmada. Se conserva la configuración existente.",
+    "upgradeHelp": "Actualice el host de origen o el host proxy para habilitar la comprobación de espacio antes de la copia y el cambio seguro del directorio de caché. Los nodos antiguos no ofrecen estas protecciones.",
+    "activeRoot": "Directorio de caché actual",
+    "usage": "Espacio de caché utilizado",
+    "available": "Espacio disponible en el disco de caché",
+    "complete": "Medición completa",
+    "partial": "La medición de caché es parcial; el uso real puede ser mayor.",
+    "blocking": "Umbral de bloqueo de copias",
+    "warning": "Umbral de advertencia",
+    "rule": "Umbral de advertencia = umbral de bloqueo + 10 GiB. 1 GiB = 1.073.741.824 bytes. El umbral de bloqueo debe ser mayor que cero.",
+    "refresh": "Actualizar estado de caché",
+    "relocationTitle": "Cambiar directorio de caché",
+    "destination": "Ruta absoluta del directorio padre de destino",
+    "destinationHelp": "El sistema crea un directorio de caché exclusivo de esta instalación dentro del directorio padre existente y con permiso de escritura. No se adoptan directorios no vacíos arbitrarios.",
+    "validate": "Validar destino",
+    "relocate": "Cambiar directorio",
+    "validationExpires": "La validación caduca:",
+    "confirmRelocation": "Se esperará a los usuarios actuales, se cambiará al directorio validado y se verificará antes de eliminar la caché antigua. No se copiará la caché; regenerarla puede requerir más descargas. No se eliminan configuraciones persistentes ni copias de seguridad. ¿Continuar?",
+    "retryCleanup": "Reintentar limpieza de caché antigua",
+    "task": "Tarea persistente",
+    "offline": "El nodo está desconectado. Los informes pueden estar obsoletos; las nuevas operaciones requieren conexión.",
+    "operationFailed": "La operación de caché ha fallado.",
+    "states": {
+      "applied": "Aplicada",
+      "pending": "Pendiente",
+      "failed": "Error",
+      "unsupported": "Actualización necesaria"
+    },
+    "spaceStates": {
+      "normal": "Espacio suficiente en la última comprobación",
+      "warning": "Advertencia de poco espacio en la última comprobación",
+      "blocked": "Copia bloqueada en la última comprobación",
+      "check_error": "Error al comprobar el espacio"
+    },
+    "stages": {
+      "waiting_for_users": "Esperando usuarios de caché",
+      "revalidating": "Revalidando destino",
+      "preparing": "Preparando directorio gestionado",
+      "switching": "Cambiando referencias de caché",
+      "verifying": "Verificando nuevo directorio",
+      "cleaning_old": "Limpiando caché antigua",
+      "completed": "Completada",
+      "failed": "Error; se conserva el directorio antiguo",
+      "switched_cleanup_pending": "Nuevo directorio activo; limpieza pendiente"
+    },
+    "loading": "Comprobando la capacidad de caché…",
+    "blockingHelp": {
+      "purpose": "Antes de cada copia se comprueba el espacio disponible en el disco de caché. Por debajo de este umbral, la copia no puede comenzar.",
+      "example": "Ejemplo con un umbral de bloqueo de 10 GiB:",
+      "blocked": "8 GiB disponibles: bloquear la copia.",
+      "warning": "15 GiB disponibles: permitir la copia con una advertencia de espacio.",
+      "normal": "20 GiB o más disponibles: permitir la copia normalmente.",
+      "note": "Esta comprobación no reserva espacio en disco durante la ejecución."
+    },
+    "warningFormula": "Umbral de advertencia = umbral de bloqueo + 10 GiB",
+    "warningActual": "Se conserva la política y sus umbrales originales en bytes",
+    "lastChecked": "Última comprobación",
+    "changeDirectory": "Cambiar directorio de caché",
+    "confirmChange": "Confirmar",
+    "destinationLabel": "Directorio de caché de destino",
+    "cancelChange": "Cancelar",
+    "validatingChange": "Validando y cambiando…",
+    "invalidBlocking": "Introduzca un valor positivo válido en GiB (1 GiB = 1.073.741.824 bytes).",
+    "waitForOperation": "Espere a que finalice la operación de caché antes de guardar.",
+    "operationPending": "La operación de caché continúa. Vuelva a abrir esta pestaña para consultar el resultado.",
+    "gibUpgradeRequired": "Actualice el host de origen o proxy para editar umbrales GiB. Se conservan los umbrales existentes en bytes.",
+    "warningHelp": {
+      "purpose": "Antes de una copia, si el espacio libre del disco de caché está por debajo del umbral de advertencia pero no del de bloqueo, se registra una advertencia y la copia puede continuar.",
+      "formula": "Para nuevas políticas: advertencia = bloqueo + 10 GiB. Las políticas conservadas utilizan los valores que se muestran realmente.",
+      "example": "Ejemplo: bloqueo a 10 GiB y advertencia a 20 GiB:",
+      "blocked": "8 GiB disponibles: bloquear la copia.",
+      "warning": "15 GiB disponibles: permitir la copia con una advertencia.",
+      "normal": "20 GiB o más disponibles: permitir la copia normalmente.",
+      "note": "El envío de notificaciones depende de las reglas de alerta existentes. No es un límite de tamaño de caché ni una reserva de espacio."
+    },
+    "directoryHelp": {
+      "purpose": "Este directorio contiene índices, metadatos y lecturas en caché locales. Agiliza el acceso al repositorio, las copias y las restauraciones y reduce las descargas repetidas.",
+      "heading": "La caché y las copias de seguridad son diferentes:",
+      "backup": "La caché no es el repositorio de copias. Las copias permanecen en su destino de almacenamiento configurado.",
+      "disk": "La caché ocupa espacio en el disco que contiene este directorio. Debajo se muestran su uso y el espacio disponible.",
+      "relocate": "Use Cambiar directorio de caché para trasladarlo de forma segura; no mueva manualmente un directorio en uso.",
+      "note": "Tras el cambio, la caché se reconstruye bajo demanda en lugar de copiarse. Las primeras operaciones pueden tardar más y descargar más datos; las copias del repositorio no se mueven ni se eliminan."
+    },
+    "errors": {
+      "protectedPath": "El destino se solapa con datos protegidos de instalación, configuración, registros o repositorio. Elija una ubicación de caché independiente.",
+      "systemPath": "No se puede utilizar un directorio de sistema protegido como caché.",
+      "absolutePath": "Introduzca una ruta absoluta de destino.",
+      "aliasPath": "El destino no puede utilizar enlaces simbólicos, alias ni puntos de reanálisis.",
+      "parentUnavailable": "El directorio padre debe existir y ser accesible para la cuenta del host de origen o proxy.",
+      "unownedPath": "El destino contiene datos no verificados como caché de esta instalación. Elija un directorio vacío o una caché propiedad de la instalación.",
+      "sameOrNested": "El destino debe ser distinto de la caché actual y no puede contenerla ni estar dentro de ella.",
+      "insufficientSpace": "El espacio disponible en el disco de destino está por debajo del umbral de bloqueo. Libere espacio o revise el umbral antes de reintentar.",
+      "spaceUnavailable": "No se pudo comprobar el espacio disponible. Revise el montaje y los permisos de la cuenta.",
+      "layoutNotReady": "La preparación del directorio de caché no está completa. Complétela antes de cambiar la ubicación.",
+      "policyChanged": "La política cambió. Valide de nuevo el directorio de destino.",
+      "validationExpired": "La validación caducó. Confirme de nuevo para repetirla.",
+      "mountChanged": "El sistema de archivos cambió o no está disponible. Revise el montaje y valide de nuevo.",
+      "directoryInUse": "Un proceso sigue utilizando el directorio y todavía no se puede limpiar. Reintente cuando se libere el identificador; no elimine manualmente un directorio de caché en uso."
+    },
+    "refreshingStatus": "Actualizando la información de caché…",
+    "directoryOperationPending": "Hay una operación del directorio de caché en curso. Podrá modificar la configuración cuando termine.",
+    "operationInProgress": "Hay una operación de caché en curso. Espere, por favor.",
+    "cleanupPendingHelp": "El nuevo directorio de caché está activo. La limpieza de la caché anterior no terminó; el sistema no volverá al directorio anterior. Resuelva la causa indicada y vuelva a intentar la limpieza.",
+    "relocationFailedHelp": "No se completó el cambio del directorio de caché. Se conservó el directorio original. Resuelva la causa indicada antes de reintentarlo.",
+    "relocationProgressHelp": "Se está cambiando el directorio de caché de forma segura. Espere a que finalice la operación.",
+    "relocationSource": "Directorio de caché original",
+    "destinationValidationFailed": "Error al validar el directorio de destino"
   }
 }

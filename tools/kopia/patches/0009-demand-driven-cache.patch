@@ -1,0 +1,210 @@
+--- a/repo/content/caching_options.go
++++ b/repo/content/caching_options.go
+@@ -1,6 +1,7 @@
+ package content
+ 
+ import (
++	"os"
+ 	"path/filepath"
+ 	"time"
+ )
+@@ -19,6 +20,7 @@
+ 
+ // CachingOptions specifies configuration of local cache.
+ type CachingOptions struct {
++	DemandDriven                bool            `json:"demandDriven,omitempty"`
+ 	CacheDirectory              string          `json:"cacheDirectory,omitempty"`
+ 	ContentCacheSizeBytes       int64           `json:"maxCacheSize,omitempty"`
+ 	ContentCacheSizeLimitBytes  int64           `json:"contentCacheSizeLimitBytes,omitempty"`
+@@ -44,10 +46,13 @@
+ // CloneOrDefault returns a clone of the caching options or empty options for nil.
+ func (c *CachingOptions) CloneOrDefault() *CachingOptions {
+ 	if c == nil {
+-		return &CachingOptions{}
++		c = &CachingOptions{}
+ 	}
+ 
+ 	c2 := *c
++	if os.Getenv("KOPIA_CACHE_DEMAND_DRIVEN") == "1" {
++		c2.DemandDriven = true
++	}
+ 
+ 	return &c2
+ }
+--- a/cli/command_cache_set.go
++++ b/cli/command_cache_set.go
+@@ -13,6 +13,7 @@
+ )
+ 
+ type cacheSizeFlags struct {
++	demandDriven            bool
+ 	contentCacheSizeMB      int64
+ 	contentCacheSizeLimitMB int64
+ 	contentMinSweepAge      time.Duration
+@@ -26,6 +27,7 @@
+ }
+ 
+ func (c *cacheSizeFlags) setup(cmd *kingpin.CmdClause) {
++	cmd.Flag("cache-demand-driven", "Enable caches without capacity eviction (managed preflight protection only)").BoolVar(&c.demandDriven)
+ 	// do not use Defaults here, since this structure is shared between connect/create/set commands
+ 	// each command will set their default values in code.
+ 	cmd.Flag("content-cache-size-mb", "Desired size of local content cache (soft limit)").PlaceHolder("MB").Int64Var(&c.contentCacheSizeMB)
+@@ -72,6 +74,10 @@
+ 	}
+ 
+ 	changed := 0
++	if opts.DemandDriven != c.demandDriven {
++		opts.DemandDriven = c.demandDriven
++		changed++
++	}
+ 
+ 	if v := c.directory; v != "" {
+ 		log(ctx).Infof("setting cache directory to %v", v)
+--- a/cli/command_repository_connect.go
++++ b/cli/command_repository_connect.go
+@@ -92,6 +92,7 @@
+ func (c *connectOptions) toRepoConnectOptions() *repo.ConnectOptions {
+ 	return &repo.ConnectOptions{
+ 		CachingOptions: content.CachingOptions{
++			DemandDriven:                c.demandDriven,
+ 			CacheDirectory:              c.connectCacheDirectory,
+ 			ContentCacheSizeBytes:       c.contentCacheSizeMB << 20,       //nolint:mnd
+ 			ContentCacheSizeLimitBytes:  c.contentCacheSizeLimitMB << 20,  //nolint:mnd
+--- a/repo/caching.go
++++ b/repo/caching.go
+@@ -67,6 +67,7 @@
+ 		lc.Caching.CacheDirectory = d
+ 	}
+ 
++	lc.Caching.DemandDriven = opt.DemandDriven
+ 	lc.Caching.ContentCacheSizeBytes = opt.ContentCacheSizeBytes
+ 	lc.Caching.ContentCacheSizeLimitBytes = opt.ContentCacheSizeLimitBytes
+ 	lc.Caching.MetadataCacheSizeBytes = opt.MetadataCacheSizeBytes
+--- a/internal/cache/persistent_lru_cache.go
++++ b/internal/cache/persistent_lru_cache.go
+@@ -276,12 +276,12 @@
+ 
+ // +checklocks:c.listCacheMutex
+ func (c *PersistentCache) aboveSoftLimit(extraBytes int64) bool {
+-	return c.listCache.totalDataBytes+extraBytes+c.pendingWriteBytes > c.sweep.MaxSizeBytes
++	return !c.sweep.DemandDriven && c.listCache.totalDataBytes+extraBytes+c.pendingWriteBytes > c.sweep.MaxSizeBytes
+ }
+ 
+ // +checklocks:c.listCacheMutex
+ func (c *PersistentCache) aboveHardLimit(extraBytes int64) bool {
+-	if c.sweep.LimitBytes <= 0 {
++	if c.sweep.DemandDriven || c.sweep.LimitBytes <= 0 {
+ 		return false
+ 	}
+ 
+@@ -406,6 +406,8 @@
+ 
+ // SweepSettings encapsulates settings that impact cache item sweep/expiration.
+ type SweepSettings struct {
++	// DemandDriven disables capacity eviction, but not integrity or explicit invalidation.
++	DemandDriven bool
+ 	// soft limit, the cache will be limited to this size, except for items newer than MinSweepAge.
+ 	MaxSizeBytes int64
+ 
+--- a/internal/cache/cache_storage.go
++++ b/internal/cache/cache_storage.go
+@@ -38,7 +38,12 @@
+ 
+ // NewStorageOrNil returns cache.Storage backed by the provided directory.
+ func NewStorageOrNil(ctx context.Context, cacheDir string, maxBytes int64, subdir string) (Storage, error) {
+-	if maxBytes <= 0 || cacheDir == "" {
++	return NewStorageWithPolicy(ctx, cacheDir, maxBytes, subdir, false)
++}
++
++// NewStorageWithPolicy preserves legacy zero semantics unless explicitly opted in.
++func NewStorageWithPolicy(ctx context.Context, cacheDir string, maxBytes int64, subdir string, demandDriven bool) (Storage, error) {
++	if (!demandDriven && maxBytes <= 0) || cacheDir == "" {
+ 		return nil, nil
+ 	}
+ 
+--- a/internal/cache/content_cache.go
++++ b/internal/cache/content_cache.go
+@@ -181,7 +181,7 @@
+ 
+ 		var err error
+ 
+-		cacheStorage, err = NewStorageOrNil(ctx, opt.BaseCacheDirectory, opt.Sweep.MaxSizeBytes, opt.CacheSubDir)
++		cacheStorage, err = NewStorageWithPolicy(ctx, opt.BaseCacheDirectory, opt.Sweep.MaxSizeBytes, opt.CacheSubDir, opt.Sweep.DemandDriven)
+ 		if err != nil {
+ 			return nil, errors.Wrap(err, "error initializing cache storage")
+ 		}
+--- a/repo/open.go
++++ b/repo/open.go
+@@ -139,7 +139,7 @@
+ func getContentCacheOrNil(ctx context.Context, si *APIServerInfo, opt *content.CachingOptions, password string, mr *metrics.Registry, timeNow func() time.Time) (*cache.PersistentCache, error) {
+ 	opt = opt.CloneOrDefault()
+ 
+-	cs, err := cache.NewStorageOrNil(ctx, opt.CacheDirectory, opt.ContentCacheSizeBytes, "server-contents")
++	cs, err := cache.NewStorageWithPolicy(ctx, opt.CacheDirectory, opt.ContentCacheSizeBytes, "server-contents", opt.DemandDriven)
+ 	if cs == nil {
+ 		// this may be (nil, nil) or (nil, err)
+ 		return nil, errors.Wrap(err, "error opening storage")
+@@ -166,6 +166,7 @@
+ 	}
+ 
+ 	pc, err := cache.NewPersistentCache(ctx, "cache-storage", cs, prot, cache.SweepSettings{
++		DemandDriven: opt.DemandDriven,
+ 		MaxSizeBytes: opt.ContentCacheSizeBytes,
+ 		LimitBytes:   opt.ContentCacheSizeLimitBytes,
+ 		MinSweepAge:  opt.MinContentSweepAge.DurationOrDefault(content.DefaultDataCacheSweepAge),
+--- a/repo/content/committed_read_manager.go
++++ b/repo/content/committed_read_manager.go
+@@ -434,6 +434,7 @@
+ 
+ func contentCacheSweepSettings(caching *CachingOptions) cache.SweepSettings {
+ 	return cache.SweepSettings{
++		DemandDriven: caching.DemandDriven,
+ 		MaxSizeBytes: caching.ContentCacheSizeBytes,
+ 		LimitBytes:   caching.ContentCacheSizeLimitBytes,
+ 		MinSweepAge:  caching.MinContentSweepAge.DurationOrDefault(DefaultDataCacheSweepAge),
+@@ -442,6 +443,7 @@
+ 
+ func metadataCacheSizeSweepSettings(caching *CachingOptions) cache.SweepSettings {
+ 	return cache.SweepSettings{
++		DemandDriven: caching.DemandDriven,
+ 		MaxSizeBytes: caching.EffectiveMetadataCacheSizeBytes(),
+ 		LimitBytes:   caching.MetadataCacheSizeLimitBytes,
+ 		MinSweepAge:  caching.MinMetadataSweepAge.DurationOrDefault(DefaultMetadataCacheSweepAge),
+@@ -450,6 +452,7 @@
+ 
+ func indexBlobCacheSweepSettings(caching *CachingOptions) cache.SweepSettings {
+ 	return cache.SweepSettings{
++		DemandDriven: caching.DemandDriven,
+ 		MaxSizeBytes: caching.EffectiveMetadataCacheSizeBytes(),
+ 		MinSweepAge:  caching.MinMetadataSweepAge.DurationOrDefault(DefaultMetadataCacheSweepAge),
+ 	}
+--- a/internal/cache/demand_driven_test.go
++++ b/internal/cache/demand_driven_test.go
+@@ -0,0 +1,27 @@
++package cache
++
++import (
++	"context"
++	"testing"
++)
++
++func TestDemandDrivenKeepsCachingEnabledWithoutCapacityEviction(t *testing.T) {
++	ctx := context.Background()
++	legacy, err := NewStorageOrNil(ctx, t.TempDir(), 0, "contents")
++	if err != nil || legacy != nil {
++		t.Fatal("legacy zero must disable caching")
++	}
++	managed, err := NewStorageWithPolicy(ctx, t.TempDir(), 0, "contents", true)
++	if err != nil || managed == nil {
++		t.Fatal("demand-driven zero must keep caching enabled")
++	}
++	c := &PersistentCache{sweep: SweepSettings{DemandDriven: true, MaxSizeBytes: 1, LimitBytes: 1}}
++	c.listCache.totalDataBytes = 1000000
++	if c.aboveSoftLimit(1) || c.aboveHardLimit(1) {
++		t.Fatal("demand-driven cache retained a capacity limit")
++	}
++	c.sweep.DemandDriven = false
++	if !c.aboveSoftLimit(1) || !c.aboveHardLimit(1) {
++		t.Fatal("legacy fixed limits changed")
++	}
++}

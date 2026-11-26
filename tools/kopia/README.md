@@ -58,3 +58,25 @@ Legacy `snapshot list --storage-stats` values are source-history references and
 remain readable. They are not equivalent to creation-session values, especially
 when different sources share contents. Normal managed backups never run that
 command after creating a snapshot and never fall back to it for old binaries.
+
+
+## Managed demand-driven cache mode
+
+Patch `0009-demand-driven-cache.patch` adds the explicit
+`--cache-demand-driven` connect/create/set flag and the Agent-owned
+`KOPIA_CACHE_DEMAND_DRIVEN=1` process opt-in. The native default behavior and
+zero-size-means-disabled semantics are unchanged without opt-in. In managed
+mode, content, metadata, index and API-server content caches remain enabled
+without soft/hard capacity eviction; repository isolation, checksum protection
+and explicit invalidation remain in place. Existing cache bytes are reused.
+
+The Agent probes the actual binary's help capability before enabling the mode.
+Do not replace unsupported binaries with a guessed version or simulate
+unlimited caching using a huge numeric limit. The disk protection boundary is
+Agent backup preflight, not a Kopia runtime quota or reservation. Runtime disk
+exhaustion remains possible after a successful preflight.
+
+Cache tests included in the patch protect explicit mode versus legacy zero and
+fixed-size behavior. Use the isolated Agent real-Kopia tests with
+`HFL_TEST_KOPIA_BINARY` to verify content caching, relocation, whole-cache
+recreation, and restores of existing snapshots. No shared repository is needed.

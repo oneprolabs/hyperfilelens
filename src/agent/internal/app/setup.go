@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"hyperfilelens/agent/internal/identity"
+	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/infra/logging"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/kopia"
@@ -34,7 +35,11 @@ func ResolveLayout(cfg *model.AgentConfig) (dataRoot, logDir, cacheDir string, e
 	} else {
 		logDir = filepath.Clean(vfs.AgentLogDir(dataRoot))
 	}
-	cacheDir = filepath.Clean(vfs.AgentCacheDir(dataRoot))
+	active, err := kopialayout.ReadActiveRoot(dataRoot)
+	if err != nil {
+		return "", "", "", err
+	}
+	cacheDir = active.Path
 	return dataRoot, logDir, cacheDir, nil
 }
 
@@ -51,7 +56,7 @@ func InitRuntimeDirsAndLogging(cfg *model.AgentConfig) error {
 	if err := os.MkdirAll(dataRoot, 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := ensureRuntimeCache(dataRoot, cacheDir); err != nil {
 		return err
 	}
 	if err := logging.Setup(logDir, cfg.OrgKey); err != nil {
@@ -76,7 +81,7 @@ func Setup(ctx context.Context, cfg *model.AgentConfig) error {
 	if err := os.MkdirAll(dataRoot, 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+	if err := ensureRuntimeCache(dataRoot, cacheDir); err != nil {
 		return err
 	}
 
@@ -89,5 +94,16 @@ func Setup(ctx context.Context, cfg *model.AgentConfig) error {
 		return err
 	}
 	cfg.KopiaPath = resolved
+	return nil
+}
+
+func ensureRuntimeCache(root, expected string) error {
+	a, err := kopialayout.EnsureActiveRoot(root)
+	if err != nil {
+		return err
+	}
+	if a.Path != expected {
+		return fmt.Errorf("active cache root changed during setup")
+	}
 	return nil
 }

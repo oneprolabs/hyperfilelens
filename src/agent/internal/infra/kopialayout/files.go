@@ -8,10 +8,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
 func within(root, path string) bool {
+	if runtime.GOOS == "windows" {
+		root = strings.ToLower(root)
+		path = strings.ToLower(path)
+	}
 	rel, err := filepath.Rel(root, path)
 	return err == nil && rel != "." && rel != ".." && !filepath.IsAbs(rel) &&
 		!strings.HasPrefix(rel, ".."+string(filepath.Separator))
@@ -50,7 +55,7 @@ func physicalPath(path string) (string, error) {
 }
 
 func separateLogs(root, logs string) error {
-	cache, err := physicalPath(filepath.Dir(LegacyConfigDir(root)))
+	cache, err := physicalPath(ActiveCacheRoot(root))
 	if err != nil {
 		return err
 	}

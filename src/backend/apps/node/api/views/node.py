@@ -161,7 +161,7 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
         )
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve"):
+        if self.action in ("list", "retrieve") or self.action == "cache" and self.request.method == "GET":
             return [
                 node_permissions.IsAuthenticated(),
                 node_permissions.IsOrgStaffReader(),
@@ -184,6 +184,52 @@ class _NodeViewSetBase(OrgScopedMixin, SoftDeleteDestroyMixin, viewsets.ModelVie
                 node_permissions.IsOrgOperator(),
             ]
         return super().get_permissions()
+
+    @action(detail=True, methods=["get", "post"], url_path="cache")
+    def cache(self, request, pk=None):
+        from apps.node.services.internal import cache_management as cache
+        node = self.get_object()
+        if request.method == "GET":
+            task_id = request.query_params.get("task_id")
+            if task_id:
+                from rest_framework import serializers
+                from apps.node.models import NodeTask
+                task_id = serializers.UUIDField().run_validation(task_id)
+                task = NodeTask.objects.filter(pk=task_id, node=node, kind__startswith="cache.").first()
+                if task is None:
+                    return Response({"detail": "Cache task not found."}, status=404)
+                return Response(cache.task_public(task))
+            return Response(cache.snapshot(node))
+        from rest_framework.exceptions import ValidationError
+        body = request.data
+        if not isinstance(body, dict):
+            raise ValidationError("Expected an object.")
+        operation = body.get("operation")
+        if operation == "save_policy":
+            task = cache.save_policy(node, body.get("blocking_bytes"))
+        elif operation == "refresh":
+            task = cache.start_task(node, "cache.status", {})
+        elif operation == "validate_destination":
+            parent = body.get("parent")
+            if not isinstance(parent, str) or not parent or len(parent) > 4096:
+                raise ValidationError("Enter an absolute destination parent directory.")
+            task = cache.start_task(node, "cache.relocation.validate", {"parent": parent})
+        elif operation == "relocate":
+            try:
+                import uuid
+                validation_id = uuid.UUID(str(body.get("validation_task_id")))
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise ValidationError("A valid destination-validation task is required.") from exc
+            task = cache.start_relocation(node, validation_id)
+        elif operation == "retry_cleanup":
+            previous = cache.snapshot(node)["report"].get("relocation") or {}
+            if previous.get("stage") != "switched_cleanup_pending":
+                raise ValidationError("No verified cache cleanup is pending.")
+            task = cache.start_task(node, "cache.relocation.retry", {"previous_task_id": previous.get("task_id")})
+        else:
+            raise ValidationError("Unknown cache operation.")
+        write_audit_log(organization=node.organization, user=request.user, action="node.cache." + operation, target_type="node", target_id=str(node.pk), metadata={"node_task_id": str(task.id)})
+        return Response(cache.task_public(task), status=202)
 
     def get_org_scoped_queryset(self):
         queryset = Node.objects.select_related("organization").filter(organization=self.org)

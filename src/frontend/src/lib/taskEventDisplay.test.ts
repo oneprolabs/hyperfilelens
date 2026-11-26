@@ -205,3 +205,8 @@ describe('task event internationalization', () => {
     })).toBe('kopia-456 (one.txt, two.txt +1)')
   })
 })
+
+// Directory preflight failures remain localized even for already stored events.
+it('localizes directory policy preparation failures', () => {
+  expect(taskEventMessageKey('Directory policy preparation failed')).toBe('ops.task.eventMessage.directoryPolicyPreparationFailed')
+})

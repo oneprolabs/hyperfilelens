@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"hyperfilelens/agent/internal/platform/vfs"
 )
 
 // ProcessEnv makes log placement independent of optional performance policy and
@@ -17,7 +15,11 @@ func ProcessEnv(root, logDir string, input map[string]string) (map[string]string
 	if err != nil {
 		return nil, err
 	}
-	cache := vfs.AgentCacheDir(root)
+	active, err := EnsureActiveRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	cache := active.Path
 	logDir, err = filepath.Abs(logDir)
 	if err != nil {
 		return nil, err
@@ -36,10 +38,10 @@ func ProcessEnv(root, logDir string, input map[string]string) (map[string]string
 	if !filepath.IsAbs(effective) || !samePath(cache, effective) && !within(cache, effective) {
 		return nil, fmt.Errorf("Kopia cache must be inside the installation's managed cache root")
 	}
-	if err := plainPath(root, effective); err != nil {
+	if err := plainPath(cache, effective); err != nil {
 		return nil, err
 	}
-	if err := plainPath(root, filepath.Join(effective, "server-contents")); err != nil {
+	if err := plainPath(cache, filepath.Join(effective, "server-contents")); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Join(effective, "server-contents"), 0o700); err != nil {
@@ -52,6 +54,15 @@ func ProcessEnv(root, logDir string, input map[string]string) (map[string]string
 		return nil, err
 	}
 	env["KOPIA_CACHE_DIRECTORY"] = effective
+	// Only this installation's validated persisted policy enables managed mode;
+	// never inherit an opt-in from an unrelated caller's environment.
+	env["KOPIA_CACHE_DEMAND_DRIVEN"] = ""
+	if _, err := os.Stat(managementPath(root, "policy")); err == nil {
+		if _, err := ReadPolicy(root); err != nil {
+			return nil, err
+		}
+		env["KOPIA_CACHE_DEMAND_DRIVEN"] = "1"
+	}
 	env["KOPIA_LOG_DIR"] = filepath.Join(logDir, "kopia")
 	if _, supplied := env["HFL_RUNTIME_LOG_POLICY"]; !supplied {
 		env["HFL_RUNTIME_LOG_POLICY"] = "" // Do not inherit a second log destination.

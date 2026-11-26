@@ -22,6 +22,16 @@ func ClearCache(ctx context.Context, root string) error {
 		return err
 	}
 	defer release()
+	active, activeErr := ReadActiveRoot(root)
+	if activeErr != nil {
+		return activeErr
+	}
+	if active.Generation > 0 {
+		if err := CheckUsers(ctx, root, false); err != nil {
+			return err
+		}
+		return fmt.Errorf("clear relocated cache through a validated relocation task")
+	}
 	data, err := readRegular(root, StatePath(root), 32<<20)
 	if err != nil {
 		return fmt.Errorf("cache cleanup requires a completed migration: %w", err)

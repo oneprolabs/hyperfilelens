@@ -137,3 +137,12 @@ func TestApplyManagedKopiaCachePolicySkipsUnchangedConfig(t *testing.T) {
 		t.Fatalf("unchanged cache policy invoked Kopia: %v", err)
 	}
 }
+
+func TestDemandDrivenCacheIgnoresLegacyTaskLimit(t *testing.T) {
+	for _, size := range []any{0, 1024, "obsolete"} {
+		policy, err := kopiaCachePolicyFromPayload(Payload{Extra: map[string]any{"_cache_demand_driven": true, "kopia_cache_size_mb": size}})
+		if err != nil || !policy.Enabled || !policy.DemandDriven || !slices.Equal(policy.flags(), []string{"--cache-demand-driven"}) {
+			t.Fatalf("legacy task restored a limit: %+v %v", policy, err)
+		}
+	}
+}

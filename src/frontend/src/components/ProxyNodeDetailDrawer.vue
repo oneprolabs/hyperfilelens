@@ -97,13 +97,15 @@ function cancelDrawerChanges() {
 }
 
 async function saveDrawerChanges() {
-  if (!hasDrawerChanges.value || !node.value) return
+  if (saving.value || !hasDrawerChanges.value || !node.value) return
+  if (drawerTab.value === 'performance' && perfPanelRef.value?.saveBlocked) return
   saving.value = true
   let didSave = false
   try {
     if (drawerTab.value === 'performance' && perfPanelRef.value?.hasPerfChanges) {
       try {
-        const updated = await perfPanelRef.value.savePerfSettings(node.value)
+        const save = perfPanelRef.value.saveAllSettings || perfPanelRef.value.savePerfSettings
+        const updated = await save(node.value)
         if (updated) {
           node.value = updated
           didSave = true
@@ -175,9 +177,9 @@ function startPolling() {
 }
 
 watch(
-  () => [open.value, node.value?.availability] as const,
-  ([isOpen, availability]) => {
-    if (isOpen && availability === 'online') {
+  () => [open.value, node.value?.availability, drawerTab.value] as const,
+  ([isOpen, availability, tab]) => {
+    if (isOpen && availability === 'online' && tab !== 'performance') {
       startPolling()
     } else {
       stopPolling()
@@ -313,7 +315,8 @@ onUnmounted(() => {
     >
       <HflDetailDrawerFooter
         :saving="saving"
-        :save-disabled="!hasDrawerChanges"
+        :save-disabled="!hasDrawerChanges || (drawerTab === 'performance' && Boolean(perfPanelRef?.saveBlocked))"
+        :save-label="saving ? t('nodesDetail.perfSaving') : undefined"
         @cancel="cancelDrawerChanges"
         @save="saveDrawerChanges"
       />

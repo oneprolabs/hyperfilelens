@@ -33,6 +33,10 @@ from apps.node.services.interface import (
     record_task_progress,
 )
 from apps.node.services.internal.node_registry import record_node_available
+from apps.node.services.internal.cache_management import (
+    CAPABILITY as CACHE_MANAGEMENT_CAPABILITY,
+    GIB_POLICY_CAPABILITY,
+)
 from apps.node.ws.wire import ParsedUplink, WireType
 from apps.source.services.internal.agent_host_sync import sync_agent_source_host_by_id
 
@@ -346,6 +350,20 @@ def _merge_heartbeat_inventory_updates(
                 for value in raw_capabilities
                 if str(value or "").strip()
             ]
+            # Older GiB-capable builds advertised this immutable parser
+            # capability only on the full inventory, not ordinary heartbeats.
+            # Preserve positive evidence within the SAME process session;
+            # reconnects/downgrades must supply their own evidence.
+            previous_inventory = metadata.get("inventory")
+            previous_capabilities = previous_inventory.get("capabilities", []) if isinstance(previous_inventory, dict) else []
+            if (
+                previous_session_id == session_id
+                and capability_session_id == session_id
+                and isinstance(previous_capabilities, (list, tuple, set, frozenset))
+                and GIB_POLICY_CAPABILITY in previous_capabilities
+                and GIB_POLICY_CAPABILITY not in inv_only["capabilities"]
+            ):
+                inv_only["capabilities"].append(GIB_POLICY_CAPABILITY)
             metadata["inventory_capabilities_session_id"] = session_id
         elif (
             previous_session_id != session_id
@@ -354,6 +372,17 @@ def _merge_heartbeat_inventory_updates(
             inv_only["capabilities"] = []
             metadata["inventory_capabilities_session_id"] = ""
         metadata["inventory_session_id"] = session_id
+    # Once demand-driven cache mode is applied, a partial heartbeat must not
+    # erase the capability and make the UI fall back to legacy settings.
+    stored_inventory = metadata.get("inventory")
+    stored_inventory = stored_inventory if isinstance(stored_inventory, dict) else {}
+    stored_cache_status = metadata.get("cache_status") or stored_inventory.get("cache_status")
+    if isinstance(stored_cache_status, dict) and stored_cache_status.get("mode") == "demand_driven":
+        capabilities = inv_only.get("capabilities", stored_inventory.get("capabilities", []))
+        if isinstance(capabilities, (list, tuple, set, frozenset)):
+            normalized = [str(value).strip() for value in capabilities if str(value or "").strip()]
+            if CACHE_MANAGEMENT_CAPABILITY not in normalized:
+                inv_only["capabilities"] = [*normalized, CACHE_MANAGEMENT_CAPABILITY]
     if ver := str(inventory.get("agent_version") or "").strip():
         updates["version"] = ver
     if (
@@ -427,6 +456,18 @@ def _persist_heartbeat_snapshot(
                 and isinstance(stored_inventory, dict)
                 and isinstance(stored_inventory.get("capabilities"), (list, tuple, set, frozenset))
             ):
+                # A full inventory can arrive after a newer ordinary heartbeat
+                # that omitted immutable cache flags. Recover only positive
+                # cache evidence from this same session, never stale metrics,
+                # paths, versions or another session's capabilities.
+                if metadata.get("inventory_session_id") == session_id:
+                    capabilities = list(stored_inventory["capabilities"])
+                    advertised = {str(value).strip() for value in inventory["capabilities"] if str(value or "").strip()}
+                    recovered = [value for value in (CACHE_MANAGEMENT_CAPABILITY, GIB_POLICY_CAPABILITY) if value in advertised and value not in capabilities]
+                    if recovered:
+                        metadata["inventory"] = {**stored_inventory, "capabilities": [*capabilities, *recovered]}
+                        Node.objects.filter(pk=node_id).update(metadata=metadata)
+                        return node, True
                 return node, False
             capabilities = [
                 str(value).strip()
