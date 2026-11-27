@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import TopNav from './TopNav.vue'
+import ImpersonationBanner from '../../components/ImpersonationBanner.vue'
+import { isImpersonating } from '../../lib/impersonation'
 import { RouterView, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { LANG_STORAGE_KEY } from '../../i18n'
@@ -19,6 +21,7 @@ import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
 const { locale, t } = useI18n()
 const route = useRoute()
 const { theme } = useTheme()
+const impersonationBannerHeight = ref(isImpersonating() ? 44 : 0)
 const supportOrgKey = ref<string | null>(null)
 const installationContext = computed(() => {
   const profile = currentUser.value?.access_profile
@@ -95,7 +98,7 @@ function toggleFallbackSidebar() {
 async function refreshHeaderProfile() {
   const profile = await fetchDeployProfile(true)
   supportOrgKey.value = profile?.support_org_key ?? null
-  showOrganizationSwitcher.value = profile?.edition === 'enterprise' && profile.site_role === 'tenant'
+  showOrganizationSwitcher.value = !isImpersonating() && profile?.edition === 'enterprise' && profile.site_role === 'tenant'
   adminConsoleUrl.value = profile?.admin_console_entry_visible
     ? profile.admin_console_url
     : ''
@@ -464,8 +467,9 @@ function applyThemeVars(t: string) {
   <div
     class="min-h-screen"
     :data-theme-version="themeVersion"
-    :style="{ backgroundColor: 'var(--content-bg)', '--topnav-height': 'var(--app-header-height)' }"
+    :style="{ backgroundColor: 'var(--content-bg)', '--hfl-original-header-height': 'var(--app-header-height)', '--impersonation-banner-height': `${impersonationBannerHeight}px`, '--topnav-height': 'calc(var(--app-header-height) + var(--impersonation-banner-height))' }"
   >
+    <div class="hfl-shell-header">
     <TopNav
       :mobile-menu-open="mobileNavigationOpen"
       :admin-console-href="adminConsoleHref"
@@ -473,6 +477,8 @@ function applyThemeVars(t: string) {
       :show-organization-switcher="showOrganizationSwitcher"
       @toggle-mobile-menu="mobileNavigationOpen = !mobileNavigationOpen"
     />
+    <ImpersonationBanner v-if="isImpersonating()" @height="impersonationBannerHeight = $event" />
+    </div>
     <MobileNavigationDrawer
       v-model="mobileNavigationOpen"
       :title="t('nav.navigation')"
@@ -495,7 +501,7 @@ function applyThemeVars(t: string) {
     >
       {{ t('common.installationContextBanner', { org: installationContext }) }}
     </div>
-    <main class="content-wrapper">
+    <main class="content-wrapper" :style="{ '--app-header-height': 'calc(var(--hfl-original-header-height) + var(--impersonation-banner-height))' }">
       <RouterView v-slot="{ Component, route: matchedRoute }">
         <Suspense
           :key="
@@ -885,6 +891,8 @@ function applyThemeVars(t: string) {
 </template>
 
 <style scoped>
+.hfl-shell-header { position: sticky; top: 0; z-index: 100; }
+
 .support-banner {
   background: rgba(245, 158, 11, 0.15);
   border-bottom: 1px solid rgba(245, 158, 11, 0.35);

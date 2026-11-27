@@ -16,6 +16,10 @@ class AdminJWTSessionMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        from common.impersonation import selector
+
+        if selector(request):
+            return self.get_response(request)
         if (
             request.path.startswith("/admin/")
             and resolve_site_role(request) == "ops"

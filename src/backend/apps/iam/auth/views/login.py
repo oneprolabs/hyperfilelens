@@ -77,51 +77,11 @@ def _clear_failed_attempts(user_id: int) -> None:
     cache.delete(_get_lockout_cache_key(user_id))
 
 
-def _get_cookie_settings() -> dict:
-    return getattr(settings, "COOKIE_AUTH", {})
-
-
 def _set_token_cookies(response: Response, access_token: str, refresh_token: str, family_id: str) -> Response:
-    """Set access and refresh tokens as HttpOnly cookies."""
-    cookie_settings = _get_cookie_settings()
+    """Set the shared authentication and revocation cookies."""
+    from apps.iam.auth.token_cookies import set_auth_cookies
 
-    access_token_cookie_name = cookie_settings.get("ACCESS_TOKEN_COOKIE_NAME", "access_token")
-    refresh_token_cookie_name = cookie_settings.get("REFRESH_TOKEN_COOKIE_NAME", "refresh_token")
-
-    # Access token cookie
-    response.set_cookie(
-        access_token_cookie_name,
-        access_token,
-        max_age=settings.SIMPLE_JWT.get("ACCESS_TOKEN_LIFETIME", 3600),
-        httponly=cookie_settings.get("ACCESS_TOKEN_COOKIE_HTTPONLY", True),
-        secure=cookie_settings.get("ACCESS_TOKEN_COOKIE_SECURE", True),
-        samesite=cookie_settings.get("ACCESS_TOKEN_COOKIE_SAMESITE", "Lax"),
-        path=cookie_settings.get("ACCESS_TOKEN_COOKIE_PATH", "/"),
-    )
-
-    # Refresh token cookie
-    response.set_cookie(
-        refresh_token_cookie_name,
-        refresh_token,
-        max_age=settings.SIMPLE_JWT.get("REFRESH_TOKEN_LIFETIME", 86400),
-        httponly=cookie_settings.get("REFRESH_TOKEN_COOKIE_HTTPONLY", True),
-        secure=cookie_settings.get("REFRESH_TOKEN_COOKIE_SECURE", True),
-        samesite=cookie_settings.get("REFRESH_TOKEN_COOKIE_SAMESITE", "Lax"),
-        path=cookie_settings.get("REFRESH_TOKEN_COOKIE_PATH", "/api/v1/auth/token/refresh"),
-    )
-
-    # Store family_id in a separate cookie (not HttpOnly, so JS can read if needed)
-    response.set_cookie(
-        "token_family",
-        family_id,
-        max_age=settings.SIMPLE_JWT.get("REFRESH_TOKEN_LIFETIME", 86400),
-        httponly=False,  # Readable by JS for debugging
-        secure=cookie_settings.get("REFRESH_TOKEN_COOKIE_SECURE", True),
-        samesite=cookie_settings.get("REFRESH_TOKEN_COOKIE_SAMESITE", "Lax"),
-        path="/",
-    )
-
-    return response
+    return set_auth_cookies(response, access_token, refresh_token, family_id)
 
 
 def _complete_token_login(
@@ -139,6 +99,7 @@ def _complete_token_login(
     family_id = generate_token_family_id()
     refresh = RefreshToken.for_user(user)
     refresh["family_id"] = family_id
+    refresh["auth_time"] = refresh["iat"]
 
     blacklist_all_user_tokens(user.id, "new_login")
     token_version = store_refresh_token_family(
@@ -159,15 +120,10 @@ def _complete_token_login(
 
 
 def _clear_token_cookies(response: Response) -> Response:
-    """Clear all token cookies."""
-    cookie_settings = _get_cookie_settings()
-    access_token_cookie_name = cookie_settings.get("ACCESS_TOKEN_COOKIE_NAME", "access_token")
-    refresh_token_cookie_name = cookie_settings.get("REFRESH_TOKEN_COOKIE_NAME", "refresh_token")
+    """Clear all authentication and revocation cookies."""
+    from apps.iam.auth.token_cookies import clear_auth_cookies
 
-    response.delete_cookie(access_token_cookie_name, path="/")
-    response.delete_cookie(refresh_token_cookie_name, path="/api/v1/auth/token/refresh")
-    response.delete_cookie("token_family", path="/")
-    return response
+    return clear_auth_cookies(response)
 
 
 def _build_error_response(code: str, message: str, fields: dict = None, http_status: int = status.HTTP_400_BAD_REQUEST, request=None) -> Response:
@@ -577,7 +533,6 @@ class TokenRefreshView(APIView):
     )
     def post(self, request):
         from django.conf import settings as django_settings
-        from datetime import timedelta
         from rest_framework_simplejwt.exceptions import TokenError
         from apps.iam.services.token_service import (
             TokenError as TokenErrorCode,
@@ -683,6 +638,7 @@ class TokenRefreshView(APIView):
                 # Rotate refresh token and generate a matching access token.
                 rotated_refresh = RefreshToken.for_user(user)
                 rotated_refresh["family_id"] = family_id
+                rotated_refresh["auth_time"] = refresh.get("auth_time", 0)
                 rotated_refresh["token_version"] = token_version
                 access = rotated_refresh.access_token
                 extend_refresh_token_family(user_id, family_id, token_version)
@@ -725,36 +681,7 @@ class TokenRefreshView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-            # Update access token cookie
-            access_cookie_name = cookie_settings.get("ACCESS_TOKEN_COOKIE_NAME", "access_token")
-            response.set_cookie(
-                access_cookie_name,
-                str(access),
-                max_age=int(django_settings.SIMPLE_JWT.get("ACCESS_TOKEN_LIFETIME", timedelta(hours=1)).total_seconds()),
-                httponly=cookie_settings.get("ACCESS_TOKEN_COOKIE_HTTPONLY", True),
-                secure=cookie_settings.get("ACCESS_TOKEN_COOKIE_SECURE", True),
-                samesite=cookie_settings.get("ACCESS_TOKEN_COOKIE_SAMESITE", "Lax"),
-                path="/",
-            )
-            refresh_cookie_name = cookie_settings.get("REFRESH_TOKEN_COOKIE_NAME", "refresh_token")
-            response.set_cookie(
-                refresh_cookie_name,
-                str(rotated_refresh),
-                max_age=int(django_settings.SIMPLE_JWT.get("REFRESH_TOKEN_LIFETIME", timedelta(hours=24)).total_seconds()),
-                httponly=cookie_settings.get("REFRESH_TOKEN_COOKIE_HTTPONLY", True),
-                secure=cookie_settings.get("REFRESH_TOKEN_COOKIE_SECURE", True),
-                samesite=cookie_settings.get("REFRESH_TOKEN_COOKIE_SAMESITE", "Lax"),
-                path=cookie_settings.get("REFRESH_TOKEN_COOKIE_PATH", "/api/v1/auth/token/refresh"),
-            )
-            response.set_cookie(
-                "token_family",
-                family_id,
-                max_age=int(django_settings.SIMPLE_JWT.get("REFRESH_TOKEN_LIFETIME", timedelta(hours=24)).total_seconds()),
-                httponly=False,
-                secure=cookie_settings.get("REFRESH_TOKEN_COOKIE_SECURE", True),
-                samesite=cookie_settings.get("REFRESH_TOKEN_COOKIE_SAMESITE", "Lax"),
-                path="/",
-            )
+            _set_token_cookies(response, str(access), str(rotated_refresh), family_id)
 
             return response
 
@@ -786,43 +713,21 @@ class LogoutView(AnonymousPublicViewMixin, APIView):
         responses={200: OpenApiTypes.OBJECT},
     )
     def post(self, request):
-        from apps.iam.services.token_service import blacklist_all_user_tokens
+        from apps.iam.services.logout import revoke_logout_tokens
+        from apps.iam.auth.token_cookies import LOGOUT_COOKIE_NAME
+        from common.impersonation import end_actor_sessions
 
         cookie_settings = getattr(settings, "COOKIE_AUTH", {})
         access_cookie_name = cookie_settings.get("ACCESS_TOKEN_COOKIE_NAME", "access_token")
         refresh_cookie_name = cookie_settings.get("REFRESH_TOKEN_COOKIE_NAME", "refresh_token")
 
-        access_token_str = request.COOKIES.get(access_cookie_name)
-        refresh_token_str = request.COOKIES.get(refresh_cookie_name)
-
-        # Blacklist access token if present
-        if access_token_str:
-            try:
-                from rest_framework_simplejwt.tokens import AccessToken
-                access = AccessToken(access_token_str)
-                jti = access.get("jti")
-                exp = access.get("exp")
-                if jti:
-                    from apps.iam.services.token_service import blacklist_token
-                    from datetime import datetime
-                    from django.utils import timezone as tz
-                    expires_at = datetime.fromtimestamp(exp, tz=tz.utc)
-                    blacklist_token(jti, expires_at)
-            except Exception:
-                pass
-
-        # Blacklist all user refresh tokens (logout from all devices option)
-        # For single device logout, we'd need to track the specific refresh token
-        # For now, we blacklist all if we can identify the user
-        if refresh_token_str:
-            try:
-                from rest_framework_simplejwt.tokens import RefreshToken
-                refresh = RefreshToken(refresh_token_str)
-                user_id = refresh.get("user_id")
-                if user_id:
-                    blacklist_all_user_tokens(user_id, "user_logout")
-            except Exception:
-                pass
+        revoked_user_id = revoke_logout_tokens(
+            request.COOKIES.get(access_cookie_name, ""),
+            request.COOKIES.get(refresh_cookie_name, ""),
+            request.COOKIES.get(LOGOUT_COOKIE_NAME, ""),
+        )
+        if revoked_user_id is not None:
+            end_actor_sessions(revoked_user_id, request)
 
         # Clear session
         request.session.flush()

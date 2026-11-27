@@ -90,6 +90,45 @@ afterEach(() => {
 const eventAt = (seq: number): TaskEventRow => ({ id: seq, seq, step_id: 1, level: 'INFO', message: `Event ${seq}` })
 
 describe('TaskDetailDrawer event pagination', () => {
+  it('shows each operation actor without replacing the original task initiator', async () => {
+    vi.mocked(getTask).mockResolvedValue({
+      ...task,
+      initiator_context: { impersonation: {
+        actor_email: 'original-support@example.test', subject_email: 'customer@example.test',
+      } },
+    })
+    vi.mocked(listTaskEvents).mockResolvedValue({ count: 2, results: [
+      {
+        ...eventAt(1),
+        message: 'Task queued for retry',
+        metadata: { impersonation: {
+          actor_email: 'retry-support@example.test', subject_email: 'customer@example.test',
+        } },
+      },
+      {
+        ...eventAt(2),
+        step_id: null,
+        message: 'Task cancelled',
+        metadata: { impersonation: {
+          actor_email: 'cancel-support@example.test', subject_email: 'customer@example.test',
+        } },
+      },
+    ] })
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    const operations = wrapper.findAll('.hfl-task-drawer__event-row .impersonation-attribution')
+    expect(operations).toHaveLength(2)
+    expect(operations[0].text()).toContain('Performed By: retry-support@example.test')
+    expect(operations[1].text()).toContain('Performed By: cancel-support@example.test')
+    for (const operation of operations) {
+      expect(operation.text()).toContain('Acted As: customer@example.test')
+      expect(operation.text()).not.toContain('original-support@example.test')
+    }
+    expect(wrapper.find('.hfl-task-drawer__hero').text()).toContain('original-support@example.test')
+    wrapper.unmount()
+  })
+
   it('keeps the first 300 events and retries a failed next page at the same cursor', async () => {
     vi.mocked(listTaskEvents)
       .mockResolvedValueOnce({ count: 301, results: Array.from({ length: 300 }, (_, index) => eventAt(index + 1)) })

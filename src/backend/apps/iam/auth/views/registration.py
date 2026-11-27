@@ -119,13 +119,9 @@ def _save_password_and_revoke(user, password):
 
 
 def _clear_password_auth(request, response):
-    cookie_settings = getattr(settings, "COOKIE_AUTH", {})
-    response.delete_cookie(cookie_settings.get("ACCESS_TOKEN_COOKIE_NAME", "access_token"), path="/")
-    response.delete_cookie(
-        cookie_settings.get("REFRESH_TOKEN_COOKIE_NAME", "refresh_token"),
-        path="/api/v1/auth/token/refresh",
-    )
-    response.delete_cookie("token_family", path="/")
+    from apps.iam.auth.token_cookies import clear_auth_cookies
+
+    clear_auth_cookies(response)
     django_logout(request)
     request.session.flush()
     response.delete_cookie(settings.SESSION_COOKIE_NAME, path="/")

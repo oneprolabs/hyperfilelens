@@ -33,6 +33,7 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         required=False,
         source="profile.language",
     )
+    impersonation = serializers.SerializerMethodField()
     timezone = serializers.SerializerMethodField()
     access_profile = serializers.SerializerMethodField()
     registered_at = serializers.SerializerMethodField()
@@ -45,6 +46,7 @@ class UserDetailsSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id",
+            "impersonation",
             "username",
             "email",
             "first_name",
@@ -60,6 +62,11 @@ class UserDetailsSerializer(serializers.ModelSerializer):
             "requires_password_change",
         ]
         read_only_fields = ["is_staff"]
+
+    def get_impersonation(self, obj):
+        from common.impersonation import session_payload
+
+        return session_payload(self.context.get("request"))
 
     @staticmethod
     def get_requires_password_change(obj):

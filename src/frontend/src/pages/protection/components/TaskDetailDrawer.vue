@@ -40,6 +40,7 @@ import { useRepositoryTaskCancellation } from '../../../composables/useRepositor
 import ProtectionStopConfirmDialog from '../../../components/ProtectionStopConfirmDialog.vue'
 import RepositoryMaintenanceSummary from '../../../components/RepositoryMaintenanceSummary.vue'
 import OrphanSnapshotResult from '../../../components/OrphanSnapshotResult.vue'
+import ImpersonationAttribution from '../../../components/ImpersonationAttribution.vue'
 import { getSourceResource } from '../../../lib/sourceApi'
 import {
   cancelStorageRepositoryTask,
@@ -1232,6 +1233,13 @@ watch(
       v-loading="detailRefreshing"
       class="hfl-task-drawer__body"
     >
+      <section v-if="activeTask?.initiator_context?.impersonation" class="hfl-task-drawer__hero">
+        <div class="hfl-task-drawer__hero-section-title">{{ t('impersonation.session') }}</div>
+        <div class="hfl-detail-grid">
+          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('impersonation.performedBy') }}</span><span class="hfl-detail-row__value">{{ activeTask.initiator_context.impersonation.actor_email }}</span></div>
+          <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('impersonation.actedAs') }}</span><span class="hfl-detail-row__value">{{ activeTask.initiator_context.impersonation.subject_email }}</span></div>
+        </div>
+      </section>
       <section class="hfl-task-drawer__hero">
         <div class="hfl-task-drawer__hero-section-title">
           {{ t('ops.task.basicData') }}
@@ -1561,6 +1569,7 @@ watch(
                           class="hfl-task-drawer__event-msg"
                           :class="eventMessageClass(event)"
                         >{{ eventDisplayMessage(event) }}</span>
+                        <ImpersonationAttribution :metadata="taskEventMetadata(event)" />
                         <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
                         <OrphanSnapshotResult :metadata="taskEventMetadata(event)" />
                         <span
@@ -1653,6 +1662,7 @@ watch(
                       class="hfl-task-drawer__event-msg"
                       :class="eventMessageClass(event)"
                     >{{ eventDisplayMessage(event) }}</span>
+                    <ImpersonationAttribution :metadata="taskEventMetadata(event)" />
                     <RepositoryMaintenanceSummary :metadata="taskEventMetadata(event)" />
                     <OrphanSnapshotResult :metadata="taskEventMetadata(event)" />
                     <div v-if="eventErrorText(event)" class="hfl-task-drawer__event-failure-panel">

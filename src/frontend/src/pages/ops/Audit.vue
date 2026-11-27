@@ -66,6 +66,10 @@ const advancedFilterDraft = reactive({
 
 const openDetail = ref(false)
 const detailLog = ref<AuditLogRow | null>(null)
+const impersonationDetails = computed(() => {
+  const value = detailLog.value?.metadata?.impersonation
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null
+})
 
 const actionOptions = [
   'create',
@@ -828,6 +832,13 @@ watch(
         class="hfl-detail-drawer__body"
       >
         <div class="hfl-detail-sections">
+          <section v-if="impersonationDetails" class="hfl-detail-section">
+            <h4 class="hfl-detail-section__title">{{ t('impersonation.session') }}</h4>
+            <div class="hfl-detail-grid">
+              <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('impersonation.performedBy') }}</span><span class="hfl-detail-row__value">{{ impersonationDetails.actor_email || impersonationDetails.actor_id }}</span></div>
+              <div class="hfl-detail-row"><span class="hfl-detail-row__label">{{ t('impersonation.actedAs') }}</span><span class="hfl-detail-row__value">{{ impersonationDetails.subject_email || impersonationDetails.subject_id }}</span></div>
+            </div>
+          </section>
           <section class="hfl-detail-section">
             <h4 class="hfl-detail-section__title">
               {{ t('ops.audit.detailSectionBasic') }}

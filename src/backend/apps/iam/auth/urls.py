@@ -1,3 +1,4 @@
+from apps.iam.auth.views.impersonation import ImpersonationControlView
 from django.urls import path
 from rest_framework.permissions import AllowAny
 
@@ -29,6 +30,8 @@ class CustomLoginView(LoginView):
 
 
 urlpatterns = [
+    path("api/v1/impersonation/exchange", ImpersonationControlView.as_view(operation="exchange")),
+    path("api/v1/impersonation/session", ImpersonationControlView.as_view()),
     path("api/v1/auth/turnstile/config", TurnstileConfigView.as_view(), name="turnstile_config"),
     path("api/v1/auth/google/config", GoogleOAuthConfigView.as_view(), name="google_oauth_config"),
     path(

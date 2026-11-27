@@ -95,6 +95,7 @@ export type TaskRow = {
   execution_history_next_cursor?: number | null
   trigger_type: string
   group_uuid?: string | null
+  initiator_context?: { impersonation?: { actor_email?: string; subject_email?: string; session_id?: string } }
   request_payload?: unknown
   result_payload?: unknown
   transfer_progress?: TransferProgress | null
@@ -129,6 +130,7 @@ export type TaskCreatePayload = {
   task_type: string
   display_name: string
   trigger_type?: string
+  initiator_context?: { impersonation?: { actor_email?: string; subject_email?: string; session_id?: string } }
   request_payload?: unknown
   resources?: TaskResourceRow[]
   steps?: Array<{ step_name: string; status?: string; progress?: number }>

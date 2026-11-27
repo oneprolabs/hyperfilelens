@@ -75,6 +75,7 @@ class Task(models.Model):
         default=TriggerType.MANUAL,
         db_index=True,
     )
+    initiator_context = models.JSONField(default=dict, blank=True)
     request_payload = models.JSONField(blank=True, null=True)
     group_uuid = models.UUIDField(blank=True, null=True, db_index=True)
     idempotency_key = models.CharField(max_length=128, blank=True, null=True)

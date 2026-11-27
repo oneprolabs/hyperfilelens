@@ -20,6 +20,9 @@ class RequestIdMiddleware:
     def __call__(self, request: HttpRequest) -> HttpResponse:
         rid = get_request_id(request)
         request.request_id = rid
+        from common.impersonation import attribution
+
+        token_impersonation = attribution.set(None)
         token_rid = request_id_var.set(rid)
         token_org = None
         token_user = None
@@ -35,8 +38,16 @@ class RequestIdMiddleware:
                 user_id = str(getattr(user, "id", "") or "")
             token_user = user_id_var.set(user_id)
 
-            response = self.get_response(request)
+            from common.impersonation import prepare_request
+
+            response = prepare_request(request)
+            if response is None:
+                response = self.get_response(request)
+            from common.impersonation import guard_stream
+
+            guard_stream(response, request)
         finally:
+            attribution.reset(token_impersonation)
             with suppress(ValueError):
                 request_id_var.reset(token_rid)
             if token_org is not None:
@@ -46,6 +57,10 @@ class RequestIdMiddleware:
                 with suppress(ValueError):
                     user_id_var.reset(token_user)
 
+        if getattr(request, "hfl_impersonation_ended", False):
+            response["X-HFL-Impersonation-Ended"] = "true"
+        if getattr(request, "hfl_impersonation", None):
+            response["Cache-Control"] = "no-store"
         with suppress(Exception):
             response["X-Request-Id"] = rid
         return response

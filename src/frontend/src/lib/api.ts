@@ -1,3 +1,4 @@
+import { isImpersonating } from './impersonation'
 import { clearAuth } from '../composables/useAuth'
 import {
   isAbortError as errorsIsAbortError,
@@ -319,6 +320,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     })
     // Handle 401 - attempt token refresh
     if (res.status === 401) {
+      if (isImpersonating()) throw buildApiError(res, data)
       const errorCode = extractErrorCode(data)
       const headers = (init?.headers ?? {}) as Record<string, string>
 

@@ -35,6 +35,7 @@ vi.mock('./useDeployProfile', () => ({
 
 import { confirmCurrentSession, currentUser, fetchCurrentUser } from './useAuth'
 import { readLoginOrganizationPreference, rememberLoginOrganization } from '../lib/loginOrganizationPreference'
+import { impersonationContext, saveImpersonation } from '../lib/impersonation'
 import { freezeOrganizationContext, releaseOrganizationContext } from '../lib/organizationStorage'
 
 function jsonResponse(body: unknown, status = 200) {
@@ -48,6 +49,7 @@ describe('confirmCurrentSession', () => {
   beforeEach(() => {
     mocks.refreshAuthToken.mockReset()
     currentUser.value = null
+    impersonationContext.value = null
     localStorage.clear()
     sessionStorage.clear()
     releaseOrganizationContext()
@@ -56,6 +58,7 @@ describe('confirmCurrentSession', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     currentUser.value = null
+    impersonationContext.value = null
     releaseOrganizationContext()
     localStorage.clear()
     sessionStorage.clear()
@@ -161,4 +164,38 @@ describe('confirmCurrentSession', () => {
     await fetchCurrentUser()
     expect(readLoginOrganizationPreference(7)).toBe('personal')
   })
+})
+
+
+it('restores only a server-confirmed impersonation without changing browser organization defaults', async () => {
+  const id = '9ad09efb-cf40-4d00-8343-56a60eeeb329'
+  localStorage.setItem('hfl_org_key', 'admin-org')
+  saveImpersonation({ id })
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ user: {
+    id: 20, impersonation: { id, user_id: 20, org_key: 'customer-org', user_email: 'customer@example.test' },
+    access_profile: { org_key: 'customer-org' },
+  } })))
+  try {
+    expect((await fetchCurrentUser())?.id).toBe(20)
+    expect(impersonationContext.value?.org_key).toBe('customer-org')
+    expect(localStorage.getItem('hfl_org_key')).toBe('admin-org')
+    expect(readLoginOrganizationPreference(20)).toBe('')
+  } finally {
+    impersonationContext.value = null; currentUser.value = null; localStorage.clear(); sessionStorage.clear(); vi.unstubAllGlobals()
+  }
+})
+
+it('never installs an actor profile into an impersonation document after confirmation fails', async () => {
+  saveImpersonation({ id: '9ad09efb-cf40-4d00-8343-56a60eeeb329' })
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ user: {
+    id: 10, is_staff: true, access_profile: { org_key: 'admin-org' },
+  } })))
+  currentUser.value = null
+  try {
+    expect(await fetchCurrentUser()).toBeNull()
+    expect(currentUser.value).toBeNull()
+    expect(impersonationContext.value?.ended).toBe(true)
+  } finally {
+    impersonationContext.value = null; currentUser.value = null; sessionStorage.clear(); vi.unstubAllGlobals()
+  }
 })

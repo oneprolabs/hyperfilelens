@@ -8894,7 +8894,8 @@
         "platform_platform_runtime_environment_view": "Ver entorno de ejecución",
         "platform_platform_runtime_environment_manage": "Administrar entorno de ejecución",
         "platform_platform_release_packages_view": "Ver paquetes de versión",
-        "platform_platform_release_packages_manage": "Administrar paquetes de versión"
+        "platform_platform_release_packages_manage": "Administrar paquetes de versión",
+        "platform_governance_users_impersonate": "Suplantar usuarios"
       },
       "permissionSearchPlaceholder": "Buscar permisos",
       "noPermissionsConfigured": "No hay permisos configurados.",
@@ -10953,5 +10954,36 @@
     "relocationProgressHelp": "Se está cambiando el directorio de caché de forma segura. Espere a que finalice la operación.",
     "relocationSource": "Directorio de caché original",
     "destinationValidationFailed": "Error al validar el directorio de destino"
+  },
+  "impersonation": {
+    "action": "Suplantar",
+    "title": "Suplantar usuario",
+    "user": "Usuario",
+    "organization": "Organización",
+    "reason": "Motivo",
+    "reasonPlaceholder": "Describe por qué necesitas acceder a la cuenta de este usuario.",
+    "selectOrganization": "Selecciona una organización",
+    "currentPassword": "Contraseña actual",
+    "verificationHint": "Verifica tu identidad con tu contraseña actual o vuelve a iniciar sesión.",
+    "confirmDescription": "Actuarás con los permisos de este usuario. Tus acciones quedarán registradas.",
+    "startSession": "Iniciar sesión de suplantación",
+    "endSession": "Finalizar sesión",
+    "actingAs": "Actuando como {user} · {organization}",
+    "expiresAt": "Caduca a las {time}",
+    "activeSession": "Ya estás actuando como {user}. Finaliza esa sesión antes de iniciar otra.",
+    "noMembership": "Este usuario no pertenece a ninguna organización activa.",
+    "loadFailed": "No se pudieron cargar las opciones de suplantación.",
+    "startFailed": "No se pudo iniciar la sesión de suplantación.",
+    "popupBlocked": "Permite las ventanas emergentes para este sitio e inténtalo de nuevo.",
+    "starting": "Iniciando suplantación",
+    "entryFailed": "No se pudo iniciar la suplantación",
+    "entryFailedDescription": "Vuelve a la consola de administración e inicia la sesión de nuevo.",
+    "endFailed": "No se pudo finalizar la sesión. Inténtalo de nuevo.",
+    "endedTitle": "Sesión de suplantación finalizada",
+    "endedDescription": "Ya no puedes actuar como este usuario. Vuelve a la consola de administración para continuar.",
+    "returnToAdmin": "Volver a la consola de administración",
+    "performedBy": "Realizado por",
+    "actedAs": "Actuando como",
+    "session": "Sesión de suplantación"
   }
 }

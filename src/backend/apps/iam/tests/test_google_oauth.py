@@ -382,3 +382,4 @@ class GoogleOAuthCallbackTests(APITestCase):
         self.assertIn("org_key=oauth-org", response["Location"])
         self.assertIn("access_token", response.cookies)
         self.assertIn("refresh_token", response.cookies)
+        self.assertIn("hfl_logout", response.cookies)

@@ -1,3 +1,4 @@
+import { impersonationContext, isImpersonating, markImpersonationEnded, saveImpersonation, type ImpersonationContext } from '../lib/impersonation'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { router } from '../router'
@@ -30,6 +31,7 @@ import { resolveGovernanceRoutes } from '../governance/resolveRoutes'
 import type { OrganizationPolicyProfile } from '../lib/organizationCapabilities'
 
 export interface User {
+  impersonation?: ImpersonationContext | null
   id: number
   email: string
   username: string
@@ -73,7 +75,7 @@ export function getStoredOrgKey(): string {
 }
 
 export function setStoredOrgKey(orgKey: string): void {
-  if (isOrganizationContextFrozen()) return
+  if (isOrganizationContextFrozen() || isImpersonating()) return
   try {
     if (orgKey) sessionStorage.setItem(ORG_KEY_STORAGE, orgKey)
     else sessionStorage.removeItem(ORG_KEY_STORAGE)
@@ -106,13 +108,22 @@ export function getEffectiveOrgKey(): string {
 type UserLoadOptions = { rememberOrganization?: boolean }
 
 function setUser(userData: User | null, options: UserLoadOptions = {}) {
+  if (isImpersonating() && userData) {
+    const confirmed = userData.impersonation
+    if (!confirmed || confirmed.id !== impersonationContext.value?.id || confirmed.user_id !== userData.id
+      || confirmed.org_key !== userData.access_profile?.org_key) {
+      markImpersonationEnded()
+      throw new Error('Impersonation identity confirmation failed.')
+    }
+    saveImpersonation(confirmed)
+  }
   currentUser.value = userData
   isLoggedIn.value = userData !== null
   setAuthenticatedLocalePreference(userData?.language)
   const orgKey = userData?.access_profile?.org_key?.trim()
   if (orgKey && userData) {
     setStoredOrgKey(orgKey)
-    if (!isOrganizationContextFrozen() && options.rememberOrganization !== false
+    if (!isImpersonating() && !isOrganizationContextFrozen() && options.rememberOrganization !== false
       && userData.access_profile?.authority_source !== 'support_readonly'
       && userData.access_profile?.is_organization_member !== false) {
       rememberLoginOrganization(userData.id, orgKey)
@@ -295,7 +306,13 @@ function hasCompleteAccessProfile(user: User | null): boolean {
 
 // Module-level clearAuth for use by setupAuthGuard
 export function clearAuth() {
-  if (isOrganizationContextFrozen()) return
+  if (isImpersonating()) {
+    markImpersonationEnded()
+    currentUser.value = null
+    isLoggedIn.value = false
+    return
+  }
+  if (isOrganizationContextFrozen() || isImpersonating()) return
   clearLogoutBrowserStorage()
   currentUser.value = null
   isLoggedIn.value = false
@@ -312,7 +329,7 @@ let sessionExpiredHandling = false
 let sessionNoticeSubscriptionStarted = false
 
 function isPublicSessionPath(path: string): boolean {
-  return ['/login', '/register', '/auth/oauth/callback', '/auth/oauth/error'].some(publicPath => path.startsWith(publicPath))
+  return ['/impersonation/', '/login', '/register', '/auth/oauth/callback', '/auth/oauth/error'].some(publicPath => path.startsWith(publicPath))
 }
 
 async function redirectToLoginForSession(
@@ -480,6 +497,15 @@ function authenticatedRouteRedirect(to: { path: string; meta: Record<string, unk
 // Watch for router changes to check auth state
 export function setupAuthGuard() {
   router.beforeEach(async (to, from, next) => {
+    if (to.path.startsWith('/impersonation/')) { next(); return }
+    if (isImpersonating()) {
+      if (impersonationContext.value?.ended) { next('/impersonation/ended'); return }
+      if (to.query.impersonation !== impersonationContext.value?.id) {
+        next({ path: to.path, hash: to.hash, query: { ...to.query, impersonation: impersonationContext.value?.id }, replace: true })
+        return
+      }
+      if (to.path.startsWith('/platform-ops') || to.path.startsWith('/account/setup')) { next('/'); return }
+    }
     const publicPaths = ['/login', '/register', '/auth/oauth/callback', '/auth/oauth/error']
     const isPublicPath = publicPaths.some(path => to.path.startsWith(path))
     const isPlatformOpsPath = to.path.startsWith('/platform-ops')

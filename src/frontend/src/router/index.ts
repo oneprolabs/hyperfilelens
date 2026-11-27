@@ -71,6 +71,8 @@ export const router = createRouter({
   // `window` is unavailable; browsers retain the normal history behavior.
   history: typeof window === 'undefined' ? createMemoryHistory() : createWebHistory(),
   routes: [
+    { path: '/impersonation/entry', component: lazyRoute(() => import('../pages/auth/ImpersonationEntry.vue')) },
+    { path: '/impersonation/ended', component: lazyRoute(() => import('../pages/auth/ImpersonationEnded.vue')) },
     { path: '/account/setup', component: lazyRoute(() => import('../pages/auth/FirstPasswordSetup.vue')) },
     { path: '/login', name: LOGIN_ROUTE_NAME, component: LoginPage, beforeEnter: authTurnstilePrefetch },
     { path: '/register', component: RegisterPage, beforeEnter: authTurnstilePrefetch },

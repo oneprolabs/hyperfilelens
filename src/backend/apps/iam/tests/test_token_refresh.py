@@ -67,6 +67,7 @@ class TokenRefreshTests(TransactionTestCase):
         self.assertEqual(first.status_code, status.HTTP_200_OK, first.content)
         self.assertIn("access_token", first.cookies)
         self.assertIn("refresh_token", first.cookies)
+        self.assertIn("hfl_logout", first.cookies)
         rotated_refresh = first.cookies["refresh_token"].value
         self.assertNotEqual(rotated_refresh, original_refresh)
 

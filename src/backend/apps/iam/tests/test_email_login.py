@@ -47,6 +47,7 @@ class AllowlistedEmailLoginTests(APITestCase):
             # An active account without memberships can authenticate at
             # account level and create its own organization.
             self.assertIn("access_token", response.cookies)
+            self.assertIn("hfl_logout", response.cookies)
             verify.assert_not_called()
 
     def test_allowlisted_login_does_not_bypass_password_or_account_status(self):
