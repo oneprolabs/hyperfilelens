@@ -3,6 +3,7 @@ import { ref, computed, onMounted, useSlots, watch, type Component } from 'vue'
 import { useRoute } from 'vue-router'
 const slots = useSlots()
 import Sidebar from './Sidebar.vue'
+import { useShellSidebar } from '../composables/useShellSidebar'
 
 export interface SideItem {
   to: string
@@ -43,6 +44,7 @@ const props = withDefaults(
 const route = useRoute()
 const mainContentRef = ref<HTMLElement | null>(null)
 const pageBodyRef = ref<HTMLElement | null>(null)
+const sidebarWrapperRef = ref<HTMLElement | null>(null)
 
 const isAdminSettingsShell = computed(
   () => props.adminHub || route.path.startsWith('/settings') || route.path.startsWith('/account'),
@@ -62,6 +64,7 @@ const menuItems = computed<MenuItem[]>(() => {
     to: item.to,
   }))
 })
+useShellSidebar(sidebarWrapperRef, () => menuItems.value.length > 0)
 
 function stripQuery(to: string) {
   return to.split('?')[0] || to
@@ -134,7 +137,10 @@ watch(
     class="module-page"
     :class="{ 'module-page--admin': isAdminSettingsShell }"
   >
-    <div class="sidebar-wrapper">
+    <div
+      ref="sidebarWrapperRef"
+      class="sidebar-wrapper"
+    >
       <Sidebar
         v-if="menuItems.length > 0"
         :collapsed="effectiveCollapsed"

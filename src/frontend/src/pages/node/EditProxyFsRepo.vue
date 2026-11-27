@@ -271,6 +271,7 @@ watch(repositoryId, (id) => {
 
             <ElForm
               label-position="top"
+              require-asterisk-position="right"
               class="add-proxy-fs-form"
             >
               <ElFormItem

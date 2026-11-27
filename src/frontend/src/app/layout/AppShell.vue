@@ -17,11 +17,14 @@ import { useOpsMenus } from '../../composables/useOpsMenus'
 import { useProtectionSideNav } from '../../composables/useProtectionSideNav'
 import MobileNavigationDrawer from '../../components/MobileNavigationDrawer.vue'
 import { useAppPrimaryNav } from '../../composables/useAppPrimaryNav'
+import { provideShellSidebar } from '../../composables/useShellSidebar'
 
 const { locale, t } = useI18n()
 const route = useRoute()
 const { theme } = useTheme()
-const impersonationBannerHeight = ref(isImpersonating() ? 44 : 0)
+const impersonationBannerHeight = ref(isImpersonating() ? 40 : 0)
+const fallbackSidebarElement = ref<HTMLElement | null>(null)
+const impersonationSidebarInset = provideShellSidebar(isImpersonating, fallbackSidebarElement)
 const supportOrgKey = ref<string | null>(null)
 const installationContext = computed(() => {
   const profile = currentUser.value?.access_profile
@@ -466,18 +469,27 @@ function applyThemeVars(t: string) {
 <template>
   <div
     class="min-h-screen"
+    :class="{ 'hfl-shell--impersonating': isImpersonating() }"
     :data-theme-version="themeVersion"
     :style="{ backgroundColor: 'var(--content-bg)', '--hfl-original-header-height': 'var(--app-header-height)', '--impersonation-banner-height': `${impersonationBannerHeight}px`, '--topnav-height': 'calc(var(--app-header-height) + var(--impersonation-banner-height))' }"
   >
-    <div class="hfl-shell-header">
-    <TopNav
-      :mobile-menu-open="mobileNavigationOpen"
-      :admin-console-href="adminConsoleHref"
-      :timezone-offset-display="timezoneOffsetDisplay"
-      :show-organization-switcher="showOrganizationSwitcher"
-      @toggle-mobile-menu="mobileNavigationOpen = !mobileNavigationOpen"
-    />
-    <ImpersonationBanner v-if="isImpersonating()" @height="impersonationBannerHeight = $event" />
+    <div
+      class="hfl-shell-header"
+      :class="{ 'hfl-shell-header--impersonating': isImpersonating() }"
+    >
+      <TopNav
+        :mobile-menu-open="mobileNavigationOpen"
+        :admin-console-href="adminConsoleHref"
+        :timezone-offset-display="timezoneOffsetDisplay"
+        :show-organization-switcher="showOrganizationSwitcher"
+        @toggle-mobile-menu="mobileNavigationOpen = !mobileNavigationOpen"
+      />
+      <ImpersonationBanner
+        v-if="isImpersonating()"
+        :class="{ 'impersonation-banner--content': impersonationSidebarInset > 0 }"
+        :style="{ marginLeft: `${impersonationSidebarInset}px` }"
+        @height="impersonationBannerHeight = $event"
+      />
     </div>
     <MobileNavigationDrawer
       v-model="mobileNavigationOpen"
@@ -501,7 +513,10 @@ function applyThemeVars(t: string) {
     >
       {{ t('common.installationContextBanner', { org: installationContext }) }}
     </div>
-    <main class="content-wrapper" :style="{ '--app-header-height': 'calc(var(--hfl-original-header-height) + var(--impersonation-banner-height))' }">
+    <main
+      class="content-wrapper"
+      :style="{ '--app-header-height': 'calc(var(--hfl-original-header-height) + var(--impersonation-banner-height))' }"
+    >
       <RouterView v-slot="{ Component, route: matchedRoute }">
         <Suspense
           :key="
@@ -528,7 +543,10 @@ function applyThemeVars(t: string) {
               role="status"
               aria-label="Loading"
             >
-              <div class="app-main-route-fallback__side">
+              <div
+                ref="fallbackSidebarElement"
+                class="app-main-route-fallback__side"
+              >
                 <Sidebar
                   v-if="fallbackHasSidebar"
                   :collapsed="fallbackSidebarCollapsed"
@@ -892,6 +910,22 @@ function applyThemeVars(t: string) {
 
 <style scoped>
 .hfl-shell-header { position: sticky; top: 0; z-index: 100; }
+.hfl-shell-header--impersonating {
+  --tnav-shadow: none;
+  /* The transparent space above the sidebar must not block its first links. */
+  pointer-events: none;
+}
+.hfl-shell-header--impersonating :deep(.top-nav),
+.hfl-shell-header--impersonating :deep(.impersonation-banner) { pointer-events: auto; }
+
+@media (min-width: 1024px) {
+  .hfl-shell--impersonating :deep(.module-page > .sidebar-wrapper),
+  .hfl-shell--impersonating .app-main-route-fallback__side {
+    --app-header-height: var(--hfl-original-header-height);
+    --topnav-height: var(--hfl-original-header-height);
+    margin-top: calc(-1 * var(--impersonation-banner-height));
+  }
+}
 
 .support-banner {
   background: rgba(245, 158, 11, 0.15);

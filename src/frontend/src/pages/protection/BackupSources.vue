@@ -3195,6 +3195,7 @@ onUnmounted(() => {
     >
       <ElForm
         label-position="top"
+        require-asterisk-position="right"
         class="source-action-dialog__form"
         @submit.prevent="submitRename"
       >
@@ -3679,11 +3680,6 @@ onUnmounted(() => {
   font-weight: 500;
   line-height: 1.4;
   color: rgb(51 65 85);
-}
-
-.source-action-dialog__form :deep(.el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before) {
-  margin-right: 4px;
-  color: var(--el-color-danger);
 }
 
 .source-action-dialog__form :deep(.el-input),

@@ -702,6 +702,7 @@ onMounted(async () => {
               </h3>
               <ElForm
                 label-position="top"
+                require-asterisk-position="right"
                 class="add-nas-form"
               >
                 <ElFormItem

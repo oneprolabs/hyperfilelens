@@ -1055,6 +1055,7 @@ async function submitRename() {
     >
       <ElForm
         label-position="top"
+        require-asterisk-position="right"
         class="source-action-dialog__form proxy-host-edit-form"
         @submit.prevent="submitRename"
       >

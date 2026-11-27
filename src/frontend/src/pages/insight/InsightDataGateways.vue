@@ -1323,6 +1323,7 @@ onUnmounted(() => {
       </p>
       <ElForm
         label-position="top"
+        require-asterisk-position="right"
         class="hfl-flow-action-dialog__form dg-capacity-dialog__form"
         @submit.prevent="submitCapacity"
       >
