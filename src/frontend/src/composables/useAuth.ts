@@ -465,7 +465,7 @@ function hasRequiredRouteRole(to: { meta: Record<string, unknown> }): boolean {
 function authenticatedRouteRedirect(to: { path: string; meta: Record<string, unknown>; query?: Record<string, unknown> }): string | undefined {
   const has = insightPermissionHints(currentUser.value?.access_profile)
   const insightRedirect = insightRouteRedirect(
-    to.path, has,
+    to.path, has, to.query,
   )
   if (insightRedirect) return insightRedirect
   const protectionRedirect = protectionRouteRedirect(to, has)

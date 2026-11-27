@@ -4469,7 +4469,7 @@
     "actionDelete": "删除",
     "publicIpHint": "(公网)",
     "emptyNodes": "暂无节点",
-    "emptyGateway": "暂无数据网关。点击“添加”进行部署。",
+    "emptyGateway": "暂无数据网关。",
     "emptyProxyNodes": "暂无代理主机，请点击「添加」完成安装",
     "deleteConfirm": "确定要从控制台移除节点「{name}」吗？此操作不可撤销。",
     "deleteTitle": "移除节点",

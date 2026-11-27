@@ -57,4 +57,34 @@ describe('Insights permission hints', () => {
       expect(insightRouteRedirect(path, has)).toBeUndefined()
     }
   })
+
+  it('requires an organization creation grant for private Gateway deployment', () => {
+    const path = '/node/nodes/deploy'
+    const query = { role: 'gateway' }
+    const viewer = insightPermissionHints({
+      permissions: ['insights.private_data_gateways.view'],
+    }, true)
+    expect(insightRouteRedirect(path, viewer, query)).toBe('/insight/gateways')
+    const groupManager = insightPermissionHints({
+      group_permissions: ['insights.private_data_gateways.view', 'insights.private_data_gateways.manage'],
+    }, true)
+    expect(insightRouteRedirect(path, groupManager, query)).toBe('/insight/gateways')
+    const creator = insightPermissionHints({
+      permissions: ['insights.private_data_gateways.manage'],
+    }, true)
+    expect(insightRouteRedirect(path, creator, query)).toBeUndefined()
+    expect(insightRouteRedirect(path, insightPermissionHints(undefined, false), query)).toBeUndefined()
+  })
+
+  it('preserves the selected organization when denying a Gateway deployment link', () => {
+    const has = insightPermissionHints({ permissions: ['insights.chats.view'] }, true)
+    expect(insightRouteRedirect('/NODE/NODES/DEPLOY/', has, { role: 'gateway', org: 'tenant a' }))
+      .toBe('/insight/copilot?org=tenant%20a')
+  })
+
+  it('routes old public Gateway deployment links to the independently authorized platform page', () => {
+    expect(insightRouteRedirect('/node/nodes/deploy', insightPermissionHints(undefined, true), {
+      role: 'gateway', gatewayScope: 'platform',
+    })).toBe('/platform-ops/engine/gateways/add')
+  })
 })

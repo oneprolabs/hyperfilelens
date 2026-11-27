@@ -48,6 +48,8 @@ const props = withDefaults(
     os: EnrollmentOs
     roleLocked?: boolean
     showRolePicker?: boolean
+    /** Optional creation choices for the install-only deployment page. */
+    allowedRoles?: readonly NodeRole[]
     gatewayScope?: 'user' | 'platform'
     initialTab?: NodeLifecycleTab
     /** Hide upgrade/uninstall/service tabs (install-only embed). */
@@ -63,6 +65,7 @@ const props = withDefaults(
     nodeId: null,
     roleLocked: false,
     showRolePicker: false,
+    allowedRoles: () => ['agent', 'proxy', 'gateway'],
     gatewayScope: 'user',
     initialTab: 'install',
     installOnly: false,
@@ -215,7 +218,7 @@ const roleOptions = computed(() => [
   { value: 'agent' as NodeRole, title: t('nodesDeploy.roleAgentTitle'), desc: t('nodesDeploy.roleAgentDesc') },
   { value: 'proxy' as NodeRole, title: t('nodesDeploy.roleProxyTitle'), desc: t('nodesDeploy.roleProxyDesc') },
   { value: 'gateway' as NodeRole, title: t('nodesDeploy.roleGatewayTitle'), desc: t('nodesDeploy.roleGatewayDesc') },
-])
+].filter((option) => props.allowedRoles.includes(option.value)))
 
 const roleLabel = computed(() => {
   if (props.role === 'proxy') return t('nodesPage.roleProxy')
@@ -357,7 +360,7 @@ function selectOs(next: EnrollmentOs) {
 }
 
 function selectRole(next: NodeRole) {
-  if (props.roleLocked) return
+  if (props.roleLocked || !props.allowedRoles.includes(next)) return
   emit('update:role', next)
   if (isLinuxOnlyRole(next) && props.os !== 'linux') {
     emit('update:os', 'linux')

@@ -4469,7 +4469,7 @@
     "actionDelete": "Eliminar",
     "publicIpHint": "(pública)",
     "emptyNodes": "Todavía no hay nodos.",
-    "emptyGateway": "Aún no hay puertas de enlace de datos. Haga clic en Agregar para desplegar una.",
+    "emptyGateway": "Aún no hay puertas de enlace de datos.",
     "emptyProxyNodes": "Aún no hay hosts proxy. Haga clic en Añadir para instalar uno.",
     "deleteConfirm": "Quitar el nodo \"{name}\" de la consola? Esto no se puede deshacer.",
     "deleteTitle": "Quitar Nodo",

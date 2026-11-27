@@ -277,6 +277,9 @@ const singleSelected = computed(() => (selectedRows.value.length === 1 ? selecte
 const resourcePermissions = useResourceCapabilities(computed(() => isPlatformEngine.value ? [] : rows.value
   .filter((row) => row.origin !== 'platform')
   .map((row) => ({ resource_type: 'node' as const, resource_id: row.id }))))
+const canAddGateway = computed(() => isPlatformEngine.value
+  ? canManagePlatformGateways.value
+  : resourcePermissions.canCreate('node:gateway'))
 const batchDisabled = computed(() => selectedRows.value.length === 0 || !selectedRows.value.every((row) =>
   isPlatformEngine.value ? canManagePlatformGateways.value : resourcePermissions.permitted('node', row.id, 'delete'),
 ))
@@ -853,7 +856,7 @@ onUnmounted(() => {
       <div class="hfl-list-toolbar hfl-list-toolbar--mobile-primary-utility">
         <div class="hfl-list-toolbar__primary">
           <RouterLink
-            v-if="!isPlatformEngine || canManagePlatformGateways"
+            v-if="canAddGateway"
             :to="isPlatformEngine ? '/platform-ops/engine/gateways/add' : '/node/nodes/deploy?role=gateway'"
             class="inline-flex"
           >

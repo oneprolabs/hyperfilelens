@@ -27,7 +27,13 @@ function issued(tokenId: number, command: string) {
   }
 }
 
-function mountWizard(overrides: { orgKey?: string; role?: 'agent' | 'gateway'; gatewayScope?: 'user' | 'platform' } = {}) {
+function mountWizard(overrides: {
+  orgKey?: string
+  role?: 'agent' | 'gateway'
+  gatewayScope?: 'user' | 'platform'
+  showRolePicker?: boolean
+  allowedRoles?: ('agent' | 'proxy' | 'gateway')[]
+} = {}) {
   const i18n = createI18n({
     legacy: false,
     locale: 'en',
@@ -48,9 +54,10 @@ function mountWizard(overrides: { orgKey?: string; role?: 'agent' | 'gateway'; g
       stubs: {
         I18nT: false,
         ElAlert: true,
+        ElInput: true,
         ElCheckbox: true,
         ElRadio: true,
-        ElRadioGroup: true,
+        ElRadioGroup: { name: 'ElRadioGroup', template: '<div><slot /></div>' },
       },
       directives: {
         loading: () => undefined,
@@ -64,6 +71,18 @@ describe('Node lifecycle enrollment token ownership', () => {
     vi.clearAllMocks()
     mocks.revokeEnrollmentToken.mockResolvedValue(undefined)
     mocks.revokePlatformGatewayEnrollment.mockResolvedValue(undefined)
+  })
+
+  it('filters install role choices without changing maintenance defaults', async () => {
+    mocks.issueEnrollmentInstall.mockResolvedValue(issued(8, 'install-agent'))
+    const wrapper = mountWizard({ showRolePicker: true, allowedRoles: ['agent'] })
+    await flushPromises()
+    expect(wrapper.findAll('.deploy-role-option')).toHaveLength(1)
+    wrapper.findComponent({ name: 'ElRadioGroup' }).vm.$emit('update:model-value', 'gateway')
+    await flushPromises()
+    expect(wrapper.emitted('update:role')).toBeUndefined()
+    expect(mocks.issueGatewayEnrollmentInstall).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('issues public Gateway enrollment without a tenant organization key', async () => {
