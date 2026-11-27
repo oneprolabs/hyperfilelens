@@ -108,8 +108,8 @@ describe('Dashboard statistics loading', () => {
       : mockOtherEndpoint(path))
     const progress = vi.fn<(overview: DashboardOverview) => void>()
     const pending = loadDashboardOverview((key) => key, progress)
-    await vi.waitFor(() => expect(progress).toHaveBeenCalledOnce())
-    const partial = progress.mock.calls[0]![0]
+    await vi.waitFor(() => expect(progress.mock.lastCall?.[0].sections.storage).toBe('ready'))
+    const partial = progress.mock.lastCall![0]
     expect(partial.productionSources.total).toBe(3)
     expect(partial.storage.repoCount).toBe(1)
     expect(apiMock.mock.calls.filter(([path]) => path.endsWith('/storage/repositories/dashboard-summary/'))).toHaveLength(1)
@@ -141,10 +141,44 @@ describe('Dashboard statistics loading', () => {
     })
     const progress = vi.fn()
     const pending = loadDashboardOverview((key) => key, progress)
-    await vi.waitFor(() => expect(progress).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
     if (reason === 'timeout') await vi.advanceTimersByTimeAsync(15_000)
     else beginRouteRequestScope()
     expect((await pending).taskStatisticsState).toBe('unavailable')
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('renders core cards while events stall, then retries only events', async () => {
+    apiMock.mockImplementation(async path => {
+      if (path.includes('/monitors/events/')) return new Promise(() => {})
+      if (path.includes('/dashboard-statistics/')) return summary()
+      return mockOtherEndpoint(path)
+    })
+    const progress = vi.fn<(overview: DashboardOverview) => void>()
+    const pending = loadDashboardOverview(key => key, progress)
+    await vi.waitFor(() => expect(progress.mock.lastCall?.[0].sections).toMatchObject({
+      sources: 'ready', storage: 'ready', events: 'loading', statistics: 'ready',
+    }))
+    await vi.advanceTimersByTimeAsync(15_000)
+    const previous = await pending
+    expect(previous.sections.events).toBe('unavailable')
+    apiMock.mockReset().mockResolvedValue({ count: 0, results: [] })
+    const retried = await loadDashboardOverview(key => key, undefined, { section: 'events', previous })
+    expect(retried.sections.events).toBe('ready')
+    expect(retried.productionSources).toEqual(previous.productionSources)
+    expect(apiMock).toHaveBeenCalledOnce()
+  })
+
+  it('does not substitute repository page totals when the full storage summary fails', async () => {
+    apiMock.mockImplementation(async path => {
+      if (path.includes('/dashboard-summary/')) throw new Error('unavailable')
+      if (path.includes('/repositories/?')) return { count: 201, results: [{ id: 1, estimated_usage_bytes: 42 }] }
+      if (path.includes('/dashboard-statistics/')) return summary()
+      return mockOtherEndpoint(path)
+    })
+    const result = await loadDashboardOverview(key => key)
+    expect(result.sections).toMatchObject({ storage: 'unavailable', repositories: 'ready' })
+    expect(result.storage.usedBytes).toBe(0)
+    expect(result.repositories).toHaveLength(1)
   })
 })

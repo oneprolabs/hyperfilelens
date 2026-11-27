@@ -82,7 +82,7 @@ function orgHeaders(): Record<string, string> {
   return { 'X-Org-Key': getEffectiveOrgKey() || '' }
 }
 
-export async function fetchCurrentLicense() {
+export async function fetchCurrentLicense(init?: RequestInit) {
   return unwrapApiPayload<{
     is_valid: boolean
     message?: string
@@ -96,7 +96,7 @@ export async function fetchCurrentLicense() {
     entitlement_source?: 'builtin_community' | 'builtin_unlimited' | 'license' | 'license_inactive'
     instance_shared?: boolean
     can_manage_instance_license?: boolean
-  }>(await api<unknown>(`${base}/current/`, { headers: orgHeaders() }))
+  }>(await api<unknown>(`${base}/current/`, { ...init, headers: orgHeaders() }))
 }
 
 export async function fetchMachineCode(regenerate = false) {

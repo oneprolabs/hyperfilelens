@@ -338,7 +338,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       }
 
       // Try to refresh token
+      if (signal?.aborted) throw silentAbortError()
       const refreshed = await refreshAuthToken()
+      if (signal?.aborted) throw silentAbortError()
       if (refreshed.ok) {
         // Retry the original request after cookies are renewed
         return api<T>(path, {

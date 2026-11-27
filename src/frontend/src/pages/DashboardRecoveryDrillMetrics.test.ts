@@ -8,9 +8,9 @@ const tasks = readFileSync(resolve(process.cwd(), 'src/pages/ops/Tasks.vue'), 'u
 
 describe('Dashboard recovery drill metrics', () => {
   it('limits recovery drill metrics to restores created in the last 24 hours', () => {
-    expect(dashboardApi).toContain('recoveryDrillStartedAfter,')
+    expect(dashboardApi).toContain('dashboardTaskStatistics(new Date(Date.now() - 86_400_000).toISOString()')
     expect(dashboardApi).toContain("exclude_insight_workspace_restores: 'true'")
-    expect(dashboardApi).toContain('recoveryDrill24h: summarizeRecoveryDrill24h(summary?.recovery_24h ?? emptyTaskStatistics)')
+    expect(dashboardApi).toContain('recoveryDrill24h: summarizeRecoveryDrill24h(summary.recovery_24h)')
     expect(dashboard).not.toContain('overview?.taskStats.running')
   })
 

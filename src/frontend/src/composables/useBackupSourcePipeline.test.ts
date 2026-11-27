@@ -51,7 +51,7 @@ describe('useBackupSourcePipeline', () => {
     await pipeline.bootstrapPipeline({ migrateLegacy: false })
     expect(listBackupSelectableSources).toHaveBeenCalledExactlyOnceWith({
       step: 3, page: 1, page_size: 1, scope: 'backup_configurations',
-    }, { signal: undefined })
+    }, { signal: expect.any(AbortSignal) })
     expect(pipeline.pipelineStep2Count.value).toBe(0)
     expect(pipeline.pipelineStep3Count.value).toBe(5)
     expect(setBackupSourcePipelineStep).not.toHaveBeenCalled()
@@ -63,10 +63,10 @@ describe('useBackupSourcePipeline', () => {
     }))
     const pipeline = useBackupSourcePipeline({ canViewSources: () => true, configurationScope: true })
     await pipeline.refreshPipelineCounts()
-    expect(listBackupSelectableSources).toHaveBeenCalledWith({ step: 2, page: 1, page_size: 1 }, { signal: undefined })
+    expect(listBackupSelectableSources).toHaveBeenCalledWith({ step: 2, page: 1, page_size: 1 }, { signal: expect.any(AbortSignal) })
     expect(listBackupSelectableSources).toHaveBeenCalledWith({
       step: 3, page: 1, page_size: 1, scope: 'backup_configurations',
-    }, { signal: undefined })
+    }, { signal: expect.any(AbortSignal) })
     expect(pipeline.pipelineStep2Count.value).toBe(2)
     expect(pipeline.pipelineStep3Count.value).toBe(3)
   })
@@ -124,17 +124,18 @@ describe('useBackupSourcePipeline', () => {
     expect(clearLegacyStep2Sources).not.toHaveBeenCalled()
   })
 
-  it('passes one lifecycle signal through legacy writes and both count refreshes', async () => {
+  it('runs legacy migration once before requesting counts', async () => {
     vi.mocked(readLegacyRealStep2Sources).mockReturnValue(['agent:7'])
     vi.mocked(setBackupSourcePipelineStep).mockResolvedValue({ updated: ['agent:7'], step: 2 })
     vi.mocked(listBackupSelectableSources).mockResolvedValue({ count: 2, results: [] })
     const controller = new AbortController()
     await useBackupSourcePipeline().bootstrapPipeline({ signal: controller.signal })
     expect(setBackupSourcePipelineStep).toHaveBeenCalledWith(
-      { ids: ['agent:7'], step: 2 }, { signal: controller.signal },
+      { ids: ['agent:7'], step: 2 }, { signal: expect.any(AbortSignal) },
     )
-    expect(listBackupSelectableSources).toHaveBeenCalledTimes(4)
-    expect(vi.mocked(listBackupSelectableSources).mock.calls.every(([, init]) => init?.signal === controller.signal)).toBe(true)
+    expect(listBackupSelectableSources).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(listBackupSelectableSources).mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true)
+    expect(vi.mocked(setBackupSourcePipelineStep).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(listBackupSelectableSources).mock.invocationCallOrder[0]!)
     expect(clearLegacyStep2Sources).toHaveBeenCalledOnce()
   })
 
@@ -166,7 +167,7 @@ describe('useBackupSourcePipeline', () => {
     expect(setBackupSourcePipelineStep).not.toHaveBeenCalled()
     expect(clearLegacyStep2Sources).not.toHaveBeenCalled()
     expect(listBackupSelectableSources).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(listBackupSelectableSources).mock.calls.every(([, init]) => init?.signal === controller.signal)).toBe(true)
+    expect(vi.mocked(listBackupSelectableSources).mock.calls.every(([, init]) => init?.signal instanceof AbortSignal)).toBe(true)
   })
 
   it('does not let a stale legacy write 403 block authorized reads', async () => {
@@ -197,11 +198,11 @@ describe('useBackupSourcePipeline', () => {
     expect(listBackupSelectableSources).toHaveBeenCalledTimes(2)
     expect(listBackupSelectableSources).toHaveBeenCalledWith(
       { step: 2, page: 1, page_size: 1 },
-      { signal: undefined },
+      { signal: expect.any(AbortSignal) },
     )
     expect(listBackupSelectableSources).toHaveBeenCalledWith(
       { step: 3, page: 1, page_size: 1 },
-      { signal: undefined },
+      { signal: expect.any(AbortSignal) },
     )
     expect(pipeline.pipelineStep2Count.value).toBe(4)
     expect(pipeline.pipelineStep3Count.value).toBe(7)

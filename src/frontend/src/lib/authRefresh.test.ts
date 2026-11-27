@@ -25,6 +25,7 @@ describe('coordinated auth refresh', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     window.localStorage.clear()
@@ -54,6 +55,7 @@ describe('coordinated auth refresh', () => {
     let lockTail = Promise.resolve<unknown>(undefined)
     const lockRequest = vi.fn((
       _name: string,
+      _options: LockOptions,
       callback: () => Promise<unknown>,
     ) => {
       const result = lockTail.then(callback)
@@ -90,6 +92,23 @@ describe('coordinated auth refresh', () => {
     expect(first).toEqual({ ok: true, status: 200 })
     expect(second).toEqual({ ok: true, status: 200 })
     expect(lockRequest).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+  })
+
+  it('settles all waiters on a stalled refresh and allows a later attempt', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ authenticated: false, refresh_available: true }))
+      .mockReturnValueOnce(new Promise(() => {}))
+      .mockResolvedValueOnce(jsonResponse({ authenticated: true, refresh_available: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const first = refreshAuthToken()
+    expect(refreshAuthToken()).toBe(first)
+    await vi.advanceTimersByTimeAsync(12_000)
+    await expect(first).resolves.toEqual({ ok: false, networkError: true })
+    expect(fetchMock.mock.calls[1]?.[1].signal.aborted).toBe(true)
+    await expect(refreshAuthToken()).resolves.toMatchObject({ ok: true })
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
   })
 

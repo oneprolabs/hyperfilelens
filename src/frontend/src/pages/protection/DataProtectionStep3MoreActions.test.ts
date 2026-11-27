@@ -37,7 +37,7 @@ describe('backup wizard step 3 More Actions refresh', () => {
   it('keeps the global Step 2 pending summary separate from filtered table pagination', () => {
     expect(page).toContain('const step2GlobalPendingCount = computed(() => pipelineStep2Count.value)')
     expect(page).toContain('step2GlobalPendingCount.value === 0 && step3ReadyCount.value > 0')
-    expect(page).toContain("flowStepBackupMetricPending', { n: step2GlobalPendingCount }")
+    expect(page).toContain("flowCountLabel(1, 'protection.backupsPage.flowStepBackupMetricPending', step2GlobalPendingCount)")
     expect(page).toContain(':total="flowMainStep === 1 ? step2SelectableCount : filteredStep2SourceList.length"')
     expect(page).not.toContain('const step2PendingCount = computed(() => step2SelectableCount.value)')
   })

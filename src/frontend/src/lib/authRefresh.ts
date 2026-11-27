@@ -1,6 +1,7 @@
 import { isImpersonating } from './impersonation'
 import { unwrapProblemDetails } from './errors'
 import { getCorrelationHeaders } from './requestContext'
+import { withRequestDeadline } from './requestDeadline'
 
 export type RefreshTokenResult = {
   ok: boolean
@@ -74,12 +75,13 @@ function parseSessionProbe(data: unknown): SessionProbe {
   }
 }
 
-async function inspectSession(): Promise<SessionProbe | null> {
+async function inspectSession(signal: AbortSignal): Promise<SessionProbe | null> {
   try {
     const res = await fetch(`${API_BASE}/api/v1/auth/token/refresh`, {
       credentials: 'include',
       headers: getCorrelationHeaders(),
       cache: 'no-store',
+      signal,
     })
     if (!res.ok) return null
     return parseSessionProbe(await readBody(res))
@@ -126,11 +128,12 @@ function waitForRefreshSignal(timeoutMs: number): Promise<void> {
   })
 }
 
-async function waitForPeerRefresh(): Promise<RefreshTokenResult> {
+async function waitForPeerRefresh(signal: AbortSignal): Promise<RefreshTokenResult> {
   const deadline = Date.now() + PEER_REFRESH_WAIT_MS
   while (Date.now() < deadline) {
     await waitForRefreshSignal(150)
-    const session = await inspectSession()
+    signal.throwIfAborted()
+    const session = await inspectSession(signal)
     if (session?.authenticated) return { ok: true, status: 200 }
     if (session && !session.refreshAvailable) {
       return { ok: false, status: 401, errorCode: 'REFRESH_EXPIRED' }
@@ -144,10 +147,11 @@ async function waitForPeerRefresh(): Promise<RefreshTokenResult> {
   }
 }
 
-async function requestTokenRefresh(): Promise<RefreshTokenResult> {
+async function requestTokenRefresh(signal: AbortSignal): Promise<RefreshTokenResult> {
   try {
     const res = await fetch(`${API_BASE}/api/v1/auth/token/refresh`, {
       method: 'POST',
+      signal,
       credentials: 'include',
       headers: getCorrelationHeaders(),
     })
@@ -155,7 +159,7 @@ async function requestTokenRefresh(): Promise<RefreshTokenResult> {
     const data = await readBody(res)
     const errorCode = extractRefreshErrorCode(data)
     if (res.status === 409 && errorCode === 'REFRESH_CONCURRENT') {
-      return waitForPeerRefresh()
+      return waitForPeerRefresh(signal)
     }
     return { ok: false, errorCode, status: res.status }
   } catch {
@@ -220,29 +224,31 @@ function releaseLease(storage: Storage, owner: string): void {
   }
 }
 
-async function refreshAfterSessionCheck(): Promise<RefreshTokenResult> {
-  const session = await inspectSession()
+async function refreshAfterSessionCheck(signal: AbortSignal): Promise<RefreshTokenResult> {
+  const session = await inspectSession(signal)
+  signal.throwIfAborted()
   if (session?.authenticated) return { ok: true, status: 200 }
-  return requestTokenRefresh()
+  return requestTokenRefresh(signal)
 }
 
-async function coordinatedRefresh(): Promise<RefreshTokenResult> {
+async function coordinatedRefresh(signal: AbortSignal): Promise<RefreshTokenResult> {
   if (typeof navigator !== 'undefined' && navigator.locks) {
-    return navigator.locks.request(REFRESH_LOCK_NAME, refreshAfterSessionCheck)
+    return navigator.locks.request(REFRESH_LOCK_NAME, { signal }, () => refreshAfterSessionCheck(signal))
   }
 
   const storage = browserLocalStorage()
-  if (!storage) return requestTokenRefresh()
+  if (!storage) return requestTokenRefresh(signal)
 
   const owner = createLeaseOwner()
   if (!acquireLease(storage, owner)) {
-    const peerResult = await waitForPeerRefresh()
+    const peerResult = await waitForPeerRefresh(signal)
+    signal.throwIfAborted()
     if (peerResult.ok || !peerResult.retryable) return peerResult
     if (!acquireLease(storage, owner)) return peerResult
   }
 
   try {
-    return await refreshAfterSessionCheck()
+    return await refreshAfterSessionCheck(signal)
   } finally {
     releaseLease(storage, owner)
   }
@@ -251,7 +257,9 @@ async function coordinatedRefresh(): Promise<RefreshTokenResult> {
 export function refreshAuthToken(): Promise<RefreshTokenResult> {
   if (isImpersonating()) return Promise.resolve({ ok: false, status: 403, errorCode: 'IMPERSONATION_ENDED' })
   if (!refreshPromise) {
-    refreshPromise = coordinatedRefresh().finally(() => {
+    refreshPromise = withRequestDeadline(coordinatedRefresh, undefined, 12_000).catch(() => ({
+      ok: false, networkError: true,
+    })).finally(() => {
       refreshPromise = null
     })
   }
