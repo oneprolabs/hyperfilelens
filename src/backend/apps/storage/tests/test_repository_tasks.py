@@ -284,6 +284,115 @@ class RepositoryTaskTests(TestCase):
         self.assertEqual(first.task.resources.get().resource_id, self.repository.id)
         self.assertTrue(first.task.resources.get().is_primary)
 
+    def test_discovery_preserves_live_cleanup_targets(self):
+        discover_repository_execution_targets()
+        target = self.repository.execution_targets.get()
+        self.repository.status = Repository.Status.REMOVING
+        self.repository.save(update_fields=["status"])
+
+        for operation in (
+            RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+            RepositoryTask.OperationType.CLEANUP_TARGET,
+        ):
+            for status in (Task.Status.PENDING, Task.Status.RUNNING):
+                with self.subTest(operation=operation, status=status):
+                    task = Task.objects.create(
+                        organization_id=self.org.pk,
+                        task_type=Task.Type.REPOSITORY_OPERATION,
+                        display_name="Active cleanup",
+                        status=status,
+                    )
+                    RepositoryTask.objects.create(
+                        task=task, repository=self.repository,
+                        execution_target=target, operation_type=operation,
+                        owner_type=target.owner_type,
+                        owner_identity=target.owner_identity,
+                    )
+                    target.active_task = task
+                    target.is_active = True
+                    target.save(update_fields=["active_task", "is_active"])
+
+                    self.assertEqual(discover_repository_execution_targets(), 0)
+
+                    target.refresh_from_db()
+                    self.assertTrue(target.is_active)
+                    self.assertEqual(target.active_task_id, task.pk)
+
+    def test_discovery_deactivates_terminal_cleanup_targets(self):
+        discover_repository_execution_targets()
+        target = self.repository.execution_targets.get()
+        self.repository.status = Repository.Status.REMOVE_FAILED
+        self.repository.save(update_fields=["status"])
+
+        for status in (
+            Task.Status.SUCCESS, Task.Status.FAILED,
+            Task.Status.CANCELLED, Task.Status.TIMEOUT,
+        ):
+            with self.subTest(status=status):
+                task = Task.objects.create(
+                    organization_id=self.org.pk,
+                    task_type=Task.Type.REPOSITORY_OPERATION,
+                    display_name="Finished cleanup",
+                    status=status,
+                )
+                RepositoryTask.objects.create(
+                    task=task, repository=self.repository,
+                    execution_target=target,
+                    operation_type=RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+                    owner_type=target.owner_type,
+                    owner_identity=target.owner_identity,
+                )
+                target.active_task = task
+                target.is_active = True
+                target.save(update_fields=["active_task", "is_active"])
+
+                discover_repository_execution_targets()
+
+                target.refresh_from_db()
+                self.assertFalse(target.is_active)
+
+    def test_scheduler_skips_cleanup_only_direct_nas_targets(self):
+        repository = Repository.objects.create(
+            organization_id=self.org.pk,
+            name="Residual NAS cleanup",
+            repo_type=Repository.Type.NAS,
+            status=Repository.Status.CREATED,
+        )
+        target = RepositoryExecutionTarget.objects.create(
+            organization_id=self.org.pk,
+            repository=repository,
+            target_key=f"repository:{repository.pk}:node:101:subdir:retained",
+            owner_type=RepositoryExecutionTarget.OwnerType.NODE,
+            owner_node_id=101,
+            owner_identity="hfl-maintenance@node-101",
+            repository_subdir="retained",
+            is_active=True,
+        )
+        task = Task.objects.create(
+            organization_id=self.org.pk,
+            task_type=Task.Type.REPOSITORY_OPERATION,
+            display_name="Residual subrepository cleanup",
+            status=Task.Status.RUNNING,
+        )
+        RepositoryTask.objects.create(
+            task=task, repository=repository, execution_target=target,
+            operation_type=RepositoryTask.OperationType.CLEANUP_TARGET,
+            owner_type=target.owner_type, owner_node_id=target.owner_node_id,
+            owner_identity=target.owner_identity,
+        )
+        target.active_task = task
+        target.save(update_fields=["active_task"])
+
+        schedule_due_maintenance()
+
+        target.refresh_from_db()
+        self.assertTrue(target.is_active)
+        self.assertEqual(target.active_task_id, task.pk)
+        self.assertFalse(
+            RepositoryTask.objects.filter(execution_target=target)
+            .exclude(task=task).exists()
+        )
+
     def test_task_creation_rejects_repository_removal_race(self):
         discover_repository_execution_targets()
         target = RepositoryExecutionTarget.objects.get(repository=self.repository)

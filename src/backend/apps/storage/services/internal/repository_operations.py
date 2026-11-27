@@ -195,7 +195,20 @@ def discover_repository_execution_targets(*, now: datetime | None = None) -> int
                 defaults={"next_quick_due_at": current, "next_full_due_at": current},
             )
             count += 1
-    RepositoryExecutionTarget.objects.filter(is_active=True).exclude(target_key__in=seen).update(is_active=False)
+    # Discovery covers maintenance-ready repositories, not in-flight cleanup.
+    # Removing a repository must not revoke its cleanup executor's target.
+    (
+        RepositoryExecutionTarget.objects.filter(is_active=True)
+        .exclude(target_key__in=seen)
+        .exclude(
+            active_task__status__in=(Task.Status.PENDING, Task.Status.RUNNING),
+            active_task__repository_operation__operation_type__in=(
+                RepositoryTask.OperationType.CLEANUP_REPOSITORY,
+                RepositoryTask.OperationType.CLEANUP_TARGET,
+            ),
+        )
+        .update(is_active=False)
+    )
     return count
 
 
@@ -356,7 +369,13 @@ def schedule_due_maintenance(*, now: datetime | None = None) -> list[int]:
     # Each accepted operation takes its Repository and Target locks in
     # create_repository_operation_task(). Do not pre-lock every Target here;
     # doing so would reverse the cleanup path's lock order.
-    targets = list(RepositoryExecutionTarget.objects.filter(is_active=True).select_related("maintenance_state"))
+    targets = list(
+        RepositoryExecutionTarget.objects.filter(
+            is_active=True,
+            repository__status=Repository.Status.CREATED,
+            maintenance_state__isnull=False,
+        ).select_related("maintenance_state")
+    )
     assign_full_slots(targets, settings, current)
     for target in sorted(targets, key=lambda item: (item.maintenance_state.next_full_due_at, item.target_key)):
         state = target.maintenance_state
