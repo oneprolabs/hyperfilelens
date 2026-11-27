@@ -352,7 +352,7 @@ const pageRequests = usePageRequestScope()
 
 function listBackupSelectableSources(
   params: Parameters<typeof fetchBackupSelectableSources>[0],
-  init?: RequestInit,
+  init?: Parameters<typeof fetchBackupSelectableSources>[1],
 ) {
   return withRequestDeadline(signal => fetchBackupSelectableSources(params, { ...init, signal }),
     init?.signal ?? getRouteRequestSignal())
