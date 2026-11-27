@@ -44,7 +44,9 @@ const displayAlerts = computed(() => (overview.value?.activeAlerts || []).map((a
   return { ...alert, title: display.title, detail: display.message }
 }))
 let requestScope: AbortController | undefined
+const retryingSections = reactive(new Set<DashboardSection>())
 const sectionState = (section: DashboardSection) => overview.value?.sections[section] ?? 'loading'
+const isInitialSectionLoad = (section: DashboardSection) => sectionState(section) === 'loading' && !retryingSections.has(section)
 const dashboardContext = computed(() => JSON.stringify([
   currentUser.value?.id, currentUser.value?.access_profile, getEffectiveOrgKey(),
 ]))
@@ -493,14 +495,21 @@ function applySection(snapshot: DashboardOverview, section: DashboardSection, pa
 
 function refresh() {
   requestScope?.abort()
+  retryingSections.clear()
   requestScope = new AbortController()
   overview.value = null
   void loadDashboardOverview(t, applySection, { signal: requestScope.signal })
 }
 
-function retrySection(section: DashboardSection) {
-  if (!requestScope || sectionState(section) !== 'unavailable') return
-  void loadDashboardOverview(t, applySection, { signal: requestScope.signal, section })
+async function retrySection(section: DashboardSection) {
+  const scope = requestScope
+  if (!scope || retryingSections.has(section) || sectionState(section) !== 'unavailable') return
+  retryingSections.add(section)
+  try {
+    await loadDashboardOverview(t, applySection, { signal: scope.signal, section })
+  } finally {
+    if (requestScope === scope) retryingSections.delete(section)
+  }
 }
 
 watch(dashboardContext, refresh, { immediate: true, flush: 'sync' })
@@ -550,7 +559,7 @@ onBeforeUnmount(() => {
               <p>{{ t('dashboard.pipeline.step1Desc') }}</p>
               <div class="pipeline__chip pipeline__chip--indigo">
                 <span v-if="sectionState('sources') === 'ready'">{{ pipelineStep1Chip }}</span>
-                <DashboardSectionStatus v-else :state="sectionState('sources')" @retry="retrySection('sources')" />
+                <DashboardSectionStatus v-else variant="chip" :state="sectionState('sources')" :retrying="retryingSections.has('sources')" @retry="retrySection('sources')" />
               </div>
             </div>
           </div>
@@ -583,7 +592,7 @@ onBeforeUnmount(() => {
               <p>{{ t('dashboard.pipeline.step2Desc') }}</p>
               <div class="pipeline__chip pipeline__chip--emerald">
                 <span v-if="sectionState('storage') === 'ready'">{{ pipelineStep2Chip }}</span>
-                <DashboardSectionStatus v-else :state="sectionState('storage')" @retry="retrySection('storage')" />
+                <DashboardSectionStatus v-else variant="chip" :state="sectionState('storage')" :retrying="retryingSections.has('storage')" @retry="retrySection('storage')" />
               </div>
             </div>
           </div>
@@ -616,7 +625,7 @@ onBeforeUnmount(() => {
               <p>{{ t('dashboard.pipeline.step3Desc') }}</p>
               <div class="pipeline__chip pipeline__chip--indigo">
                 <span v-if="sectionState('recovery') === 'ready'">{{ pipelineStep3Chip }}</span>
-                <DashboardSectionStatus v-else :state="sectionState('recovery')" @retry="retrySection('recovery')" />
+                <DashboardSectionStatus v-else variant="chip" :state="sectionState('recovery')" :retrying="retryingSections.has('recovery')" @retry="retrySection('recovery')" />
               </div>
             </div>
           </div>
@@ -640,8 +649,14 @@ onBeforeUnmount(() => {
                 <Server class="w-5 h-5" />
               </div>
             </div>
-            <div v-if="sectionState('sources') !== 'ready'" class="ribbon-card__value-row">
-              {{ t(sectionState('sources') === 'loading' ? 'common.loading' : sectionState('sources') === 'forbidden' ? 'errors.codes.authForbidden' : 'errors.pageLoad.loadFailed.title') }}
+            <DashboardSectionStatus
+              v-if="isInitialSectionLoad('sources')"
+              class="ribbon-card__value-row ribbon-card__skeleton"
+              variant="metric"
+              state="loading"
+            />
+            <div v-else-if="sectionState('sources') !== 'ready'" class="ribbon-card__value-row">
+              {{ t(sectionState('sources') === 'forbidden' ? 'errors.codes.authForbidden' : 'errors.generic.loadFailed') }}
             </div>
             <div v-else class="ribbon-card__value-row">
               <span class="ribbon-card__value">{{ sourceAvailabilityPct }}%</span>
@@ -695,8 +710,14 @@ onBeforeUnmount(() => {
                 <Database class="w-5 h-5" />
               </div>
             </div>
-            <div v-if="sectionState('storage') !== 'ready'" class="ribbon-card__value-row">
-              {{ t(sectionState('storage') === 'loading' ? 'common.loading' : sectionState('storage') === 'forbidden' ? 'errors.codes.authForbidden' : 'errors.pageLoad.loadFailed.title') }}
+            <DashboardSectionStatus
+              v-if="isInitialSectionLoad('storage')"
+              class="ribbon-card__value-row ribbon-card__skeleton"
+              variant="metric"
+              state="loading"
+            />
+            <div v-else-if="sectionState('storage') !== 'ready'" class="ribbon-card__value-row">
+              {{ t(sectionState('storage') === 'forbidden' ? 'errors.codes.authForbidden' : 'errors.generic.loadFailed') }}
             </div>
             <div v-else class="ribbon-card__value-row">
               <span class="ribbon-card__value">{{ storagePct != null ? `${storagePct}%` : '0%' }}</span>
@@ -751,8 +772,14 @@ onBeforeUnmount(() => {
                 <ShieldCheck class="w-5 h-5" />
               </div>
             </div>
-            <div v-if="sectionState('statistics') !== 'ready'" class="ribbon-card__value-row">
-              {{ t(sectionState('statistics') === 'loading' ? 'common.loading' : sectionState('statistics') === 'forbidden' ? 'errors.codes.authForbidden' : 'errors.pageLoad.loadFailed.title') }}
+            <DashboardSectionStatus
+              v-if="isInitialSectionLoad('statistics')"
+              class="ribbon-card__value-row ribbon-card__skeleton"
+              variant="metric"
+              state="loading"
+            />
+            <div v-else-if="sectionState('statistics') !== 'ready'" class="ribbon-card__value-row">
+              {{ t(sectionState('statistics') === 'forbidden' ? 'errors.codes.authForbidden' : 'errors.generic.loadFailed') }}
             </div>
             <div v-else class="ribbon-card__value-row">
               <span class="ribbon-card__value">
@@ -850,7 +877,7 @@ onBeforeUnmount(() => {
               </RouterLink>
             </div>
             <div class="panel-body panel-body--attention">
-              <DashboardSectionStatus v-if="sectionState('events') !== 'ready'" :state="sectionState('events')" @retry="retrySection('events')" />
+              <DashboardSectionStatus v-if="sectionState('events') !== 'ready'" :state="sectionState('events')" :retrying="retryingSections.has('events')" @retry="retrySection('events')" />
               <el-empty
                 v-else-if="!overview?.events.length"
                 :description="t('dashboard.eventsEmptyDesc')"
@@ -939,7 +966,7 @@ onBeforeUnmount(() => {
               </RouterLink>
             </div>
             <div class="panel-body panel-body--attention">
-              <DashboardSectionStatus v-if="sectionState('alerts') !== 'ready'" :state="sectionState('alerts')" @retry="retrySection('alerts')" />
+              <DashboardSectionStatus v-if="sectionState('alerts') !== 'ready'" :state="sectionState('alerts')" :retrying="retryingSections.has('alerts')" @retry="retrySection('alerts')" />
               <el-empty
                 v-else-if="!overview?.activeAlerts.length"
                 :description="t('dashboard.alertsEmptyDesc')"
@@ -1029,7 +1056,7 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <DashboardSectionStatus v-if="sectionState('repositories') !== 'ready'" :state="sectionState('repositories')" @retry="retrySection('repositories')" />
+            <DashboardSectionStatus v-if="sectionState('repositories') !== 'ready'" :state="sectionState('repositories')" :retrying="retryingSections.has('repositories')" @retry="retrySection('repositories')" />
             <div v-else class="storage-capacity-body">
               <section
                 class="storage-capacity-repos"
@@ -1268,7 +1295,7 @@ onBeforeUnmount(() => {
                 <ArrowUpRight class="panel-link__arrow" />
               </RouterLink>
             </div>
-            <DashboardSectionStatus v-if="sectionState('quota') !== 'ready'" :state="sectionState('quota')" @retry="retrySection('quota')" />
+            <DashboardSectionStatus v-if="sectionState('quota') !== 'ready'" :state="sectionState('quota')" :retrying="retryingSections.has('quota')" @retry="retrySection('quota')" />
             <div
               v-else-if="quotaItems.length"
               class="quota-grid scrollbar"
@@ -1345,7 +1372,7 @@ onBeforeUnmount(() => {
                 <ArrowUpRight class="panel-link__arrow" />
               </RouterLink>
             </div>
-            <DashboardSectionStatus v-if="sectionState('running') !== 'ready'" :state="sectionState('running')" @retry="retrySection('running')" />
+            <DashboardSectionStatus v-if="sectionState('running') !== 'ready'" :state="sectionState('running')" :retrying="retryingSections.has('running')" @retry="retrySection('running')" />
               <el-empty
               v-else-if="!overview?.runningTasks.length"
               :description="t('dashboard.noRunningBackupTasks')"
@@ -1397,10 +1424,8 @@ onBeforeUnmount(() => {
             <div
               v-if="!taskStatisticsReady"
               class="dashboard-panel-empty dashboard-task-statistics-state"
-              role="status"
-              aria-live="polite"
             >
-              <DashboardSectionStatus :state="sectionState('statistics')" @retry="retrySection('statistics')" />
+              <DashboardSectionStatus variant="chart" :state="sectionState('statistics')" :retrying="retryingSections.has('statistics')" @retry="retrySection('statistics')" />
             </div>
             <div
               v-else-if="hasTaskOutcomes"
@@ -2237,6 +2262,10 @@ onBeforeUnmount(() => {
   align-items: baseline;
   gap: 0.5rem;
   margin-top: 1rem;
+}
+
+.ribbon-card__skeleton {
+  display: block;
 }
 
 .ribbon-card__value {
