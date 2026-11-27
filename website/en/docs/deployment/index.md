@@ -22,7 +22,7 @@ description: Deploy the HyperFileLens control plane, backup components, and Priv
 
 ## Operate HyperFileLens Community
 
-- [Repository cache settings](/docs/deployment/repository-cache): adjust per-repository cache budgets for Agents and Proxies, including allocation, application timing, and disk-space planning.
+- [Repository cache management](/docs/deployment/repository-cache): understand metadata and content caches, configure disk-space protection, relocate the cache directory, and plan for different workloads.
 - [Jobs, alerts, and audit logs](/docs/deployment/operations): review task status, alerts, and audit records; new organizations receive default alert rules. For members, roles, and quotas, see [Organization Management](/docs/governance/).
 - [Upgrade and recovery](/docs/deployment/lifecycle): upgrade HyperFileLens Community, verify the result, and respond safely to upgrade failures.
 - [Uninstall HyperFileLens Community](/docs/deployment/uninstall): remove the complete deployment, or remove the runtime while retaining configuration and business data.
