@@ -1,11 +1,11 @@
 import { api } from './api'
 import { unwrapApiPayload, asList } from './parse'
 import { getEffectiveOrgKey } from '../composables/useAuth'
-import { listRecords, listPolicies as listAlertPolicies, type AlertRecord } from './alertApi'
-import { auditStatistics } from './auditApi'
+import { listRecords, type AlertRecord } from './alertApi'
 import { dashboardTaskStatistics, listTasks, type TaskRow, type TaskStatistics } from './taskApi'
 import { getRouteRequestSignal } from './routeRequestAbort'
-import { getNodeStatistics, type NodeStatistics } from './nodeApi'
+import { toApiError } from './errors/normalizer'
+import { withRequestDeadline } from './requestDeadline'
 import { fetchCurrentLicense } from './subscriptionApi'
 import { buildQuotaRows, type QuotaUsageRow } from './licenseQuotaDisplay'
 import { productionSourceSummary, type ProductionSourceSummary } from './sourceApi'
@@ -112,13 +112,15 @@ export type RecoverySummary = {
   lastRestore: RecoveryLastRestore | null
 }
 
+const dashboardSections = ['sources', 'storage', 'running', 'recovery', 'quota', 'repositories', 'alerts', 'events', 'statistics'] as const
+export type DashboardSection = typeof dashboardSections[number]
+export type DashboardSectionState = 'loading' | 'ready' | 'unavailable' | 'forbidden'
+
 export type DashboardOverview = {
+  sections: Record<DashboardSection, DashboardSectionState>
   orgName: string
-  licenseValid: boolean
   /** Whether the quota source responded; false is shown as an inline card error. */
   quotaAvailable: boolean
-  licenseKey?: string
-  licenseExpiresLabel?: string
   quotaRows: QuotaUsageRow[]
   taskStatisticsState: 'loading' | 'ready' | 'unavailable'
   taskStats: {
@@ -139,25 +141,11 @@ export type DashboardOverview = {
   tasks7dBuckets: TaskDayBucket[]
   runningTasks: TaskRow[]
   alertFiring: number
-  alertAcknowledged: number
-  alertPolicies: number
-  alertPoliciesEnabled: number
-  audit: {
-    todayCount: number
-    totalCount: number
-  }
-  nodesOnline: number
-  nodesTotal: number
-  nodesOffline: number
-  nodesByRole: Record<string, number>
   productionSources: ProductionSourceSummary
-  protectionPolicies: number
-  protectionPoliciesEnabled: number
   recovery: RecoverySummary
   storage: StorageSummary
   repositories: RepoUsageRow[]
   topRepos: RepoUsageRow[]
-  notificationFailed: number
   eventsCount: number
   events: DashboardEventItem[]
   activeAlertsCount: number
@@ -180,9 +168,9 @@ type EventPreviewPage = {
   results: ApiOperationalEvent[]
 }
 
-async function loadEventsPreview(): Promise<EventPreviewPage> {
+async function loadEventsPreview(init?: RequestInit): Promise<EventPreviewPage> {
   const data = unwrapApiPayload<Record<string, unknown>>(
-    await api<unknown>('/api/v1/monitors/events/?period=24h&page=1&page_size=5'),
+    await api<unknown>('/api/v1/monitors/events/?period=24h&page=1&page_size=5', init),
   )
   return {
     count: Number(data.count) || 0,
@@ -460,238 +448,135 @@ export function topRepos(repos: ApiRepository[], limit = 5): RepoUsageRow[] {
 
 export async function loadDashboardOverview(
   t: (key: string, p?: Record<string, unknown>) => string,
-  onProgress?: (overview: DashboardOverview) => void,
+  onProgress?: (overview: DashboardOverview, section: DashboardSection, patch?: Partial<DashboardOverview>) => void,
+  options: { signal?: AbortSignal; section?: DashboardSection; previous?: DashboardOverview } = {},
 ): Promise<DashboardOverview> {
-  const orgKey = getEffectiveOrgKey()
-  const recoveryDrillStartedAfter = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const signal = options.signal ?? getRouteRequestSignal()
   const taskOutcomeRanges = taskOutcomeDayRanges()
-  const emptyTaskStatistics: TaskStatistics = {
-    total: 0,
-    running: 0,
-    success: 0,
-    failed: 0,
-    cancelled: 0,
-    timeout: 0,
-    by_task_type: {},
-  }
-
-  // Keep a slow statistics query local to its cards, not the entire Overview.
-  // Explicit signals must also retain the route cancellation lifecycle.
-  const controller = new AbortController()
-  const routeSignal = getRouteRequestSignal()
-  const abort = () => controller.abort()
-  routeSignal.addEventListener('abort', abort, { once: true })
-  if (routeSignal.aborted) abort()
-  const timer = setTimeout(abort, 15_000)
-  const taskSummaryPromise = dashboardTaskStatistics(
-    recoveryDrillStartedAfter,
-    taskOutcomeRanges.map((range) => ({
-      finished_after: range.finishedAfter,
-      finished_before: range.finishedBefore,
-    })),
-    { signal: controller.signal },
-  ).catch(() => null).finally(() => {
-    clearTimeout(timer)
-    routeSignal.removeEventListener('abort', abort)
-  })
-
-  let quotaAvailable = true
-
-  const [
-    license,
-    runningTasksPage,
-    productionSources,
-    nodeStatistics,
-    reposRaw,
-    storageSummary,
-    alertsFiringPage,
-    alertsAckPage,
-    alertPoliciesPage,
-    auditStats,
-    protectionPoliciesPage,
-    enabledProtectionPoliciesPage,
-    notifyStats,
-    backupConfigsPage,
-    restorePlansEnabledPage,
-    restoreTasksPage,
-    eventsPage,
-  ] = await Promise.all([
-    fetchCurrentLicense().catch(() => {
-      quotaAvailable = false
-      return {
-        is_valid: false,
-        organization_name: '',
-        license: undefined,
-        limits: {},
-        usage: {},
-      }
-    }),
-    listTasks({ status: 'running', page_size: 8 }).catch(() => ({ count: 0, results: [] })),
-    productionSourceSummary().catch(() => ({
-      total: 0,
-      available: 0,
-      unavailable: 0,
+  const statuses = Object.fromEntries(dashboardSections.map(section => [section, 'loading'])) as DashboardOverview['sections']
+  let result: DashboardOverview = options.previous ?? {
+    sections: statuses,
+    orgName: getEffectiveOrgKey() || '—',
+    quotaAvailable: false,
+    quotaRows: [],
+    taskStatisticsState: 'loading',
+    taskStats: { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0, byTaskType: {} },
+    recoveryDrill24h: { total: 0, running: 0, success: 0, failed: 0, successRate: null },
+    tasks7dBuckets: [],
+    runningTasks: [],
+    alertFiring: 0,
+    productionSources: {
+      total: 0, available: 0, unavailable: 0,
       hosts: { total: 0, available: 0, unavailable: 0 },
       nas: { total: 0, available: 0, unavailable: 0 },
-    })),
-    getNodeStatistics().catch((): NodeStatistics => ({ total: 0, online: 0, offline: 0, by_role: {} })),
-    api<unknown>('/api/v1/storage/repositories/?page_size=200').then((raw) => asList<ApiRepository>(raw)).catch(() => []),
-    api<unknown>('/api/v1/storage/repositories/dashboard-summary/').then((raw) => unwrapApiPayload<StorageSummary>(raw)).catch(() => null),
-    listRecords({ status: 'firing', page_size: 5 }).catch(() => ({ count: 0, results: [] })),
-    listRecords({ status: 'acknowledged', page_size: 5 }).catch(() => ({ count: 0, results: [] })),
-    listAlertPolicies({ page_size: 1 }).catch(() => ({ count: 0, results: [] })),
-    auditStatistics().catch(() => ({
-      total_count: 0,
-      today_count: 0,
-    })),
-    listBackupPolicies({ page_size: 1 }).catch(() => ({ count: 0 })),
-    listBackupPolicies({ page_size: 1, is_active: true }).catch(() => ({ count: 0 })),
-    api<unknown>('/api/v1/notifications/logs/stats/').then((raw) => unwrapApiPayload<{ failed?: number }>(raw)).catch(() => ({ failed: 0 })),
-    listBackupConfigs({ page_size: 1, recovery_plan_enabled: 'true' }).catch(() => ({ count: 0 })),
-    listRestorePlans({ enabled: true, page_size: 1 }).catch(() => ({ count: 0, results: [] })),
-    listTasks({
-      task_type: 'restore',
-      page_size: 30,
-      exclude_insight_workspace_restores: 'true',
-    }).catch(() => ({ count: 0, results: [] })),
-    loadEventsPreview().catch(() => ({ count: 0, results: [] })),
-  ])
-
-  const nodeAvailability = { online: nodeStatistics.online, offline: nodeStatistics.offline }
-  const nodesTotal = nodeStatistics.total
-  const orgName =
-    license.organization_name ||
-    license.license?.organization_name ||
-    orgKey ||
-    '—'
-
-  const lic = license.license
-  let licenseExpiresLabel: string | undefined
-  if (lic?.is_perpetual) {
-    licenseExpiresLabel = t('dashboard.licensePerpetual')
-  } else if (lic?.expires_at) {
-    licenseExpiresLabel = t('dashboard.licenseExpires', {
-      date: new Date(lic.expires_at).toLocaleDateString(),
-      days: lic.days_until_expiry ?? license.days_until_expiry ?? '—',
-    })
-  } else if (license.is_valid && license.days_until_expiry != null) {
-    licenseExpiresLabel = t('dashboard.licenseExpires', {
-      date: '—',
-      days: license.days_until_expiry,
-    })
-  }
-
-  const protectionPolicies = protectionPoliciesPage.count
-  const protectionPoliciesEnabled = enabledProtectionPoliciesPage.count
-
-  const recovery = summarizeRecovery({
-    backupPoliciesEnabled: protectionPoliciesEnabled,
-    recoveryConfigCount: backupConfigsPage.count,
-    restorePlansEnabled: restorePlansEnabledPage.count || restorePlansEnabledPage.results.length,
-    restoreTasks: restoreTasksPage.results,
-  })
-
-  const alertPoliciesCount = alertPoliciesPage.count
-  let alertPoliciesEnabled = 0
-  try {
-    const enabledPage = await listAlertPolicies({ enabled: 'true', page_size: 1 })
-    alertPoliciesEnabled = enabledPage.count
-  } catch {
-    alertPoliciesEnabled = alertPoliciesCount
-  }
-
-  const isEmpty =
-    nodesTotal === 0 &&
-    productionSources.total === 0 &&
-    protectionPolicies === 0 &&
-    (storageSummary?.repoCount ?? reposRaw.length) === 0
-
-  const repositories = repositoryUsageRows(reposRaw)
-  const activeAlerts = [
-    ...alertsFiringPage.results.map(dashboardAlertItem),
-    ...alertsAckPage.results.map(dashboardAlertItem),
-  ].sort((a, b) => {
-    const aTime = a.at ? Date.parse(a.at) : 0
-    const bTime = b.at ? Date.parse(b.at) : 0
-    return bTime - aTime
-  })
-  const events = eventsPage.results.map((event) => ({
-    id: String(event.id ?? ''),
-    event_type: event.event_type,
-    title: event.title || 'Event',
-    detail: event.details || '',
-    severity: event.severity || 'information',
-    at: event.occurred_at,
-    to: event.target_path || `/ops/events?eventId=${encodeURIComponent(String(event.id ?? ''))}`,
-  }))
-
-  const result: DashboardOverview = {
-    orgName,
-    licenseValid: Boolean(license.is_valid),
-    quotaAvailable,
-    taskStatisticsState: 'loading',
-    licenseKey: license.instance_shared ? undefined : license.license?.license_key,
-    licenseExpiresLabel,
-    quotaRows: quotaAvailable
-      ? buildQuotaRows(
-        license.usage || {},
-        license.limits || {},
-        license.instance_shared ? undefined : (lic as Record<string, unknown> | undefined),
-      )
-      : [],
-    taskStats: {
-      total: 0,
-      running: 0,
-      completed: 0,
-      failed: 0,
-      cancelled: 0,
-      byTaskType: {},
     },
-    recoveryDrill24h: summarizeRecoveryDrill24h(emptyTaskStatistics),
-    tasks7dBuckets: [],
-    runningTasks: runningTasksPage.results,
-    alertFiring: alertsFiringPage.count || alertsFiringPage.results.length,
-    alertAcknowledged: alertsAckPage.count || 0,
-    alertPolicies: alertPoliciesCount,
-    alertPoliciesEnabled,
-    audit: {
-      todayCount: auditStats.today_count,
-      totalCount: auditStats.total_count,
-    },
-    nodesOnline: nodeAvailability.online,
-    nodesTotal,
-    nodesOffline: nodeAvailability.offline,
-    nodesByRole: nodeStatistics.by_role,
-    productionSources,
-    protectionPolicies,
-    protectionPoliciesEnabled,
-    recovery,
-    storage: storageSummary ?? summarizeStorage(reposRaw),
-    repositories,
-    topRepos: topRepos(reposRaw),
-    notificationFailed: Number(notifyStats.failed) || 0,
-    eventsCount: eventsPage.count,
-    events,
-    activeAlertsCount: (alertsFiringPage.count || alertsFiringPage.results.length) + (alertsAckPage.count || alertsAckPage.results.length),
-    activeAlerts,
+    recovery: { backupPoliciesEnabled: 0, recoveryConfigCount: 0, restorePlansEnabled: 0, lastRestore: null },
+    storage: summarizeStorage([]),
+    repositories: [],
+    topRepos: [],
+    eventsCount: 0,
+    events: [],
+    activeAlertsCount: 0,
+    activeAlerts: [],
     isEmpty: false,
   }
-  onProgress?.(result)
-  const summary = await taskSummaryPromise
-  const taskStats = summary?.total ?? emptyTaskStatistics
-  return {
-    ...result,
-    taskStatisticsState: summary ? 'ready' : 'unavailable',
-    taskStats: {
-      total: taskStats.total,
-      running: taskStats.running,
-      completed: taskStats.success,
-      failed: taskStats.failed,
-      cancelled: taskStats.cancelled,
-      byTaskType: taskStats.by_task_type || {},
-    },
-    recoveryDrill24h: summarizeRecoveryDrill24h(summary?.recovery_24h ?? emptyTaskStatistics),
-    tasks7dBuckets: summary ? buildTasks7dBuckets(taskOutcomeRanges, summary.days) : [],
-    isEmpty: Boolean(summary) && isEmpty && taskStats.total === 0,
+  const sections = dashboardSections
+  const publish = (section: DashboardSection, state: DashboardSectionState, patch?: Partial<DashboardOverview>) => {
+    result = {
+      ...result,
+      ...patch,
+      sections: { ...result.sections, [section]: state },
+      ...(section === 'statistics' ? { taskStatisticsState: state === 'forbidden' ? 'unavailable' : state } : {}),
+    }
+    result.isEmpty = (['sources', 'storage', 'recovery', 'statistics'] as const).every(key => result.sections[key] === 'ready')
+      && !result.productionSources.total && !result.storage.repoCount
+      && !result.recovery.backupPoliciesEnabled && !result.taskStats.total
+    if (!signal.aborted) onProgress?.(result, section, patch)
   }
+
+  const loaders: Record<DashboardSection, (init: RequestInit) => Promise<Partial<DashboardOverview>>> = {
+    sources: async init => ({ productionSources: await productionSourceSummary(init) }),
+    storage: async init => ({
+      storage: unwrapApiPayload<StorageSummary>(await api<unknown>('/api/v1/storage/repositories/dashboard-summary/', init)),
+    }),
+    running: async init => ({ runningTasks: (await listTasks({ status: 'running', page_size: 8 }, init)).results }),
+    recovery: async init => {
+      const [policies, configs, plans, tasks] = await Promise.all([
+        listBackupPolicies({ page_size: 1, is_active: true }, init),
+        listBackupConfigs({ page_size: 1, recovery_plan_enabled: 'true' }, init),
+        listRestorePlans({ enabled: true, page_size: 1 }, init),
+        listTasks({ task_type: 'restore', page_size: 30, exclude_insight_workspace_restores: 'true' }, init),
+      ])
+      return { recovery: summarizeRecovery({
+        backupPoliciesEnabled: policies.count,
+        recoveryConfigCount: configs.count,
+        restorePlansEnabled: plans.count,
+        restoreTasks: tasks.results,
+      }) }
+    },
+    quota: async init => {
+      const license = await fetchCurrentLicense(init)
+      return {
+        orgName: license.organization_name || license.license?.organization_name || result.orgName,
+        quotaAvailable: true,
+        quotaRows: buildQuotaRows(license.usage || {}, license.limits || {},
+          license.instance_shared ? undefined : (license.license as Record<string, unknown> | undefined)),
+      }
+    },
+    repositories: async init => {
+      const rows = repositoryUsageRows(asList<ApiRepository>(await api<unknown>('/api/v1/storage/repositories/?page_size=200', init)))
+      return { repositories: rows, topRepos: rows.slice(0, 5) }
+    },
+    alerts: async init => {
+      const [firing, acknowledged] = await Promise.all([
+        listRecords({ status: 'firing', page_size: 5 }, init),
+        listRecords({ status: 'acknowledged', page_size: 5 }, init),
+      ])
+      return {
+        alertFiring: firing.count,
+        activeAlertsCount: firing.count + acknowledged.count,
+        activeAlerts: [...firing.results, ...acknowledged.results].map(dashboardAlertItem)
+          .sort((left, right) => Date.parse(right.at || '') - Date.parse(left.at || '')),
+      }
+    },
+    events: async init => {
+      const page = await loadEventsPreview(init)
+      return {
+        eventsCount: page.count,
+        events: page.results.map(event => ({
+          id: String(event.id ?? ''), event_type: event.event_type, title: event.title || t('dashboard.eventsTitle'),
+          detail: event.details || '', severity: event.severity || 'information', at: event.occurred_at,
+          to: event.target_path || `/ops/events?eventId=${encodeURIComponent(String(event.id ?? ''))}`,
+        })),
+      }
+    },
+    statistics: async init => {
+      const summary = await dashboardTaskStatistics(new Date(Date.now() - 86_400_000).toISOString(),
+        taskOutcomeRanges.map(range => ({ finished_after: range.finishedAfter, finished_before: range.finishedBefore })), init)
+      const stats = summary.total
+      return {
+        taskStats: { total: stats.total, running: stats.running, completed: stats.success,
+          failed: stats.failed, cancelled: stats.cancelled, byTaskType: stats.by_task_type || {} },
+        recoveryDrill24h: summarizeRecoveryDrill24h(summary.recovery_24h),
+        tasks7dBuckets: buildTasks7dBuckets(taskOutcomeRanges, summary.days),
+      }
+    },
+  }
+  const load = async (section: DashboardSection) => {
+    if (options.section) publish(section, 'loading')
+    try {
+      const patch = await withRequestDeadline(requestSignal => loaders[section]({ signal: requestSignal }), signal)
+      publish(section, 'ready', patch)
+    } catch (error) {
+      publish(section, toApiError(error).status === 403 ? 'forbidden' : 'unavailable')
+    }
+  }
+  if (options.section) {
+    await load(options.section)
+  } else {
+    const core = sections.slice(0, 3).map(load)
+    await Promise.race(core)
+    await Promise.all([...core, ...sections.slice(3).map(load)])
+  }
+  return result
 }

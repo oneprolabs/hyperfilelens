@@ -106,7 +106,7 @@ import {
   createSourceResource,
   createBackupSourceDirectory,
   getBackupSourcePathInfo,
-  listBackupSelectableSources,
+  listBackupSelectableSources as fetchBackupSelectableSources,
   bulkUpdateSourceTags,
   type SourceTag,
   listBackupSourceDirectories,
@@ -118,6 +118,8 @@ import {
   type BackupSourceDeleteResult,
   type BackupSourceDirectoryEntry,
 } from '../../lib/sourceApi'
+import { getRouteRequestSignal } from '../../lib/routeRequestAbort'
+import { withRequestDeadline } from '../../lib/requestDeadline'
 import { buildNasSourceCreatePayload } from '../../lib/nasSourceCreate'
 import { defaultNasMountOptions } from '../../lib/nasMountOptions'
 import { preflightSourceNasCreate, showNasDraftPreflightGuidance } from '../../lib/nasDraftPreflight'
@@ -347,6 +349,14 @@ function reconcileWizardPendingOps() {
 
 const store = useProtectionDemoStore()
 const pageRequests = usePageRequestScope()
+
+function listBackupSelectableSources(
+  params: Parameters<typeof fetchBackupSelectableSources>[0],
+  init?: RequestInit,
+) {
+  return withRequestDeadline(signal => fetchBackupSelectableSources(params, { ...init, signal }),
+    init?.signal ?? getRouteRequestSignal())
+}
 const restoreTaskLifecycle = useRestoreTaskLifecycle()
 
 function showApiError(err: unknown, fallback?: string) {
@@ -446,6 +456,8 @@ async function handleRestoreAlreadyRunning(err: unknown): Promise<boolean> {
 const {
   pipelineStep2Count,
   pipelineStep3Count,
+  acceptStep2Count,
+  acceptStep3Count,
   refreshPipelineStep2Count,
   refreshPipelineStep3Count,
   refreshPipelineCounts,
@@ -1108,6 +1120,13 @@ const sourceTableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const backupSelectableRows = ref<FlowSourceRow[]>([])
 const backupSelectableCount = ref(0)
 const step1GlobalCount = ref(0)
+const flowCountState = reactive<Record<number, 'loading' | 'ready' | 'unavailable'>>({
+  0: 'loading', 1: 'loading', 2: 'loading',
+})
+const flowCountLabel = (step: number, key: string, count: number) => t(
+  flowCountState[step] === 'ready' ? key : flowCountState[step] === 'loading' ? 'common.loading' : 'common.empty',
+  { n: count },
+)
 const backupSelectableLoading = ref(initialFlowMainStep === 0)
 const step2SelectableRows = ref<FlowSourceRow[]>([])
 const step2SelectableCount = ref(0)
@@ -1646,10 +1665,14 @@ async function loadBackupSelectable(options: { silent?: boolean; showError?: boo
         untagged: params.untagged || undefined,
         step: 1,
       }, { signal })
-      if (latestBackupSelectableRequestKey !== key) return
+      if (signal.aborted || latestBackupSelectableRequestKey !== key || !wizardCanViewSources.value) return
       backupSelectableRows.value = list.results.map(mapBackupSelectableToFlowRow)
       backupSelectableCount.value = list.count
-      if (!step1ServerFiltersActive(params)) step1GlobalCount.value = list.count
+      if (!step1ServerFiltersActive(params)) {
+        pageRequests.abortScope('flow-counter-0')
+        step1GlobalCount.value = list.count
+        flowCountState[0] = 'ready'
+      }
       rememberSelectableRows(backupSelectableRows.value)
       reconcileWizardPendingOps()
       clearFlowStepLoadRetry(0)
@@ -1696,7 +1719,11 @@ async function loadStep2Selectable(options: { signal?: AbortSignal } = {}) {
   const rows = list.results.map(mapBackupSelectableToFlowRow)
   step2SelectableRows.value = rows
   step2SelectableCount.value = list.count
-  if (!step2ServerFiltersActive()) pipelineStep2Count.value = list.count
+  if (!step2ServerFiltersActive()) {
+    pageRequests.abortScope('flow-counter-1')
+    acceptStep2Count(list.count)
+    flowCountState[1] = 'ready'
+  }
   rememberSelectableRows(rows)
   clearFlowStepLoadRetry(1)
   flowStepLoadRetryAttempted[1] = false
@@ -1730,7 +1757,11 @@ async function loadStep3Selectable(options: { signal?: AbortSignal; syncExpanded
   const rows = list.results.map(mapBackupSelectableToFlowRow)
   step3SelectableRows.value = rows
   step3SelectableCount.value = list.count
-  if (!step3ServerFiltersActive()) pipelineStep3Count.value = list.count
+  if (!step3ServerFiltersActive()) {
+    pageRequests.abortScope('flow-counter-2')
+    acceptStep3Count(list.count)
+    flowCountState[2] = 'ready'
+  }
   step3InitialLoadPending.value = false
   rememberSelectableRows(rows)
   reconcileBackupStartAwaitingRuntime(rows.map((row) => row.id))
@@ -1759,7 +1790,6 @@ async function refreshStep3State(sourceIds: string[]) {
 
 async function refreshBackupSourcePoolCount(signal?: AbortSignal) {
   if (!wizardCanViewSources.value) {
-    backupSelectableCount.value = 0
     step1GlobalCount.value = 0
     return
   }
@@ -1769,8 +1799,29 @@ async function refreshBackupSourcePoolCount(signal?: AbortSignal) {
     step: 1,
   }, { signal })
   if (signal?.aborted || !wizardCanViewSources.value) return
-  backupSelectableCount.value = list.count
   step1GlobalCount.value = list.count
+}
+
+async function refreshFlowCounter(step: 0 | 1 | 2) {
+  const scope = `flow-counter-${step}`
+  const signal = pageRequests.nextSignal(scope)
+  flowCountState[step] = 'loading'
+  try {
+    if (step === 0) await refreshBackupSourcePoolCount(signal)
+    else if (step === 1) await refreshPipelineStep2Count(signal)
+    else await refreshPipelineStep3Count(signal)
+    if (pageRequests.isCurrentSignal(scope, signal)) flowCountState[step] = 'ready'
+  } catch {
+    if (pageRequests.isCurrentSignal(scope, signal)) flowCountState[step] = 'unavailable'
+  } finally {
+    pageRequests.releaseSignal(scope, signal)
+  }
+}
+
+const failedFlowCounters = computed(() => ([0, 1, 2] as const).filter(step => flowCountState[step] === 'unavailable'))
+
+function retryFlowCounters() {
+  for (const step of failedFlowCounters.value) void refreshFlowCounter(step)
 }
 
 function syncWizardCountsFromPipeline() {
@@ -1791,7 +1842,7 @@ async function refreshFlowStepData(
   const showLoading = options.showLoading ?? true
   if (step === 0) {
     try {
-      if (step1ServerFiltersActive()) await refreshBackupSourcePoolCount()
+      if (step1ServerFiltersActive() && flowCountState[0] === 'unavailable') void refreshFlowCounter(0)
       await loadBackupSelectable({ silent: !showLoading, showError: options.showError })
     } catch (error) {
       if (pageRequests.isAbortError(error)) return
@@ -1811,12 +1862,12 @@ async function refreshFlowStepData(
   if (showLoading && !consumePrimedStep3Loading) setFlowStepDataLoading(step, true)
   try {
     if (step === 1) {
-      if (step2ServerFiltersActive()) await refreshPipelineStep2Count(signal)
+      if (step2ServerFiltersActive() && flowCountState[1] === 'unavailable') void refreshFlowCounter(1)
       await loadStep2Selectable({ signal })
       return
     }
 
-    if (step3ServerFiltersActive()) await refreshPipelineStep3Count(signal)
+    if (step3ServerFiltersActive() && flowCountState[2] === 'unavailable') void refreshFlowCounter(2)
     await loadStep3Selectable({ signal })
   } catch (e) {
     if (!pageRequests.isAbortError(e)) {
@@ -1943,7 +1994,8 @@ const step3ReadyCount = computed(() => pipelineStep3Count.value)
 // the Step 2 table pager.
 const step2GlobalPendingCount = computed(() => pipelineStep2Count.value)
 
-const step2AllSourcesConfigured = computed(() => step2GlobalPendingCount.value === 0 && step3ReadyCount.value > 0)
+const step2AllSourcesConfigured = computed(() => flowCountState[1] === 'ready' && flowCountState[2] === 'ready'
+  && step2GlobalPendingCount.value === 0 && step3ReadyCount.value > 0)
 
 const step3TableRef = ref<InstanceType<typeof ElTable> | null>(null)
 const step3SourceSelection = ref<FlowSourceRow[]>([])
@@ -3098,11 +3150,11 @@ async function initializeFlow() {
     } else {
       await bootstrapPipeline({
         signal,
+        refreshCounts: false,
         migrateLegacy: hasTenantPermission('protection.source_hosts.manage')
           && hasTenantPermission('protection.source_nas.manage'),
       })
       if (signal.aborted) return
-      syncWizardCountsFromPipeline()
       if (!applyRequestedFlowStep(route.query.step)) {
         const storedStep = consumeStoredFlowReturnStep()
         applyFlowStep(storedStep)
@@ -3112,12 +3164,14 @@ async function initializeFlow() {
         applyFlowStep(2)
         syncFlowStepRoute(2, 'replace')
       }
-      // The active Step 1 page already returns its unfiltered global count.
-      // Only issue the lightweight Step 1 count request when another step is
-      // initially active and the Step 1 table will not be loaded.
-      if (flowMainStep.value !== 0) await refreshBackupSourcePoolCount(signal)
-      if (signal.aborted) return
-      await refreshFlowStepData(flowMainStep.value)
+      const active = flowMainStep.value
+      const table = refreshFlowStepData(active)
+      const filters = [step1ServerFiltersActive(), step2ServerFiltersActive(), step3ServerFiltersActive()]
+      for (const step of [0, 1, 2] as const) {
+        if (step !== active || filters[step]) void refreshFlowCounter(step)
+      }
+      await table
+      if (flowMainStep.value !== active && !signal.aborted) await refreshFlowStepData(flowMainStep.value)
       if (flowMainStep.value === 1) scheduleInteractivePreload(preloadBackupCreateWizard)
     }
   }, (failed) => {
@@ -4767,47 +4821,50 @@ function ensureStep3AutoRefreshInterval() {
 }
 
 async function refreshStep3SourceList() {
-  if (flowDisposed || flowLoadError.value || flowMainStep.value !== 2 || document.hidden || step3RefreshInFlight || step3ActionRefreshInFlight) return
+  if (flowDisposed || flowLoadError.value || flowMainStep.value !== 2 || document.hidden
+    || flowStepDataLoading[2] || step3RefreshInFlight || step3ActionRefreshInFlight) return
   const scope = flowStepScope(2)
-  const signal = pageRequests.nextSignal(scope)
+  const scopeSignal = pageRequests.nextSignal(scope)
   const resetTrackedIds = collectResetTrackedIds()
   step3RefreshInFlight = true
   try {
-    // Runtime refresh has no source ids to work with when the initial list
-    // load was cancelled or failed. Reload the paged Step 3 catalog directly
-    // instead of returning early and waiting for a manual page refresh.
-    const provisionTracked = step3SourceList.value.some((row) => sourceProvisionState(row.id) === 'provisioning')
-    if (step3SelectableRows.value.length === 0 || resetTrackedIds.length || provisionTracked) {
-      await loadStep3Selectable({ signal })
-    } else {
-      await refreshStep3RuntimeRows(signal)
-    }
-    if (!pageRequests.isCurrentSignal(scope, signal)) return
-    if (!resetTrackedIds.length) return
-    const resetStates = await refreshTrackedResetStates(resetTrackedIds, signal)
-    if (!pageRequests.isCurrentSignal(scope, signal)) return
-    const finishedIds = selectFinishedResetSourceIds(
-      resetTrackedIds,
-      (id) => resetStates.get(id) ?? 'resetting',
-    )
-    const failedIds = selectTerminalFailedResetSourceIds(
-      resetTrackedIds,
-      (id) => resetStates.get(id) ?? 'resetting',
-    )
-    // Drop terminal failures immediately; keep finished ids tracked until the
-    // pipeline refresh succeeds so an abort/failure can retry next poll.
-    untrackResetPipelineSources(failedIds)
-    if (!finishedIds.length) return
-    await refreshPipelineCounts(signal)
-    if (!pageRequests.isCurrentSignal(scope, signal)) return
-    syncStep2WizardCountFromPipeline()
-    untrackResetPipelineSources(finishedIds)
+    await withRequestDeadline(async (signal) => {
+      // Runtime refresh has no source ids to work with when the initial list
+      // load was cancelled or failed. Reload the paged Step 3 catalog directly
+      // instead of returning early and waiting for a manual page refresh.
+      const provisionTracked = step3SourceList.value.some((row) => sourceProvisionState(row.id) === 'provisioning')
+      if (step3SelectableRows.value.length === 0 || resetTrackedIds.length || provisionTracked) {
+        await loadStep3Selectable({ signal })
+      } else {
+        await refreshStep3RuntimeRows(signal)
+      }
+      if (!pageRequests.isCurrentSignal(scope, scopeSignal) || signal.aborted) return
+      if (!resetTrackedIds.length) return
+      const resetStates = await refreshTrackedResetStates(resetTrackedIds, signal)
+      if (!pageRequests.isCurrentSignal(scope, scopeSignal) || signal.aborted) return
+      const finishedIds = selectFinishedResetSourceIds(
+        resetTrackedIds,
+        (id) => resetStates.get(id) ?? 'resetting',
+      )
+      const failedIds = selectTerminalFailedResetSourceIds(
+        resetTrackedIds,
+        (id) => resetStates.get(id) ?? 'resetting',
+      )
+      // Drop terminal failures immediately; keep finished ids tracked until the
+      // pipeline refresh succeeds so an abort/failure can retry next poll.
+      untrackResetPipelineSources(failedIds)
+      if (!finishedIds.length) return
+      await refreshPipelineCounts(signal)
+      if (!pageRequests.isCurrentSignal(scope, scopeSignal) || signal.aborted) return
+      syncStep2WizardCountFromPipeline()
+      untrackResetPipelineSources(finishedIds)
+    }, scopeSignal)
   } catch (error) {
-    handleFlowLoadError(error)
+    if (!pageRequests.isAbortError(error)) handleFlowLoadError(error)
     // Auto-refresh is best-effort; keep the last known runtime state and retry
     // on the next interval without creating an unhandled promise rejection.
   } finally {
-    pageRequests.releaseSignal(scope, signal)
+    pageRequests.releaseSignal(scope, scopeSignal)
     step3RefreshInFlight = false
     for (const row of step3SourceList.value) {
       syncSourceStopOptimisticFromRuntime(row.id, 'backup')
@@ -10473,7 +10530,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   aria-hidden="true"
                 />
                 <span class="dp-flow-card__meta-text">
-                  {{ t('protection.backupsPage.flowStepSourceMetric', { n: step1GlobalCount }) }}
+                  {{ flowCountLabel(0, 'protection.backupsPage.flowStepSourceMetric', step1GlobalCount) }}
                 </span>
               </div>
             </div>
@@ -10538,7 +10595,7 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   aria-hidden="true"
                 />
                 <span class="dp-flow-card__meta-text">
-                  {{ t('protection.backupsPage.flowStepBackupMetricPending', { n: step2GlobalPendingCount }) }}
+                  {{ flowCountLabel(1, 'protection.backupsPage.flowStepBackupMetricPending', step2GlobalPendingCount) }}
                 </span>
               </div>
             </div>
@@ -10602,13 +10659,17 @@ async function runRecovery(mode: 'plan' | 'manual' = 'manual') {
                   aria-hidden="true"
                 />
                 <span class="dp-flow-card__meta-text">
-                  {{ t('protection.backupsPage.flowStepRestoreMetric', { n: step3ReadyCount }) }}
+                  {{ flowCountLabel(2, 'protection.backupsPage.flowStepRestoreMetric', step3ReadyCount) }}
                 </span>
               </div>
             </div>
           </button>
         </div>
 
+        <div v-if="failedFlowCounters.length" class="flex items-center justify-end gap-2 text-sm" role="status">
+          <span>{{ t('errors.generic.loadFailed') }}</span>
+          <ElButton text size="small" @click="retryFlowCounters">{{ t('common.retry') }}</ElButton>
+        </div>
         <div class="hfl-list-shell protection-flow-list-shell">
           <div class="hfl-list-panel protection-flow-list-panel">
             <div

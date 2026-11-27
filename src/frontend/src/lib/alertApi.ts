@@ -205,7 +205,7 @@ export async function restoreDefaultPolicy(id: string) {
   )
 }
 
-export async function listRecords(params?: Record<string, string | number | boolean>) {
+export async function listRecords(params?: Record<string, string | number | boolean>, init?: RequestInit) {
   const qs = new URLSearchParams()
   if (params) {
     for (const [k, v] of Object.entries(params)) {
@@ -213,7 +213,7 @@ export async function listRecords(params?: Record<string, string | number | bool
     }
   }
   const path = qs.toString() ? `${base}/records/?${qs}` : `${base}/records/`
-  return paged<AlertRecord>(await api<unknown>(path))
+  return paged<AlertRecord>(await api<unknown>(path, init))
 }
 
 export async function acknowledgeRecord(id: string, note = '') {

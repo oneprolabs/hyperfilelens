@@ -18,8 +18,16 @@ describe('backup wizard initial step load recovery', () => {
     expect(page).not.toContain('watch(step2PipelineSourceIds')
   })
 
-  it('uses the initial Step 1 page count instead of requesting it twice', () => {
-    expect(page).toContain('if (flowMainStep.value !== 0) await refreshBackupSourcePoolCount(signal)')
+  it('starts the active table before optional counts and reuses an unfiltered table count', () => {
+    const initialization = sourceBetween('async function initializeFlow()', 'onMounted(async () => {')
+    const table = initialization.indexOf('const table = refreshFlowStepData(active)')
+    const counters = initialization.indexOf('if (step !== active || filters[step]) void refreshFlowCounter(step)')
+    expect(table).toBeGreaterThan(-1)
+    expect(counters).toBeGreaterThan(table)
+    expect(initialization.indexOf('await table')).toBeGreaterThan(counters)
+    expect(initialization).toContain('refreshCounts: false')
+    const counter = sourceBetween('async function refreshBackupSourcePoolCount', 'async function refreshFlowCounter')
+    expect(counter).not.toContain('backupSelectableCount.value')
   })
 
   it('never reuses an aborted Step 1 request', () => {

@@ -1,5 +1,6 @@
 import { defineAsyncComponent, defineComponent, h, type Component } from 'vue'
 import { ChunkLoadError } from './ChunkLoadError'
+import { withRequestDeadline } from '../lib/requestDeadline'
 import {
   clearChunkLoadFailureAttempt,
   isDynamicImportFailure,
@@ -8,9 +9,9 @@ import {
 
 type RouteLoader = () => Promise<{ default: Component }>
 
-export function lazyRoute(loader: RouteLoader): Component {
+export function lazyRoute(loader: RouteLoader, timeoutMs?: number): Component {
   const AsyncPage = defineAsyncComponent({
-    loader,
+    loader: timeoutMs ? () => withRequestDeadline(loader, undefined, timeoutMs) : loader,
     suspensible: true,
     errorComponent: ChunkLoadError,
     onError(error, _retry, fail) {

@@ -7,6 +7,8 @@ import {
 } from '../lib/sourceApi'
 import { apiErrorMessage } from '../lib/api'
 import { toApiError } from '../lib/errors/normalizer'
+import { getRouteRequestSignal } from '../lib/routeRequestAbort'
+import { withRequestDeadline } from '../lib/requestDeadline'
 import {
   clearLegacyStep2Sources,
   isBackupSelectableId,
@@ -28,6 +30,15 @@ export function useBackupSourcePipeline(options: {
   let step2CountRequest = 0
   let step3CountRequest = 0
 
+  const acceptStep2Count = (count: number) => {
+    step2CountRequest += 1
+    pipelineStep2Count.value = count
+  }
+  const acceptStep3Count = (count: number) => {
+    step3CountRequest += 1
+    pipelineStep3Count.value = count
+  }
+
   async function refreshPipelineStep2Count(signal?: AbortSignal) {
     if (signal?.aborted) return
     const request = ++step2CountRequest
@@ -35,7 +46,12 @@ export function useBackupSourcePipeline(options: {
       pipelineStep2Count.value = 0
       return
     }
-    const list = await listBackupSelectableSources({ step: 2, page: 1, page_size: 1 }, { signal })
+    const list = await withRequestDeadline(requestSignal => listBackupSelectableSources(
+      { step: 2, page: 1, page_size: 1 }, { signal: requestSignal },
+    ), signal ?? getRouteRequestSignal()).catch(error => {
+      if (!signal?.aborted) throw error
+    })
+    if (!list) return
     if (signal?.aborted || request !== step2CountRequest) return
     if (options.canViewSources?.() === false) {
       pipelineStep2Count.value = 0
@@ -47,10 +63,13 @@ export function useBackupSourcePipeline(options: {
   async function refreshPipelineStep3Count(signal?: AbortSignal) {
     if (signal?.aborted) return
     const request = ++step3CountRequest
-    const list = await listBackupSelectableSources({
+    const list = await withRequestDeadline(requestSignal => listBackupSelectableSources({
       step: 3, page: 1, page_size: 1,
       ...(options.configurationScope ? { scope: 'backup_configurations' as const } : {}),
-    }, { signal })
+    }, { signal: requestSignal }), signal ?? getRouteRequestSignal()).catch(error => {
+      if (!signal?.aborted) throw error
+    })
+    if (!list) return
     if (signal?.aborted || request !== step3CountRequest) return
     pipelineStep3Count.value = list.count
   }
@@ -79,30 +98,37 @@ export function useBackupSourcePipeline(options: {
     return result.updated
   }
 
-  async function bootstrapPipeline(options: { signal?: AbortSignal; migrateLegacy?: boolean } = {}) {
+  async function bootstrapPipeline(options: { signal?: AbortSignal; migrateLegacy?: boolean; refreshCounts?: boolean } = {}) {
     if (options.signal?.aborted) return
     // Opening a read-only page must not attempt a source-management write.
     const legacyReal = options.migrateLegacy === false ? [] : readLegacyRealStep2Sources()
+    let migrated = false
     try {
       if (legacyReal.length) {
-        await setPipelineStep(legacyReal, 2, options.signal)
+        await withRequestDeadline(signal => setBackupSourcePipelineStep({ ids: legacyReal, step: 2 }, { signal }),
+          options.signal ?? getRouteRequestSignal())
       }
+      migrated = true
     } catch (err) {
+      if (options.signal?.aborted) return
       // Legacy browser storage is not an authorization grant. A stale source
       // may no longer be manageable even though permitted reads still work.
       if (!isPipelineMoveBackwardsError(err) && toApiError(err).status !== 403) throw err
+      migrated = true
     } finally {
       // A cancelled migration can be retried on the next page visit. The
       // server remains authoritative if the write completed before abort.
-      if (options.migrateLegacy !== false && !options.signal?.aborted) clearLegacyStep2Sources()
+      if (migrated && options.migrateLegacy !== false && !options.signal?.aborted) clearLegacyStep2Sources()
     }
     if (options.signal?.aborted) return
-    await refreshPipelineCounts(options.signal)
+    if (options.refreshCounts !== false) await refreshPipelineCounts(options.signal)
   }
 
   return {
     pipelineStep2Count,
     pipelineStep3Count,
+    acceptStep2Count,
+    acceptStep3Count,
     refreshPipelineStep2Count,
     refreshPipelineStep3Count,
     refreshPipelineCounts,
