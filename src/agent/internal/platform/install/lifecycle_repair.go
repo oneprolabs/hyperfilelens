@@ -46,6 +46,9 @@ func InterruptedLifecycleSucceeded(kind string, startedAt *time.Time, dataDir, l
 
 	switch normalizeLifecycleKind(kind) {
 	case lifecycleKindUpgrade:
+		if pendingUpgradeFailed(dataDir) {
+			return false, nil
+		}
 		if upgradeLogShowsSuccessAfter(UpgradeLogPath(logDir), startedAt) {
 			return true, detachedRepairResult()
 		}
@@ -115,6 +118,21 @@ func PendingUpgradeFailed(dataDir string) bool {
 	return pendingUpgradeFailed(dataDir)
 }
 
+// IsLifecycleUpgradeKind identifies an Agent upgrade across legacy aliases.
+func IsLifecycleUpgradeKind(kind string) bool {
+	return normalizeLifecycleKind(kind) == lifecycleKindUpgrade
+}
+
+// PendingUpgradeFailedSince does not attribute a previous attempt's global
+// failure marker to a newer accepted execution.
+func PendingUpgradeFailedSince(dataDir string, since *time.Time) bool {
+	if since == nil || strings.TrimSpace(dataDir) == "" {
+		return false
+	}
+	info, err := os.Lstat(LifecycleUpgradeFailedPath(dataDir))
+	return err == nil && info.Mode().IsRegular() && !info.ModTime().Before(*since)
+}
+
 // IsLifecycleRepairKind reports whether task repair should defer failure until logs exist.
 func IsLifecycleRepairKind(kind string) bool {
 	switch normalizeLifecycleKind(kind) {
@@ -150,7 +168,8 @@ func logShowsSuccessAfter(logPath, marker string, since *time.Time) bool {
 	if err != nil {
 		return false
 	}
-	threshold := since.UTC().Add(-30 * time.Second)
+	// Older runners write timestamps at whole-second precision.
+	threshold := since.UTC().Truncate(time.Second)
 	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || !strings.Contains(line, marker) {

@@ -184,8 +184,8 @@ func TestUnixUpgradeScriptKeepsGatewaySidecarInAgentUpgrade(t *testing.T) {
 	if successIdx < 0 || clearIdx < 0 || sidecarIdx < 0 {
 		t.Fatal("upgrade script is missing success, sidecar, or pending clear steps")
 	}
-	if !(successIdx < sidecarIdx && sidecarIdx < clearIdx) {
-		t.Fatalf("expected success log, then sidecar upgrade, then pending clear")
+	if !(sidecarIdx < successIdx && successIdx < clearIdx) {
+		t.Fatalf("expected sidecar upgrade, then success log, then pending clear")
 	}
 	successBranchStart := strings.Index(text, `if [[ "$rc" -eq 0 ]]; then`)
 	failBranchStart := strings.Index(text, `log "FAIL " "Upgrade failed (exit=${rc})`)
@@ -201,5 +201,44 @@ func TestUnixUpgradeScriptKeepsGatewaySidecarInAgentUpgrade(t *testing.T) {
 	}
 	if out, err := exec.Command("bash", "-n", scriptPath).CombinedOutput(); err != nil {
 		t.Fatalf("generated upgrade script is not valid bash: %v\n%s", err, out)
+	}
+}
+
+func TestUnixUpgradeRunnerDoesNotStartUnverifiedRollback(t *testing.T) {
+	dir := t.TempDir()
+	pending := filepath.Join(dir, "pending")
+	bin := filepath.Join(dir, "bin")
+	for _, path := range []string{pending, bin} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive := filepath.Join(pending, "package.tar.gz")
+	installer := filepath.Join(pending, "install.sh")
+	for path, data := range map[string]string{
+		archive:                         "fixture",
+		installer:                       "#!/bin/sh\nexit 70\n",
+		filepath.Join(bin, "sleep"):     "#!/bin/sh\nexit 0\n",
+		filepath.Join(bin, "systemctl"): "#!/bin/sh\nprintf 'called' > \"$SERVICE_MARKER\"\n",
+	} {
+		if err := os.WriteFile(path, []byte(data), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := filepath.Join(pending, "run-upgrade.sh")
+	if err := writeUnixUpgradeScript(archive, installer, dir, "system", "", "", false, script, DefaultUpgradeMinFreeBytes); err != nil {
+		t.Fatal(err)
+	}
+	serviceMarker := filepath.Join(dir, "service-command")
+	cmd := exec.Command("bash", script)
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "SERVICE_MARKER="+serviceMarker)
+	if err := cmd.Run(); err == nil || cmd.ProcessState.ExitCode() != 70 {
+		t.Fatalf("exit=%v, want 70", err)
+	}
+	if _, err := os.Stat(serviceMarker); !os.IsNotExist(err) {
+		t.Fatalf("unverified rollback started the service: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(pending, "FAILED")); err != nil {
+		t.Fatal(err)
 	}
 }

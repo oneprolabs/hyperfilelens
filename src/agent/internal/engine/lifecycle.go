@@ -51,6 +51,17 @@ func (e *Engine) runAgentUpgrade(ctx context.Context, rep ReporterSink, taskID s
 	if e.current().InstallationMode == model.InstallationModeAccount {
 		return "failed", nil, "specified-user continuous protection requires administrator authorization for upgrade; run the generated local administrator command"
 	}
+	root := strings.TrimSpace(e.current().DataDir)
+	if root == "" {
+		root = vfs.DefaultAgentDataDir()
+	}
+	blocked, stateErr := install.UpgradeNeedsRecovery(root)
+	if stateErr != nil {
+		return "failed", nil, fmt.Sprintf("read upgrade recovery state: %v", stateErr)
+	}
+	if blocked {
+		return "failed", map[string]any{"error_code": "AGENT_UPGRADE_RECOVERY_REQUIRED", "phase": "preflight"}, "A previous upgrade requires recovery verification before retrying."
+	}
 	minimum, err := upgradeMinimumFromPayload(p)
 	if err != nil {
 		return "failed", nil, err.Error()
@@ -280,8 +291,13 @@ func (e *Engine) prepareUpgradeBundle(ctx context.Context, rep ReporterSink, tas
 		os.RemoveAll(workDir)
 		return "", "", "", "", err
 	}
-	if err := enroll.ValidateAgentPackage(bundleRoot, cfg.Role, targetVersion); err != nil {
+	if err := enroll.ValidateAgentPackageBuild(bundleRoot, cfg.Role, targetVersion, payloadStringValue(p.Extra["target_commit"])); err != nil {
 		os.RemoveAll(workDir)
+		if errors.Is(err, enroll.ErrAgentBuildMismatch) {
+			return "", "", "", "", &upgradePreparationError{err: err, result: map[string]any{
+				"phase": "preflight", "error_code": "AGENT_UPGRADE_BUILD_MISMATCH", "old_agent_unchanged": true,
+			}}
+		}
 		return "", "", "", "", fmt.Errorf("upgrade package validation: %w", err)
 	}
 	return archivePath, targetVersion, workDir, bundleRoot, nil

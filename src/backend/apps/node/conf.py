@@ -160,3 +160,19 @@ ENROLLMENT_TOKEN_TTL_SECONDS = env_int(
     "ENROLLMENT_TOKEN_TTL_SECONDS",
     24 * 3600,
 )
+
+# Additive diagnostics from identity-bound local installer attempts. Older Agents
+# continue to use HOST_UPGRADE_FAILED; unknown codes retain that safe fallback.
+UPGRADE_INSTALLER_ERRORS = {
+    "AGENT_UPGRADE_BUILD_MISMATCH": "The downloaded Agent build does not match the upgrade request. No new version was installed.",
+    "AGENT_UPGRADE_STARTUP_FAILED": "The upgraded Agent did not pass local startup verification.",
+    "AGENT_UPGRADE_INSTALL_FAILED": "The local Agent installer failed. Review the recorded installer phase and rollback outcome.",
+    "AGENT_UPGRADE_RECOVERY_REQUIRED": "A previous upgrade requires rollback verification before another upgrade can start.",
+    "AGENT_UPGRADE_ROLLBACK_FILES_UNVERIFIED": "The previous Agent files or configuration could not be verified against the rollback snapshot. No new upgrade was applied.",
+    "AGENT_UPGRADE_ROLLBACK_SNAPSHOT_UNVERIFIED": "The previous rollback snapshot is missing or could not be read and verified. No new upgrade was applied.",
+    "AGENT_UPGRADE_ROLLBACK_LIVE_DB_UNVERIFIED": "The current Agent database could not be verified. No new upgrade was applied.",
+    "AGENT_UPGRADE_ROLLBACK_SNAPSHOT_DB_UNVERIFIED": "The saved rollback database could not be verified. No new upgrade was applied.",
+    "AGENT_UPGRADE_ROLLBACK_REFERENCES_UNVERIFIED": "The current repository references could not be matched to the rollback snapshot. No new upgrade was applied.",
+    "AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED": "The previous Agent service or its configuration could not be verified. No new upgrade was applied.",
+    "AGENT_UPGRADE_ROLLBACK_VERIFICATION_TIMEOUT": "Rollback verification timed out. Retry when the host has less disk or database activity. Recovery materials were retained.",
+}

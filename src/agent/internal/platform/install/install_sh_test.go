@@ -355,7 +355,7 @@ func TestInstallShellUpgradeKeepsRollbackUntilLocalHealth(t *testing.T) {
 	if rollbackFunction < 0 {
 		t.Fatal("install.sh is missing upgrade_rollback_on_error")
 	}
-	rollbackStart := strings.Index(body[rollbackFunction:], `if [[ "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 ]] && agent_manages_service; then`)
+	rollbackStart := strings.Index(body[rollbackFunction:], `if [[ "${rollback_ok}" -eq 1 && "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 ]] && agent_manages_service; then`)
 	if rollbackStart < 0 {
 		t.Fatal("install.sh rollback is missing active-service restoration")
 	}

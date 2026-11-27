@@ -540,8 +540,8 @@ func TestTaskRepoDiskFailurePrecedesPreviousUpgradeSuccess(t *testing.T) {
 		want   model.TaskStatus
 	}{
 		{"current failure", "current", true, model.TaskStatusFailed},
-		{"stale diagnostics", "stale", true, model.TaskStatusSucceeded},
-		{"malformed diagnostics", "malformed", true, model.TaskStatusSucceeded},
+		{"stale diagnostics", "stale", true, model.TaskStatusFailed},
+		{"malformed diagnostics", "malformed", true, model.TaskStatusFailed},
 		{"installer still running", "current", false, model.TaskStatusRunning},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -609,12 +609,12 @@ func TestTaskRepoDiskFailurePrecedesPreviousUpgradeSuccess(t *testing.T) {
 			if task.Status != test.want {
 				t.Fatalf("status = %s, want %s; result = %#v", task.Status, test.want, task.Result)
 			}
-			if test.want == model.TaskStatusFailed &&
+			if test.failed && test.record == "current" &&
 				(task.Result["error_code"] != install.UpgradeSpaceInsufficient || task.Result["old_agent_unchanged"] != true) {
 				t.Fatalf("current disk diagnostics lost: %#v", task.Result)
 			}
-			if test.want == model.TaskStatusSucceeded && task.Result["error_code"] != nil {
-				t.Fatalf("invalid diagnostics replaced the existing log fallback: %#v", task.Result)
+			if test.record != "current" && task.Result["error_code"] != nil {
+				t.Fatalf("stale or malformed diagnostics were attributed to this failure: %#v", task.Result)
 			}
 		})
 	}

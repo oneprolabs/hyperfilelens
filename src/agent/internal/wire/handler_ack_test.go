@@ -428,3 +428,43 @@ func TestWebsocketSinkDoesNotRegressTerminalTask(t *testing.T) {
 		t.Fatalf("terminal result was overwritten: %#v", task.Result)
 	}
 }
+
+func TestUpgradeHandoffCannotAcknowledgeLaterTerminalResult(t *testing.T) {
+	ctx := t.Context()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := database.NewTaskRepo(db)
+	if err := repo.RecordCommand(ctx, database.RecordInput{TaskID: "upgrade", Kind: "agent.upgrade"}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(nil, controller.NewTracker(), repo)
+	h.SetTaskResultAckEnabled(true)
+	sender := &captureSender{}
+	result := map[string]any{"mode": "local_detached", "target_version": "0.3.28"}
+	if err := h.sendDetachedHandoff(ctx, sender, "agent.upgrade", "upgrade", result); err != nil {
+		t.Fatal(err)
+	}
+	progress, ok := sender.frames[0].(TaskProgress)
+	if !ok || progress.Progress["mode"] != "local_detached" || progress.Progress["target_version"] != "0.3.28" || len(h.resultInFlight) != 0 {
+		t.Fatalf("upgrade handoff created an ACKable durable result: %#v", sender.frames)
+	}
+	if err := repo.Finish(ctx, "upgrade", model.TaskStatusFailed, nil, "installer failed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.FlushUnreportedResults(ctx, sender); err != nil {
+		t.Fatal(err)
+	}
+	terminal, ok := sender.frames[1].(TaskResult)
+	if !ok || terminal.Status != "failed" || terminal.TaskID != "upgrade" {
+		t.Fatalf("terminal result not independently delivered: %#v", sender.frames)
+	}
+	if err := h.Handle(ctx, []byte(`{"type":"task.result.ack","task_id":"upgrade"}`), sender); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := repo.ListUnreported(ctx, 0); err != nil || len(pending) != 0 {
+		t.Fatalf("terminal result was not acknowledged: %v %v", pending, err)
+	}
+}

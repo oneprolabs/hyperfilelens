@@ -20,6 +20,7 @@ import (
 	"hyperfilelens/agent/internal/infra/observability"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/performance"
+	"hyperfilelens/agent/internal/platform/lifecycle"
 	"hyperfilelens/agent/internal/remote"
 	"hyperfilelens/agent/internal/selfupdate"
 	"hyperfilelens/agent/internal/wire"
@@ -30,7 +31,6 @@ const gatewayObservabilityRefreshInterval = 10 * time.Minute
 const heartbeatCollectionInterval = 30 * time.Second
 const durableRegistrationRetryInterval = 5 * time.Minute
 const lifecycleRepairInterval = 10 * time.Second
-const lifecycleRepairTimeout = 10 * time.Minute
 const snapshotDownloadCleanupInterval = time.Hour
 
 // Agent is the runtime composition root coordinating module startup and shutdown.
@@ -137,6 +137,11 @@ func (a *Agent) Startup(ctx context.Context) error {
 	}
 	envPath, jsonPath := a.store.Paths()
 	slog.Info("config files", "env_file", envPath, "json_file", jsonPath)
+	if err := lifecycle.Publish(ctx, dataRoot, selfupdate.Version, selfupdate.Commit); err != nil {
+		_ = db.Close()
+		a.db = nil
+		return startupError("HFL-STARTUP-005", "publish local readiness", err)
+	}
 	go snapshotDownloadCleanupLoop(ctx)
 
 	return nil
@@ -168,6 +173,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	defer a.Shutdown(context.Background())
+	a.startDeferredLifecycleRepair(ctx)
 	go a.storageInventoryLoop(ctx)
 	go a.networkStorageInventoryLoop(ctx)
 	go a.monitorCollectionLoop(ctx)
@@ -489,7 +495,7 @@ func (a *Agent) waitControlPlaneConfig(ctx context.Context) {
 	}
 }
 
-// deferredLifecycleRepair re-checks detached upgrade/uninstall tasks after reconnect.
+// deferredLifecycleRepair observes detached lifecycle work for the process lifetime.
 // Startup repair can run while the installer is still executing; this persists
 // the terminal result for the existing task-result outbox once evidence exists.
 func (a *Agent) deferredLifecycleRepair(ctx context.Context) {
@@ -504,17 +510,12 @@ func (a *Agent) deferredLifecycleRepair(ctx context.Context) {
 		if a.taskFixer == nil {
 			return
 		}
-		startedAt, err := a.taskFixer.PendingLifecycleStartedAt(ctx)
+		// Only detached lifecycle work is repaired here. Ordinary active work
+		// must not be classified as interrupted by a periodic observer.
+		a.lifecycleRepairMu.Lock()
+		_, err := a.taskFixer.RepairLifecycle(ctx)
+		a.lifecycleRepairMu.Unlock()
 		if err != nil {
-			slog.Warn("deferred lifecycle repair lookup failed", "err", err)
-		} else if startedAt == nil {
-			return
-		} else if time.Since(*startedAt) >= lifecycleRepairTimeout {
-			slog.Warn("deferred lifecycle repair timed out", "started_at", startedAt)
-			return
-		}
-
-		if _, err := a.repairRunning(ctx); err != nil {
 			slog.Warn("deferred lifecycle repair failed", "err", err)
 		}
 

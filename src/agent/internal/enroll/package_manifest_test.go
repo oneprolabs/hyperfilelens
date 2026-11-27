@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -197,4 +198,14 @@ func writeTestAgentPackage(t *testing.T, platform, arch, flavor string) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func TestValidateAgentPackageBuildPinsCommitEvenWhenVersionMatches(t *testing.T) {
+	root := writeTestAgentPackage(t, "linux", "amd64", "standard")
+	if err := validateAgentPackageBuildFor(root, "linux", "amd64", model.RoleAgent, "1.2.3", "ABC123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAgentPackageBuildFor(root, "linux", "amd64", model.RoleAgent, "1.2.3", "def456"); !errors.Is(err, ErrAgentBuildMismatch) {
+		t.Fatalf("wrong build was accepted or misclassified: %v", err)
+	}
 }

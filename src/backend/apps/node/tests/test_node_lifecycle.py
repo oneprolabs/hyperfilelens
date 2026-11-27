@@ -41,6 +41,7 @@ from apps.node.services.internal.task import (
     create_agent_task,
     deliver_agent_task,
     project_node_lifecycle_task,
+    record_task_progress,
 )
 from apps.task.models import Task, TaskResource
 
@@ -2135,6 +2136,31 @@ class NodeLifecycleTests(TestCase):
         )
         self.assertIn("detached_at", updated.result or {})
 
+    def test_upgrade_handoff_progress_keeps_detached_watchdog(self):
+        task = NodeTask.objects.create(
+            organization=self.org,
+            node=self.node,
+            kind="agent.upgrade",
+            status=NodeTask.Status.PENDING,
+            watchdog_deadline_at=timezone.now(),
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+        )
+        before = timezone.now()
+        updated = record_task_progress(
+            task_id=task.id,
+            node_id=self.node.id,
+            progress={"phase": "running", "status": "running", "mode": "local_detached", "target_version": "1.2.0"},
+        )
+        self.assertEqual(updated.status, NodeTask.Status.RUNNING)
+        self.assertEqual(updated.result["mode"], "local_detached")
+        self.assertEqual(updated.result["target_version"], "1.2.0")
+        self.assertIn("detached_at", updated.result)
+        self.assertGreater(
+            updated.watchdog_deadline_at,
+            before + timezone.timedelta(seconds=node_conf.TASK_WATCHDOG_SECONDS),
+        )
+
 
 class UpgradeFailureCodeTests(SimpleTestCase):
     def test_structured_download_failure_survives_generic_host_failure_envelope(self):
@@ -2190,6 +2216,25 @@ class UpgradeFailureCodeTests(SimpleTestCase):
                         expected,
                     )
 
+    def test_installer_failure_survives_legacy_host_envelope(self):
+        task = NodeTask(kind="agent.upgrade", last_error="local installer failed")
+        for code in node_conf.UPGRADE_INSTALLER_ERRORS:
+            with self.subTest(code=code):
+                self.assertEqual(
+                    _upgrade_failure_code(
+                        task=task,
+                        result={"failure_code": "HOST_UPGRADE_FAILED", "error_code": code},
+                    ),
+                    code,
+                )
+                self.assertEqual(
+                    _upgrade_failure_code(
+                        task=task,
+                        result={"failure_code": "PRIMARY_FAILURE", "error_code": code},
+                    ),
+                    "PRIMARY_FAILURE",
+                )
+
     def test_disk_error_codes_keep_existing_diagnostic_precedence(self):
         task = NodeTask(last_error="")
         for code in (
@@ -2199,6 +2244,13 @@ class UpgradeFailureCodeTests(SimpleTestCase):
             with self.subTest(code=code):
                 self.assertEqual(
                     _upgrade_failure_code(task=task, result={"error_code": code}),
+                    code,
+                )
+                self.assertEqual(
+                    _upgrade_failure_code(
+                        task=task,
+                        result={"failure_code": "HOST_UPGRADE_FAILED", "error_code": code},
+                    ),
                     code,
                 )
                 self.assertEqual(
