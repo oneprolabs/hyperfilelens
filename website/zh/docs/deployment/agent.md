@@ -29,6 +29,6 @@ Agent 安装在需要保护的 Windows、Linux 或 macOS 主机上，用于访�
 - 可以浏览所需目录，并选择预期的备份路径。
 - 对于持续运行的保护方式，主机或 Agent 服务重启后能够自动重新连接。
 
-部署完成后，如需调整本地仓库缓存预算，请查看[仓库缓存配置](/zh/docs/deployment/repository-cache)。
+部署完成后，如需配置缓存空间保护和规划本地磁盘，请查看[仓库缓存管理](/zh/docs/deployment/repository-cache)。
 
 注册失败或 Agent 离线时，进入[安装与节点](/zh/docs/troubleshooting/installation-nodes)。

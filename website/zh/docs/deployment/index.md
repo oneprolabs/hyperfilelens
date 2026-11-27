@@ -22,7 +22,7 @@ description: 根据使用方式部署 HyperFileLens 控制平面、备份组件�
 
 ## 运行维护
 
-- [仓库缓存配置](/zh/docs/deployment/repository-cache)：调整 Agent 与 Proxy 的每仓库缓存预算，了解分配比例、生效方式和磁盘空间规划。
+- [仓库缓存管理](/zh/docs/deployment/repository-cache)：了解元数据缓存和内容缓存，配置磁盘空间保护，更换缓存目录，并按不同工作负载规划空间。
 - [任务、告警与审计](/zh/docs/deployment/operations)：查看任务状态、告警信息和审计记录；新组织会启用默认告警规则。组织成员、角色与配额见[组织管理](/zh/docs/governance/)。
 - [升级与恢复](/zh/docs/deployment/lifecycle)：升级社区版、验证升级结果，并在异常时按安全流程处理。
 - [卸载社区版](/zh/docs/deployment/uninstall)：完整移除 HyperFileLens，或在保留配置和业务数据的情况下移除运行组件。
