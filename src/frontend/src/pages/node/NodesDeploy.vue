@@ -7,6 +7,10 @@ import { ArrowLeft } from 'lucide-vue-next'
 import NodeLifecycleWizard from '../../components/NodeLifecycleWizard.vue'
 import { ElMessage } from 'element-plus'
 import { getEffectiveOrgKey } from '../../composables/useAuth'
+import { useResourceCapabilities } from '../../composables/useResourceCapabilities'
+import { useTenantPermissions } from '../../composables/useTenantPermissions'
+import { resolveInsightEntry } from '../../lib/insightAccess'
+import { resolveProtectionEntry } from '../../lib/protectionAccess'
 import { copyTextToClipboard } from '../../lib/clipboard'
 import type { EnrollmentOs } from '../../lib/nodeApi'
 import { routeLocationWithListRefresh } from '../../lib/listRouteRefresh'
@@ -16,10 +20,19 @@ const { t } = useI18n()
 const router = useRouter()
 const route = useRoute()
 
-const queryRole = (route.query.role as NodeRole) || 'agent'
-const selectedRole = ref<NodeRole>(queryRole)
+const nodeRoles: NodeRole[] = ['agent', 'proxy', 'gateway']
+const queryRole = computed(() => nodeRoles.includes(route.query.role as NodeRole)
+  ? route.query.role as NodeRole : 'agent')
+const selectedRole = ref<NodeRole>(queryRole.value)
 const selectedOs = ref<EnrollmentOs>('linux')
-const gatewayScope = computed(() => (route.query.gatewayScope === 'platform' ? 'platform' : 'user'))
+const gatewayScope = computed(() => selectedRole.value === 'gateway'
+  && route.query.gatewayScope === 'platform' ? 'platform' : 'user')
+const resourcePermissions = useResourceCapabilities(computed(() => []))
+const { has } = useTenantPermissions()
+const allowedRoles = computed(() => nodeRoles.filter((role) =>
+  resourcePermissions.canCreate(`node:${role}`)))
+const canDeploy = computed(() => gatewayScope.value !== 'platform'
+  && allowedRoles.value.includes(selectedRole.value))
 
 const rolePreset = computed(() => !!route.query.role)
 const isProxyDeployment = computed(() => selectedRole.value === 'proxy')
@@ -79,10 +92,26 @@ function pushBackWithRefresh() {
 }
 
 watch(
-  () => route.query.role,
+  queryRole,
   (role) => {
-    if (role === 'agent' || role === 'proxy' || role === 'gateway') {
-      selectedRole.value = role
+    selectedRole.value = role
+  },
+  { immediate: true },
+)
+
+function selectRole(role: NodeRole) {
+  if (allowedRoles.value.includes(role)) selectedRole.value = role
+}
+
+watch(
+  () => [canDeploy.value, resourcePermissions.loading.value, resourcePermissions.failed.value, gatewayScope.value],
+  () => {
+    if (gatewayScope.value === 'platform') {
+      void router.replace('/platform-ops/engine/gateways/add')
+    } else if (!canDeploy.value && !resourcePermissions.loading.value && !resourcePermissions.failed.value) {
+      // Do not issue enrollment while redirecting an unauthorized deep link.
+      void router.replace(isGatewayDeployment.value
+        ? resolveInsightEntry(has) : resolveProtectionEntry(has))
     }
   },
   { immediate: true },
@@ -140,17 +169,34 @@ function handleBack() {
         <div class="fullscreen-form-layout">
           <div class="fullscreen-form-main">
             <NodeLifecycleWizard
+              v-if="canDeploy"
               install-only
               :org-key="orgKey"
               :role="selectedRole"
               :os="selectedOs"
               :role-locked="rolePreset"
               :show-role-picker="!rolePreset"
+              :allowed-roles="allowedRoles"
               :gateway-scope="gatewayScope"
               @update:os="selectedOs = $event"
-              @update:role="selectedRole = $event"
+              @update:role="selectRole"
               @copy="copyCommand"
             />
+            <ElSkeleton
+              v-else-if="resourcePermissions.loading.value"
+              :rows="5"
+              animated
+            />
+            <ElAlert
+              v-else-if="resourcePermissions.failed.value"
+              type="error"
+              :closable="false"
+              :title="t('errors.generic.loadFailed')"
+            >
+              <ElButton @click="resourcePermissions.refresh()">
+                {{ t('common.retry') }}
+              </ElButton>
+            </ElAlert>
 
             <div class="fullscreen-form-footer fullscreen-form-action-footer">
               <ElButton @click="handleBack">

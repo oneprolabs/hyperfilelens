@@ -18,6 +18,13 @@ const mocks = vi.hoisted(() => ({
   route: { path: '/insight/data-gateways', query: {} },
   lifecyclePatch: null as null | ((rows: unknown[]) => void),
 }))
+const tenantCanCreate = ref(false)
+vi.mock('../../composables/useResourceCapabilities', () => ({
+  useResourceCapabilities: () => ({
+    canCreate: (kind: string) => kind === 'node:gateway' && tenantCanCreate.value,
+    permitted: () => false,
+  }),
+}))
 vi.mock('../../composables/useDeployProfile', () => ({
   getCachedDeployProfile: () => ({ platform_permissions: mocks.permissions }),
   fetchDeployProfile: () => mocks.profile(),
@@ -129,6 +136,7 @@ function mountPage() {
   const wrapper = shallowMount(InsightDataGateways, {
     global: {
       stubs: {
+        RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
         'el-table': {
           props: ['data'],
           template: '<div class="test-table"><span v-for="row in data" :key="row.id">{{ row.id }}</span></div>',
@@ -153,6 +161,7 @@ function mountPage() {
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.route.path = '/insight/data-gateways'
+  tenantCanCreate.value = false
   mocks.directory.mockResolvedValue({ count: 15, page: 1, page_size: 30, results: [gateway()] })
   mocks.status.mockResolvedValue([])
   mocks.latest.mockResolvedValue(null)
@@ -169,6 +178,28 @@ afterEach(() => {
 })
 
 describe('private Data Gateway server pagination', () => {
+  it('hides Add until tenant creation capability is granted', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    const link = 'a[href="/node/nodes/deploy?role=gateway"]'
+    expect(wrapper.find(link).exists()).toBe(false)
+    tenantCanCreate.value = true
+    await flushPromises()
+    expect(wrapper.find(link).exists()).toBe(true)
+    tenantCanCreate.value = false
+    await flushPromises()
+    expect(wrapper.find(link).exists()).toBe(false)
+  })
+
+  it('does not use tenant creation capability for the public Gateway Add action', async () => {
+    mocks.route.path = '/platform-ops/engine/gateways'
+    mocks.permissions = []
+    tenantCanCreate.value = true
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.find('a[href="/platform-ops/engine/gateways/add"]').exists()).toBe(false)
+  })
+
   it('loads page 1 at 30/page and immediately shows Node 295 without waiting for extras or SL', async () => {
     mocks.latest.mockReturnValue(new Promise(() => {}))
     mocks.health.mockReturnValue(new Promise(() => {}))

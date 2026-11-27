@@ -257,7 +257,9 @@ def request_permission(request, view) -> str | None:
         if request.method == "DELETE" or operation == "bulk_delete"
         else "manage"
     )
-    if "/node-tokens" in path or "/enrollment/token" in path:
+    if any(root in path for root in (
+        "/node-tokens", "/enrollment/token", "/enrollment/enrollment-token",
+    )):
         from types import SimpleNamespace
         from apps.iam.permission_catalog import resource_permission
 

@@ -38,9 +38,12 @@ class EnrollmentTokenCreateView(APIView):
         ser = NodeTokenCreateSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         org = require_org_matching_body(request, ser.validated_data.pop("org", None))
+        node_permissions.require_gateway_enrollment_creation(
+            request, org, ser.validated_data["role"],
+        )
         if ser.validated_data.get("role") == "proxy":
             require_organization_capability(org.pk, "proxy_hosts", request=request)
-        token_row = ser.save(organization=org)
+        token_row = ser.save(organization=org, created_by=request.user)
         data = NodeTokenSerializer(
             token_row,
             context={"request": request, "include_token": True},

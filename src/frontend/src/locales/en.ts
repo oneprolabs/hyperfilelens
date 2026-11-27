@@ -2137,7 +2137,7 @@ export const en = {
     actionDelete: 'Delete',
     publicIpHint: '(public)',
     emptyNodes: 'No nodes yet',
-    emptyGateway: 'No data gateways yet. Click Add to deploy one.',
+    emptyGateway: 'No data gateways yet.',
     emptyProxyNodes: 'No proxy hosts yet. Click Add to install one.',
     deleteConfirm: 'Remove node "{name}" from the console? This cannot be undone.',
     deleteTitle: 'Remove Node',

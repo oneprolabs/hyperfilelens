@@ -25,9 +25,22 @@ export function insightPermissionHints(
 }
 
 /** Return a safe destination before a protected page is mounted. */
-export function insightRouteRedirect(path: string, has: InsightPermissionCheck): string | undefined {
+export function insightRouteRedirect(
+  path: string, has: InsightPermissionCheck, query: Record<string, unknown> = {},
+): string | undefined {
   // Vue Router matches static routes case-insensitively by default.
   const normalized = path.replace(/\/+$/, '').toLowerCase()
+  if (normalized === '/node/nodes/deploy' && query.role === 'gateway') {
+    // Public Gateway enrollment belongs to the independently guarded Admin Console.
+    if (query.gatewayScope === 'platform') return '/platform-ops/engine/gateways/add'
+    // A Group may manage an existing Gateway, but cannot create a new one.
+    if (!has('insights.private_data_gateways.manage', true)) {
+      const target = resolveInsightEntry(has)
+      return typeof query.org === 'string' && query.org
+        ? `${target}?org=${encodeURIComponent(query.org)}` : target
+    }
+    return
+  }
   // The entry route chooses its destination after session initialization.
   if (normalized === '/insight') return
   // Share Q&A has its own backend-validated share token and membership contract.

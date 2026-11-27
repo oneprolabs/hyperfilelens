@@ -161,6 +161,25 @@ class NodeApiOrgScopingTests(APITestCase):
             {item.get("field") for item in payload.get("errors", [])},
         )
 
+    def test_owner_can_create_gateway_tokens_in_both_enrollment_paths(self):
+        self.client.force_authenticate(user=self.user_a)
+        for name in ("node-token-list", "enrollment-token-create"):
+            with self.subTest(endpoint=name):
+                response = self.client.post(
+                    reverse(name), {"role": NodeRole.GATEWAY}, format="json",
+                    HTTP_X_ORG_KEY=self.org_a.key,
+                )
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                token = NodeToken.objects.get(token=response.data["token"])
+                self.assertEqual(token.created_by_id, self.user_a.pk)
+                self.assertEqual(token.organization_id, self.org_a.pk)
+        self.assertEqual(
+            NodeToken.objects.filter(
+                organization=self.org_a, role=NodeRole.GATEWAY,
+            ).count(),
+            2,
+        )
+
     def test_enrollment_token_create_rejects_body_org_mismatch(self):
         self.client.force_authenticate(user=self.user_a)
 
