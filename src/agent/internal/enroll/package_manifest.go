@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -72,7 +73,19 @@ func ValidateAgentPackage(root string, role model.Role, expectedVersion string) 
 	return validateAgentPackage(root, role, expectedVersion)
 }
 
+// ErrAgentBuildMismatch means the package does not match the build authorized
+// by the caller, even if all package-local hashes and the version match.
+var ErrAgentBuildMismatch = errors.New("Agent package commit does not match the requested build")
+
+func ValidateAgentPackageBuild(root string, role model.Role, expectedVersion, expectedCommit string) error {
+	return validateAgentPackageBuildFor(root, runtime.GOOS, runtime.GOARCH, role, expectedVersion, expectedCommit)
+}
+
 func validateAgentPackageFor(root, platform, arch string, role model.Role, expectedVersion string) error {
+	return validateAgentPackageBuildFor(root, platform, arch, role, expectedVersion, "")
+}
+
+func validateAgentPackageBuildFor(root, platform, arch string, role model.Role, expectedVersion, expectedCommit string) error {
 	manifest, err := readAgentPackageManifest(root)
 	if err != nil {
 		return err
@@ -91,6 +104,9 @@ func validateAgentPackageFor(root, platform, arch string, role model.Role, expec
 	}
 	if expectedVersion = strings.TrimPrefix(strings.TrimSpace(expectedVersion), "v"); expectedVersion != "" && manifest.AgentVersion != expectedVersion {
 		return fmt.Errorf("package version mismatch: expected %s, got %s", expectedVersion, manifest.AgentVersion)
+	}
+	if expected := strings.TrimSpace(expectedCommit); expected != "" && !strings.EqualFold(expected, strings.TrimSpace(manifest.AgentCommit)) {
+		return ErrAgentBuildMismatch
 	}
 	if role == model.RoleAgent && manifest.BundleFlavor != "standard" {
 		return fmt.Errorf("Source Host requires a standard Agent package, got %q", manifest.BundleFlavor)

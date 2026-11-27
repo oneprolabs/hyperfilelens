@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"hyperfilelens/agent/internal/infra/kopialayout"
 	"hyperfilelens/agent/internal/model"
 	"hyperfilelens/agent/internal/platform/install"
+	"hyperfilelens/agent/internal/platform/lifecycle"
 )
 
 var ErrConnectionMaintenance = errors.New("node connection maintenance is in progress")
@@ -391,13 +393,14 @@ type RepairOptions struct {
 	DataDir       string
 	LogDir        string
 	ActiveTaskIDs map[string]struct{}
+	LifecycleOnly bool
 }
 
 // RepairInterrupted marks orphaned running tasks failed after agent restart.
 func (r *TaskRepo) RepairInterrupted(ctx context.Context, opts RepairOptions) ([]model.Task, error) {
 	now := time.Now().UTC()
 	rows, err := r.db.conn.QueryContext(ctx, `
-SELECT id, job_id, kind, payload, status, error, started_at, finished_at
+SELECT id, job_id, kind, payload, status, result, error, started_at, finished_at
 FROM tasks WHERE status=?
 `, string(model.TaskStatusRunning))
 	if err != nil {
@@ -407,7 +410,7 @@ FROM tasks WHERE status=?
 
 	var repaired []model.Task
 	for rows.Next() {
-		task, err := scanTask(rows)
+		task, err := scanTaskWithResult(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -422,8 +425,49 @@ FROM tasks WHERE status=?
 
 	var updated []model.Task
 	for i := range repaired {
+		if opts.LifecycleOnly && !install.IsLifecycleRepairKind(repaired[i].Kind) {
+			continue
+		}
+		if repaired[i].Kind == "agent.upgrade" && opts.DataDir != "" {
+			failure, readErr := lifecycle.Failure(opts.DataDir, repaired[i].ID, repaired[i].StartedAt)
+			if readErr != nil {
+				// A journal file is evidence for one execution, not an Agent
+				// startup dependency. Do not infer success from legacy logs.
+				slog.Warn("upgrade recovery evidence unavailable; leaving task for reconciliation", "task_id", repaired[i].ID, "err", readErr)
+				continue
+			}
+			if failure != nil {
+				changed, applyErr := r.ApplyUpgradeFailure(ctx, *failure)
+				if applyErr != nil {
+					slog.Warn("upgrade recovery evidence could not be applied", "task_id", repaired[i].ID, "err", applyErr)
+					continue
+				}
+				if changed {
+					task, getErr := r.Get(ctx, repaired[i].ID)
+					if getErr != nil {
+						return updated, getErr
+					}
+					updated = append(updated, task)
+				}
+				continue
+			}
+		}
 		if opts.ActiveTaskIDs != nil {
 			if _, active := opts.ActiveTaskIDs[repaired[i].ID]; active {
+				continue
+			}
+		}
+		// A running row alone just means command acceptance. Periodic repair
+		// must not use filesystem heuristics until that exact execution has
+		// handed off to a detached installer (or provided bound evidence above).
+		evidenceSince := repaired[i].StartedAt
+		if install.IsLifecycleRepairKind(repaired[i].Kind) {
+			raw, _ := repaired[i].Result["detached_started_at"].(string)
+			detached, parseErr := time.Parse(time.RFC3339Nano, raw)
+			if repaired[i].Result["mode"] == "local_detached" && parseErr == nil &&
+				evidenceSince != nil && !detached.Before(*evidenceSince) && !detached.After(now) {
+				evidenceSince = &detached
+			} else if opts.LifecycleOnly {
 				continue
 			}
 		}
@@ -431,7 +475,10 @@ FROM tasks WHERE status=?
 		// Agent process restart the Kopia child cannot be proven alive. Report the
 		// interrupted execution attempt instead of advertising zombie backup or
 		// restore work. The control plane owns any safe product-level retry.
-		if install.InterruptedLifecycleStillRunning(repaired[i].Kind, opts.DataDir) {
+		// Only the current execution's FAILED marker can terminate a runner.
+		failedUpgrade := install.IsLifecycleUpgradeKind(repaired[i].Kind) &&
+			install.PendingUpgradeFailedSince(opts.DataDir, evidenceSince)
+		if !failedUpgrade && install.InterruptedLifecycleStillRunning(repaired[i].Kind, opts.DataDir) {
 			continue
 		}
 		status := model.TaskStatusFailed
@@ -442,9 +489,8 @@ FROM tasks WHERE status=?
 		// previous upgrade. Keep the FAILED marker requirement so an installer
 		// that is still running cannot be sealed early.
 		var spaceFailure *install.UpgradeSpaceError
-		if install.PendingUpgradeFailed(opts.DataDir) &&
-			strings.Contains(strings.ToLower(repaired[i].Kind), "upgrade") {
-			spaceFailure = install.ReadUpgradeSpaceFailure(opts.DataDir, repaired[i].StartedAt)
+		if failedUpgrade {
+			spaceFailure = install.ReadUpgradeSpaceFailure(opts.DataDir, evidenceSince)
 		}
 		if (repaired[i].Kind == "cache.relocate" || repaired[i].Kind == "cache.relocation.retry") && kopialayout.RelocationStatus(opts.DataDir) != nil {
 			recovered := kopialayout.RelocationStatus(opts.DataDir)
@@ -460,9 +506,12 @@ FROM tasks WHERE status=?
 			errMsg = spaceFailure.Error()
 			result = spaceFailure.Result()
 			result["mode"] = "local_detached"
+		} else if failedUpgrade {
+			errMsg = "detached upgrade failed"
+			result = map[string]any{"mode": "local_detached", "phase": "upgrade_failed"}
 		} else if ok, repairedResult := install.InterruptedLifecycleSucceeded(
 			repaired[i].Kind,
-			repaired[i].StartedAt,
+			evidenceSince,
 			opts.DataDir,
 			opts.LogDir,
 		); ok {
@@ -470,20 +519,18 @@ FROM tasks WHERE status=?
 			errMsg = ""
 			result = repairedResult
 		} else if install.IsLifecycleRepairKind(repaired[i].Kind) {
-			if install.PendingUpgradeFailed(opts.DataDir) &&
-				strings.Contains(strings.ToLower(repaired[i].Kind), "upgrade") {
-				errMsg = "detached upgrade failed"
-				result = map[string]any{"mode": "local_detached", "phase": "upgrade_failed"}
-			} else {
-				// Detached upgrade/uninstall may finish after reconnect; deferred repair retries.
-				continue
-			}
+			// No terminal evidence; defer rather than guessing an outcome.
+			continue
 		}
 		resultJSON, marshalErr := json.Marshal(result)
 		if marshalErr != nil {
 			return nil, marshalErr
 		}
-		_, err = r.db.conn.ExecContext(ctx, `
+		var started any
+		if repaired[i].StartedAt != nil {
+			started = formatTime(*repaired[i].StartedAt)
+		}
+		changed, err := r.db.conn.ExecContext(ctx, `
 UPDATE tasks SET
   status=?,
   error=?,
@@ -491,7 +538,7 @@ UPDATE tasks SET
   finished_at=?,
   updated_at=?,
   result_reported=0
-WHERE id=?
+WHERE id=? AND status=? AND started_at IS ?
 `,
 			string(status),
 			errMsg,
@@ -499,9 +546,18 @@ WHERE id=?
 			formatTime(now),
 			formatTime(now),
 			repaired[i].ID,
+			string(model.TaskStatusRunning),
+			started,
 		)
 		if err != nil {
 			return nil, err
+		}
+		count, err := changed.RowsAffected()
+		if err != nil {
+			return nil, err
+		}
+		if count == 0 {
+			continue // A concurrent terminal result or cancellation won.
 		}
 		repaired[i].Status = status
 		repaired[i].Error = errMsg
@@ -794,24 +850,6 @@ func scanTaskRow(row taskRowScanner) (model.Task, error) {
 
 func scanTaskRows(rows *sql.Rows) (model.Task, error) {
 	return scanTaskRow(rows)
-}
-
-func scanTask(rows *sql.Rows) (model.Task, error) {
-	var (
-		task       model.Task
-		payloadRaw string
-		started    sql.NullString
-		finished   sql.NullString
-	)
-	if err := rows.Scan(
-		&task.ID, &task.JobID, &task.Kind, &payloadRaw, &task.Status, &task.Error, &started, &finished,
-	); err != nil {
-		return model.Task{}, err
-	}
-	_ = json.Unmarshal([]byte(payloadRaw), &task.Payload)
-	task.StartedAt = parseTime(started)
-	task.FinishedAt = parseTime(finished)
-	return task, nil
 }
 
 func scanTaskWithResult(rows *sql.Rows) (model.Task, error) {

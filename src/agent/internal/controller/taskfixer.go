@@ -52,6 +52,20 @@ func (f *TaskFixer) RepairRunning(ctx context.Context) ([]model.Task, error) {
 	return repaired, nil
 }
 
+// RepairLifecycle observes detached work without repairing ordinary running tasks.
+func (f *TaskFixer) RepairLifecycle(ctx context.Context) ([]model.Task, error) {
+	if f.tasks == nil {
+		return nil, nil
+	}
+	active := map[string]struct{}{}
+	if f.tracker != nil {
+		for _, t := range f.tracker.Active() {
+			active[t.ID] = struct{}{}
+		}
+	}
+	return f.tasks.RepairInterrupted(ctx, database.RepairOptions{DataDir: f.dataDir, LogDir: f.logDir, ActiveTaskIDs: active, LifecycleOnly: true})
+}
+
 // PendingLifecycleStartedAt returns the oldest detached lifecycle task start
 // time. It is intentionally limited to lifecycle tasks so the periodic repair
 // loop never keeps ordinary work alive.

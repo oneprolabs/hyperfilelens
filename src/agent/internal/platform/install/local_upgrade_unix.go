@@ -131,7 +131,6 @@ HFL_RUN_AS_HOME="$RUN_AS_HOME" bash "$INSTALL_SH" upgrade --from "$ARCHIVE" --ye
 rc=$?
 set -e
 if [[ "$rc" -eq 0 ]]; then
-  log " OK  " "Upgrade completed successfully."
   # Data Gateway upgrade is atomic: Agent + AI engine must both succeed before
   # clearing detached-upgrade markers. Control-plane stall handling must tolerate
   # long sidecar image downloads via progress keepalives, not by splitting success.
@@ -140,8 +139,16 @@ if [[ "$rc" -eq 0 ]]; then
     echo "failed" > "$PENDING_DIR/FAILED"
     exit 1
   fi
+  log " OK  " "Upgrade completed successfully."
   rm -rf "$PENDING_DIR"
   exit 0
+fi
+# Exit 70 means an incomplete transaction still needs verified recovery.
+# The installer owns rollback; this wrapper must not start a partial install.
+if [[ "$rc" -eq 70 ]]; then
+  log "FAIL " "Upgrade requires rollback verification; no automatic service start was attempted."
+  echo "failed" > "$PENDING_DIR/FAILED"
+  exit "$rc"
 fi
 log "FAIL " "Upgrade failed (exit=${rc}). Attempting service recovery."
 if command -v systemctl >/dev/null 2>&1; then

@@ -219,6 +219,14 @@ HFL_DETAIL_LOG_PID=""
 HFL_FAILURE_REPORTED=0
 HFL_FAILURE_MARKER=""
 HFL_LOG_FINALIZING=0
+HFL_UPGRADE_HELPER=""
+HFL_UPGRADE_WORKSPACE=""
+HFL_PREPARED_ROLLBACK=""
+HFL_KEEP_ROLLBACK=0
+HFL_UPGRADE_ATTEMPT=""
+HFL_UPGRADE_FAILED_PHASE=""
+HFL_UPGRADE_ERROR_CODE=""
+HFL_UPGRADE_ORIGINAL_EXIT=0
 HFL_LIFECYCLE_LOCK_DIR=""
 UPGRADE_STATE_FILE=""
 UPGRADE_FROM=""
@@ -255,6 +263,7 @@ Commands:
   restart           Restart HyperFileLens Agent
   status            Show installed version, paths, and service state
   upgrade           Upgrade from another release package directory or .tar.gz
+  recover-upgrade   Verify rollback using --from <fixed-package.tar.gz>
   reconcile-legacy  Complete pending legacy-layout cleanup
   uninstall         Remove the Agent installation
 
@@ -846,14 +855,14 @@ release_lifecycle_lock() {
 write_upgrade_state() {
 	local data_dir="$1" phase="$2" temporary
 	local file="$(agent_lifecycle_dir "${data_dir}")/upgrade-state.json"
-	mkdir -p "$(dirname "${file}")"
+	mkdir -p "$(dirname "${file}")" || return 1
 	UPGRADE_STATE_FILE="${file}"
-	UPGRADE_CURRENT_PHASE="${phase}"
 	temporary="${file}.tmp.$$"
-	cat >"${temporary}" <<EOF
+	cat >"${temporary}" <<EOF || return 1
 {"phase":"${phase}","operation":"upgrade","pid":$$,"previous_version":"${UPGRADE_PREVIOUS_VERSION}","target_version":"${UPGRADE_TARGET_VERSION}","installation_mode":"${INSTALLATION_MODE}","lifecycle_was_running":${UPGRADE_SERVICE_WAS_ACTIVE},"lifecycle_was_enabled":${UPGRADE_SERVICE_WAS_ENABLED},"state_snapshot_ready":${UPGRADE_STATE_SNAPSHOT_READY},"deployment_started":${UPGRADE_DEPLOYMENT_STARTED},"updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 EOF
-	mv -f "${temporary}" "${file}"
+	mv -f "${temporary}" "${file}" || return 1
+	UPGRADE_CURRENT_PHASE="${phase}"
 }
 
 clear_upgrade_state() {
@@ -918,8 +927,15 @@ recover_interrupted_upgrade() {
 		clear_upgrade_state
 		return 0
 		;;
-	rollback_failed)
-		log_fail "The previous upgrade and rollback both failed. Preserve $(agent_backup_dir "${data_dir}")/rollback and resolve the recorded failure before retrying." 2
+	rollback_failed|rollback_verification_pending)
+		# The incoming verified package owns this path, so the installed Agent
+		# need not know about recovery (including older detached runners).
+		if [[ "${intent}" == "upgrade" && -n "${HFL_UPGRADE_HELPER}" ]]; then
+			verify_saved_upgrade_rollback "${data_dir}"
+			return 0
+		fi
+		HFL_UPGRADE_ERROR_CODE="AGENT_UPGRADE_RECOVERY_REQUIRED"
+		log_fail "A previous upgrade requires rollback verification. Recovery materials were preserved." 2
 		;;
 	awaiting_restart)
 		[[ "${intent}" == "start" ]] && return 2
@@ -1281,9 +1297,51 @@ check_upgrade_cache_users() {
 	fi
 }
 
-upgrade_workspace_dir() {
-	local data_dir="$1"
-	echo "$(agent_runtime_dir "${data_dir}")/workspace"
+create_upgrade_workspace() {
+	# Never execute an installer helper from the service-owned runtime tree or
+	# add files to the caller's manifest-verified package directory.
+	local ws
+	ws="$(mktemp -d "${INSTALL_DIR}/.hfl-upgrade.XXXXXX")" || return 1
+	printf '%s' "$ws"
+}
+
+resolve_installed_upgrade_account() {
+	[[ "${INSTALLATION_MODE}" == "account" ]] || return 0
+	local service_user uid
+	# agent.env is writable by the service. Bind administrator operations to the
+	# installed service definition, not to a claimed account in that environment.
+	if agent_uses_launchd; then
+		service_user="$(/usr/libexec/PlistBuddy -c 'Print :UserName' "${LAUNCHD_PLIST}")" || return 1
+	else
+		service_user="$(hfl_systemctl show hyperfilelens-agent.service -p User | sed -n 's/^User=//p')" || return 1
+	fi
+	[[ -n "$service_user" && "$service_user" != -* ]] || return 1
+	uid="$(id -u "$service_user")" || return 1
+	[[ "$uid" =~ ^[0-9]+$ && "$uid" -gt 0 ]] || return 1
+	RUN_AS_USER="$service_user"
+	if ! command -v runuser >/dev/null 2>&1 && ! command -v sudo >/dev/null 2>&1; then return 1; fi
+}
+
+run_as_upgrade_account() {
+	if [[ "${INSTALLATION_MODE}" != "account" ]]; then "$@"; return; fi
+	[[ -n "${RUN_AS_USER}" ]] || return 1
+	if command -v runuser >/dev/null 2>&1; then
+		runuser -u "${RUN_AS_USER}" -- "$@"
+	else
+		sudo -n -u "${RUN_AS_USER}" -- "$@"
+	fi
+}
+
+stage_upgrade_helper() {
+	local src_root="$1" workspace="$2"
+	HFL_UPGRADE_HELPER="${workspace}/hfl-lifecycle-helper"
+	cp "${src_root}/bin/hfl-agent" "${HFL_UPGRADE_HELPER}" || return 1
+	chmod 700 "${HFL_UPGRADE_HELPER}" || return 1
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		# Only the helper is reachable to the ordinary account. The package and
+		# credentials are not readable through this private workspace.
+		chmod 711 "$workspace" && chmod 755 "$HFL_UPGRADE_HELPER"
+	fi
 }
 
 cleanup_upgrade_workspace() {
@@ -1298,20 +1356,18 @@ cleanup_upgrade_workspace() {
 }
 
 prepare_upgrade_source() {
-	local from="$1"
-	local data_dir="$2"
-	local ws
-	ws="$(upgrade_workspace_dir "${data_dir}")"
+	local from="$1" workspace="$2" ws="${2}/source"
+	[[ -n "$workspace" && -d "$workspace" ]] || return 1
+	mkdir -m 700 "$ws" || return 1
 	if [[ -d "${from}" ]]; then
-		local resolved
-		resolved="$(cd "${from}" && pwd)"
-		assert_agent_package_root "${resolved}"
-		printf '%s' "${resolved}"
+		# Copy first so verification and execution use the same private input.
+		assert_agent_package_root "${from}"
+		cp -pR "${from}/." "${ws}/" || return 1
+		chmod 700 "$ws" || return 1
+		printf '%s' "$ws"
 		return 0
 	fi
 	if [[ -f "${from}" && "${from}" == *.tar.gz ]]; then
-		cleanup_upgrade_workspace "${ws}"
-		mkdir -p "${ws}"
 		log_ok "extracting ${from} -> ${ws}"
 		if tar --version 2>/dev/null | grep -qi 'GNU tar'; then
 			tar --warning=no-unknown-keyword -xzf "${from}" -C "${ws}"
@@ -1351,8 +1407,11 @@ backup_agent_config_and_db() {
 		"${verifier}" database backup --source "${db_source}" --destination "${snapshot}/data/agent.db" \
 			|| backup_ok=0
 		[[ ! -f "${snapshot}/data/agent.db" ]] || chmod 600 "${snapshot}/data/agent.db" || backup_ok=0
+		if [[ "${INSTALLATION_MODE}" == "account" && -f "${snapshot}/data/agent.db" ]]; then
+			chown "${RUN_AS_USER}" "${snapshot}/data/agent.db" || backup_ok=0
+		fi
 	fi
-	if [[ ! -f "${snapshot}/config/agent.env" && ! -f "${snapshot}/data/agent.db" ]]; then
+	if [[ ! -s "${snapshot}/config/agent.env" || ! -s "${snapshot}/data/agent.db" ]]; then
 		backup_ok=0
 	fi
 	if [[ "${backup_ok}" -ne 1 ]]; then
@@ -1451,7 +1510,7 @@ backup_upgrade_service_definition() {
 }
 
 restore_upgrade_binaries() {
-	[[ -n "${UPGRADE_BIN_BACKUP}" && -d "${UPGRADE_BIN_BACKUP}" ]] || return 0
+	[[ -n "${UPGRADE_BIN_BACKUP}" && -d "${UPGRADE_BIN_BACKUP}" ]] || return 1
 	local entry
 	for entry in hfl-agent kopia install.sh run-agent.sh; do
 		if [[ -e "${UPGRADE_BIN_BACKUP}/${entry}" ]]; then
@@ -1487,43 +1546,52 @@ copy_file_atomically() {
 	fi
 }
 
+prepare_upgrade_rollback() {
+	local data_dir="$1" workspace service=systemd verifier="${HFL_UPGRADE_HELPER:-${INSTALL_DIR}/hfl-agent}"
+	[[ -z "${HFL_PREPARED_ROLLBACK}" ]] || return 0
+	[[ -n "${HFL_UPGRADE_WORKSPACE}" ]] || return 1
+	[[ "${UPGRADE_STATE_SNAPSHOT_READY}" -eq 1 ]] || return 1
+	workspace="$(mktemp -d "${HFL_UPGRADE_WORKSPACE}/restore.XXXXXX")" || return 1
+	if agent_uses_launchd; then service=launchd; fi
+	local -a args=(--data-dir "$data_dir" --version "$UPGRADE_PREVIOUS_VERSION" --workspace "$workspace" --service "$service")
+	if [[ "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 ]]; then args+=(--was-active); fi
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		local uid
+		uid="$(id -u "${RUN_AS_USER}")" || return 1
+		args+=(--runtime-uid "$uid")
+	fi
+	"$verifier" lifecycle prepare-rollback "${args[@]}" || return 1
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		local file
+		for file in config/agent.env config/config.json data/agent.db; do
+			if [[ -f "$workspace/rollback-ready/$file" ]]; then
+				chown "${RUN_AS_USER}" "$workspace/rollback-ready/$file" || return 1
+			fi
+		done
+	fi
+	HFL_PREPARED_ROLLBACK="$workspace/rollback-ready"
+}
+
 restore_upgrade_state() {
-	local data_dir="$1"
-	local rollback="$(agent_backup_dir "${data_dir}")/rollback"
-	local archive="${rollback}/latest.tar.gz" staging="${rollback}/restore.$$" relative destination
-	[[ -f "${archive}" ]] || return 1
-	rm -rf "${staging}" || return 1
-	mkdir -p "${staging}" || return 1
-	if ! tar -xzf "${archive}" -C "${staging}"; then
-		rm -rf "${staging}" 2>/dev/null || true
-		return 1
-	fi
-	if [[ ! -f "${staging}/config/agent.env" && ! -f "${staging}/data/agent.db" ]]; then
-		rm -rf "${staging}" 2>/dev/null || true
-		return 1
-	fi
+	local data_dir="$1" staging="${HFL_PREPARED_ROLLBACK}" relative destination
+	# Never reopen the original archive after stopping the service. A missing
+	# optional legacy member is not permission to delete a live file.
+	[[ -n "$staging" && -s "$staging/config/agent.env" && -s "$staging/data/agent.db" ]] || return 1
 	for relative in config/agent.env config/config.json data/agent.db; do
 		destination="${data_dir}/${relative}"
 		if [[ -f "${staging}/${relative}" ]]; then
-			copy_file_atomically "${staging}/${relative}" "${destination}" || {
-				rm -rf "${staging}" 2>/dev/null || true
-				return 1
-			}
-		else
-			rm -f "${destination}" || return 1
+			copy_file_atomically "${staging}/${relative}" "${destination}" || return 1
 		fi
 	done
-	# The online SQLite backup is a complete standalone database. Remove any
-	# sidecars from the failed target before the restored Agent opens it.
+	# The validated SQLite snapshot is standalone, and the service is stopped.
 	rm -f "$(agent_data_store_dir "${data_dir}")/agent.db-wal" \
 		"$(agent_data_store_dir "${data_dir}")/agent.db-shm" || return 1
-	rm -rf "${staging}"
-	log_warn "restored Agent configuration and database state from ${archive}"
+	log_warn "restored Agent configuration and database from verified rollback staging"
 }
 
 restore_upgrade_service_definition() {
-	local data_dir="$1"
-	local service_dir="$(agent_backup_dir "${data_dir}")/rollback/service"
+	local service_dir="${HFL_PREPARED_ROLLBACK}/service"
+	[[ -n "${HFL_PREPARED_ROLLBACK}" && -d "$service_dir" ]] || return 1
 	if agent_uses_launchd; then
 		stop_launchd_service || true
 		rm -f "${LAUNCHD_PLIST}" || return 1
@@ -1546,76 +1614,139 @@ restore_upgrade_service_definition() {
 	fi
 }
 
+record_upgrade_failure() {
+	local rc="$1" rollback="" phase="${HFL_UPGRADE_FAILED_PHASE:-}" code="${HFL_UPGRADE_ERROR_CODE:-}"
+	[[ "$rc" -ne 0 && -n "${HFL_UPGRADE_ATTEMPT:-}" && -x "${HFL_UPGRADE_HELPER:-}" ]] || return 0
+	rollback="$(upgrade_state_value "$(agent_lifecycle_dir "${DATA_DIR}")/upgrade-state.json" phase || true)"
+	[[ -n "$phase" ]] || phase="${UPGRADE_CURRENT_PHASE:-installer_failed}"
+	[[ -n "$code" ]] || code="AGENT_UPGRADE_INSTALL_FAILED"
+	[[ "${HFL_UPGRADE_ORIGINAL_EXIT:-0}" -eq 0 ]] || rc="${HFL_UPGRADE_ORIGINAL_EXIT}"
+	# This helper writes only an identity-matched existing task and its durable
+	# outbox entry. It never starts a second WebSocket or initializes schema.
+	"${HFL_UPGRADE_HELPER}" lifecycle fail --data-dir "${DATA_DIR}" \
+		--attempt "${HFL_UPGRADE_ATTEMPT}" --phase "$phase" --error-code "$code" \
+		--rollback-phase "$rollback" --exit-code "$rc" \
+		|| log_warn "Upgrade failure evidence was retained but local outbox update is pending."
+}
+
+verify_upgrade_database_offline() {
+	local data_dir="$1" verifier="${HFL_UPGRADE_HELPER:-${INSTALL_DIR}/hfl-agent}"
+	[[ -f "$(agent_data_store_dir "$data_dir")/agent.db" ]] || return 1
+	if "$verifier" help 2>/dev/null | grep -q 'lifecycle ready'; then
+		run_as_upgrade_account "$verifier" lifecycle check-database --data-dir "$data_dir"
+	else
+		# Legacy packages have no read-only helper. This fallback is offline only.
+		run_as_upgrade_account "${INSTALL_DIR}/hfl-agent" tasks list --data-dir "$data_dir" --limit 1 >/dev/null 2>&1
+	fi
+}
+
 upgrade_health_check() {
-	local data_dir="$1" expected_version="$2" require_service="${3:-1}" expected_commit="" actual="" pid="" command="" stable=0
+	local data_dir="$1" expected_version="$2" require_service="${3:-1}" expected_commit="" actual="" pid="" command="" stable=0 previous_pid="" elapsed=0 instance=""
 	local identity_re='^hyperfilelens-agent[[:space:]]+([^[:space:]]+)[[:space:]]+\(([^)]*)\)$'
 	expected_commit="$(grep -E '"agent_commit"[[:space:]]*:' "${MANIFEST_FILE}" 2>/dev/null | head -n1 | sed -n 's/.*"agent_commit"[[:space:]]*:[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p')"
-	[[ -n "${expected_commit}" ]] || { log_warn "local health check: target manifest has no agent_commit"; return 1; }
-	actual="$("${INSTALL_DIR}/hfl-agent" version 2>/dev/null)" || { log_warn "local health check: Agent version command failed"; return 1; }
-	[[ "${actual}" =~ ${identity_re} ]] || {
-		log_warn "local health check: Agent returned an invalid build identity"; return 1;
-	}
-	local actual_version="${BASH_REMATCH[1]#v}" actual_commit="${BASH_REMATCH[2]}"
-	[[ "${actual_version}" == "${expected_version#v}" && "${actual_commit}" == "${expected_commit}" ]] || {
-		log_warn "local health check: running build identity does not match ${expected_version} (${expected_commit})"; return 1;
-	}
-	"${INSTALL_DIR}/hfl-agent" tasks list --data-dir "${data_dir}" --limit 1 >/dev/null 2>&1 || {
-		log_warn "local health check: Agent database could not be opened"; return 1;
-	}
-	if [[ "${require_service}" -eq 0 ]] || ! agent_manages_service; then return 0; fi
-	local seconds="${HFL_UPGRADE_HEALTH_SECONDS:-10}"
-	[[ "${seconds}" =~ ^[0-9]+$ && "${seconds}" -ge 2 ]] || seconds=10
-	while ((stable < seconds)); do
+	[[ -n "$expected_commit" ]] || { log_warn "local health check: target manifest has no agent_commit"; return 1; }
+	actual="$("${INSTALL_DIR}/hfl-agent" version 2>/dev/null)" || return 1
+	[[ "$actual" =~ $identity_re ]] || return 1
+	[[ "${BASH_REMATCH[1]#v}" == "${expected_version#v}" && "${BASH_REMATCH[2]}" == "$expected_commit" ]] || return 1
+	if [[ "$require_service" -eq 0 ]] || ! agent_manages_service; then
+		verify_upgrade_database_offline "$data_dir"
+		return $?
+	fi
+	local seconds="${HFL_UPGRADE_HEALTH_SECONDS:-10}" timeout=120 modern=0 verifier="${HFL_UPGRADE_HELPER:-${INSTALL_DIR}/hfl-agent}"
+	[[ "$seconds" =~ ^[0-9]+$ && "$seconds" -ge 2 && "$seconds" -le 120 ]] || seconds=10
+	# Capability probing is read-only and does not open SQLite. Never run tasks
+	# list alongside migration, including when verifying a rolled-back old Agent.
+	if "${INSTALL_DIR}/hfl-agent" help 2>/dev/null | grep -q 'lifecycle ready'; then modern=1; fi
+	while ((elapsed < timeout)); do
+		pid=""
 		if agent_uses_launchd; then
-			launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1 || return 1
-			pid="$(launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null | awk -F'= ' '/pid =/{print $2; exit}' | tr -d ' ;')"
-		else
-			hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1 || return 1
+			pid="$(launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" 2>/dev/null | awk -F'= ' '/pid =/{print $2; exit}' | tr -d ' ;' || true)"
+		elif hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1; then
 			pid="$(hfl_systemctl show hyperfilelens-agent.service -p MainPID 2>/dev/null | sed -n 's/^MainPID=//p')"
 		fi
-		[[ "${pid}" =~ ^[0-9]+$ && "${pid}" -gt 0 ]] || return 1
-		if [[ "$(uname -s)" == "Linux" ]]; then
-			[[ "$(readlink "/proc/${pid}/exe" 2>/dev/null || true)" == "${INSTALL_DIR}/hfl-agent" ]] || return 1
-		else
-			command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
-			[[ "${command}" == *"${INSTALL_DIR}/hfl-agent"* ]] || return 1
+		if [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 ]]; then
+			if [[ "$(uname -s)" == "Linux" ]]; then
+				# /proc reports the physical executable. Compare file identity so
+				# an aliased install root works without accepting a replaced inode.
+				run_as_upgrade_account test "/proc/${pid}/exe" -ef "${INSTALL_DIR}/hfl-agent" 2>/dev/null || pid=""
+			else
+				command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+				[[ "$command" == *"${INSTALL_DIR}/hfl-agent"* ]] || pid=""
+			fi
+		else pid=""; fi
+		if [[ -n "$pid" && "$modern" -eq 1 ]]; then
+			run_as_upgrade_account "$verifier" lifecycle ready --data-dir "$data_dir" --pid "$pid" \
+				--version "${expected_version#v}" --commit "$expected_commit" >/dev/null 2>&1 || pid=""
 		fi
-		stable=$((stable + 1))
+		if [[ -n "$pid" ]]; then
+			instance="$(process_start_marker "$pid")"
+			if [[ -n "$instance" && "${pid}:${instance}" == "$previous_pid" ]]; then stable=$((stable + 1)); else stable=0; fi
+			if ((stable >= seconds)); then
+				log_ok "local health check passed (${expected_version}, ${expected_commit}; stable ${stable}s)"
+				return 0
+			fi
+		else stable=0; fi
+		previous_pid="${pid}:${instance}"
 		sleep 1
+		elapsed=$((elapsed + 1))
 	done
-	log_ok "local health check passed (${expected_version}, ${expected_commit}; stable ${stable}s)"
+	[[ -n "${HFL_UPGRADE_ERROR_CODE:-}" ]] || HFL_UPGRADE_ERROR_CODE="AGENT_UPGRADE_STARTUP_FAILED"
+	log_warn "local health check: service readiness or stable process identity timed out"
+	return 1
+}
+
+upgrade_service_active() {
+	if agent_uses_launchd; then
+		launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1
+	else
+		hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1
+	fi
 }
 
 upgrade_rollback_on_error() {
 	local rc="${1:-$?}" failed_phase="${UPGRADE_CURRENT_PHASE}"
+	HFL_UPGRADE_FAILED_PHASE="${failed_phase}"
+	HFL_UPGRADE_ORIGINAL_EXIT="${rc}"
+	[[ -n "${HFL_UPGRADE_ERROR_CODE}" ]] || HFL_UPGRADE_ERROR_CODE="AGENT_UPGRADE_INSTALL_FAILED"
 	if [[ "${UPGRADE_STOP_ATTEMPTED}" -eq 1 ]]; then
 		UPGRADE_TRANSACTION_ACTIVE=0
 		trap - ERR
+		if [[ "${UPGRADE_DEPLOYMENT_STARTED}" -eq 1 ]] && ! prepare_upgrade_rollback "${DATA_DIR}"; then
+			HFL_UPGRADE_ERROR_CODE="AGENT_UPGRADE_ROLLBACK_SNAPSHOT_UNVERIFIED"
+			log_fail "Rollback material verification failed; the service, installed state, and saved snapshot were not changed by rollback." 70
+		fi
 		write_upgrade_state "${DATA_DIR}" "rolling_back" || log_warn "could not persist rolling_back state"
 		log_warn "upgrade failed during ${failed_phase} (exit=${rc}); attempting rollback"
-		local rollback_ok=1
+		local rollback_ok=1 verification_ok=1
 		if [[ "${UPGRADE_DEPLOYMENT_STARTED}" -eq 1 ]]; then
-			local can_restore=1
-			(stop_service) >/dev/null 2>&1 || { rollback_ok=0; can_restore=0; }
-			if [[ "${can_restore}" -eq 1 ]]; then
-				(restore_upgrade_binaries) || rollback_ok=0
-				if [[ "${UPGRADE_STATE_SNAPSHOT_READY}" -eq 1 ]]; then
-					(restore_upgrade_state "${DATA_DIR}") || rollback_ok=0
+			UPGRADE_BIN_BACKUP="${HFL_PREPARED_ROLLBACK}/bin"
+			if (stop_service) >/dev/null 2>&1; then
+				# Stop on the first restoration error instead of combining an
+				# incomplete binary restore with a different generation of data.
+				if ! (restore_upgrade_binaries && restore_upgrade_state "${DATA_DIR}" && restore_upgrade_service_definition); then
+					rollback_ok=0
 				fi
-				(restore_upgrade_service_definition "${DATA_DIR}") || rollback_ok=0
+			else
+				rollback_ok=0
 			fi
 		fi
-		if [[ "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 ]] && agent_manages_service; then
-			# Restore the pre-upgrade running state without changing the
-			# service's enablement policy. An active-but-disabled service must
-			# remain disabled after rollback as well.
-			(start_service_only) >/dev/null 2>&1 || rollback_ok=0
+		if [[ "$rollback_ok" -eq 1 ]]; then
+			(verify_upgrade_database_offline "${DATA_DIR}") || verification_ok=0
 		fi
-		if [[ "${UPGRADE_SERVICE_WAS_ENABLED}" -eq 0 ]] && agent_manages_service && agent_uses_systemd; then
+		if [[ "${rollback_ok}" -eq 1 && "${UPGRADE_SERVICE_WAS_ACTIVE}" -eq 1 ]] && agent_manages_service; then
+			# Never launch a mixture of failed-target binaries and old state.
+			# If the initial stop failed and the old service is still running,
+			# verify it without forcing another restart.
+			if [[ "${UPGRADE_DEPLOYMENT_STARTED}" -eq 1 ]] || ! upgrade_service_active; then
+				(start_service_only) >/dev/null 2>&1 || verification_ok=0
+			fi
+		fi
+		if [[ "${rollback_ok}" -eq 1 && "${UPGRADE_SERVICE_WAS_ENABLED}" -eq 0 ]] && agent_manages_service && agent_uses_systemd; then
 			hfl_systemctl disable hyperfilelens-agent.service >/dev/null 2>&1 || rollback_ok=0
 		fi
-		if ! upgrade_health_check "${DATA_DIR}" "${UPGRADE_PREVIOUS_VERSION}" "${UPGRADE_SERVICE_WAS_ACTIVE}"; then rollback_ok=0; fi
-		if [[ "${rollback_ok}" -eq 1 ]]; then
+		if [[ "${rollback_ok}" -eq 1 && "${verification_ok}" -eq 1 ]] &&
+			! upgrade_health_check "${DATA_DIR}" "${UPGRADE_PREVIOUS_VERSION}" "${UPGRADE_SERVICE_WAS_ACTIVE}"; then verification_ok=0; fi
+		if [[ "${rollback_ok}" -eq 1 && "${verification_ok}" -eq 1 ]]; then
 			# A stop/snapshot failure can happen before deployment starts. The
 			# rollback directory is still only a transient safety copy in that
 			# case; do not leave it to be mistaken for an active transaction.
@@ -1625,6 +1756,9 @@ upgrade_rollback_on_error() {
 				log_warn "rollback completed, but its state could not be persisted; rollback data was retained"
 			fi
 			log_warn "upgrade failed; rollback completed successfully"
+		elif [[ "${rollback_ok}" -eq 1 ]]; then
+			write_upgrade_state "${DATA_DIR}" "rollback_verification_pending" || true
+			log_fail "Upgrade failed; the previous installation was restored but could not be verified. Rollback data was retained for re-verification." 70
 		else
 			write_upgrade_state "${DATA_DIR}" "rollback_failed" || true
 			log_fail "Upgrade failed; rollback also failed. Rollback data was retained under $(agent_backup_dir "${DATA_DIR}")/rollback." 70
@@ -1671,6 +1805,7 @@ merge_agent_env() {
 		for i in "${!keys[@]}"; do
 			echo "${keys[$i]}=${vals[$i]}" >>"${env_file}"
 		done
+		if [[ "${INSTALLATION_MODE}" == "account" ]]; then chown "${RUN_AS_USER}" "${env_file}" || return 1; fi
 		log_ok "created ${env_file}"
 		return 0
 	fi
@@ -1700,6 +1835,7 @@ merge_agent_env() {
 		set_agent_env_key "${env_file}" HFL_RUN_AS_HOME "${RUN_AS_HOME}"
 	fi
 	chmod 600 "${env_file}"
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then chown "${RUN_AS_USER}" "${env_file}" || return 1; fi
 	log_ok "updated unified Agent Root paths in ${env_file}"
 }
 
@@ -1710,7 +1846,7 @@ migrate_agent_db() {
 		log_skip "migrate agent.db (hfl-agent missing)"
 		return 0
 	}
-	if "${agent}" tasks list --data-dir "${data_dir}" --limit 1 >/dev/null 2>&1; then
+	if run_as_upgrade_account "${agent}" tasks list --data-dir "${data_dir}" --limit 1 >/dev/null 2>&1; then
 		log_ok "agent.db schema upgraded (if needed)"
 	else
 		log_fail "agent.db migration check failed; the upgraded Agent was not started." 2
@@ -2514,33 +2650,42 @@ stop_service() {
 		return 0
 	fi
 	local state
-	state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
+	state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null)" || true
 	case "$state" in
 		active|activating|deactivating)
 			log_step "stopping hyperfilelens-agent.service"
 			hfl_systemctl stop --no-block hyperfilelens-agent.service 2>/dev/null || true
 			local waited=0
 			while [[ $waited -lt 45 ]]; do
-				state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
+				state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null)" || true
 				case "$state" in
 					inactive|failed) break ;;
+					active|activating|deactivating) ;;
+					*) log_fail "Unable to determine Agent service state; upgrade was aborted before deployment." 2 ;;
 				esac
 				sleep 1
 				waited=$((waited + 1))
 			done
-			if hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1; then
-				log_warn "service stop timed out; sending SIGKILL"
-				hfl_systemctl kill --signal=SIGKILL hyperfilelens-agent.service 2>/dev/null || true
-				sleep 1
-			fi
-			if hfl_systemctl is-active hyperfilelens-agent.service >/dev/null 2>&1; then
-				log_fail "Agent service did not stop; upgrade was aborted before deployment." 2
-			fi
+			case "$state" in
+				inactive|failed) ;;
+				active|activating|deactivating)
+					log_warn "service stop timed out; sending SIGKILL"
+					hfl_systemctl kill --signal=SIGKILL hyperfilelens-agent.service 2>/dev/null || true
+					sleep 1
+					state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null)" || true
+					;;
+				*) log_fail "Unable to verify Agent service shutdown." 2 ;;
+			esac
+			case "$state" in
+				inactive|failed) ;;
+				*) log_fail "Agent service did not stop; upgrade was aborted before deployment." 2 ;;
+			esac
 			log_ok "stopped service hyperfilelens-agent.service"
 			;;
-		*)
+		inactive|failed)
 			log_skip "stop hyperfilelens-agent.service (not active)"
 			;;
+		*) log_fail "Unable to determine Agent service state; no binaries were replaced." 2 ;;
 	esac
 }
 
@@ -2629,7 +2774,7 @@ start_service_only() {
 	# stale unit definition from its manager cache.
 	hfl_systemctl daemon-reload
 	local state
-	state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null || echo inactive)"
+	state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null)" || true
 	case "${state}" in
 		active|activating|deactivating)
 			hfl_systemctl restart hyperfilelens-agent.service
@@ -2833,6 +2978,7 @@ cmd_upgrade() {
 	parse_upgrade_flags "$@"
 	require_root
 	require_service_manager
+	resolve_installed_upgrade_account || log_fail "Could not verify the installed Agent service account; upgrade was not started." 2
 
 	[[ -n "${UPGRADE_FROM}" ]] || log_fail "Upgrade requires --from <directory-or.tar.gz>." 2
 	if [[ "${AGENT_ONLY}" -eq 1 || "${KOPIA_ONLY}" -eq 1 ]]; then
@@ -2875,9 +3021,7 @@ cmd_upgrade() {
 		|| log_fail "Upgrade could not resolve a valid Agent Root data directory." 2
 	DATA_DIR="${data_dir}"
 	env_file="$(agent_env_file "${data_dir}")"
-	upgrade_ws="$(upgrade_workspace_dir "${data_dir}")"
-	[[ -n "${upgrade_ws}" && "${upgrade_ws}" == /* ]] \
-		|| log_fail "Upgrade could not resolve its workspace directory." 2
+	upgrade_ws=""
 	prev_ver="unknown"
 	if [[ -f "$INSTALLED_VERSION_FILE" ]]; then
 		prev_ver="$(tr -d ' \t\r\n' <"$INSTALLED_VERSION_FILE")"
@@ -2896,8 +3040,29 @@ cmd_upgrade() {
 	# Keep log finalization installed while recovering an older transaction or
 	# resolving the package; these steps can fail before the main transaction
 	# cleanup trap is installed below.
-	trap 'rc=$?; release_lifecycle_lock; hfl_finalize_active_log "$rc"' EXIT
+	trap 'rc=$?; record_upgrade_failure "$rc"; cleanup_upgrade_workspace "${upgrade_ws:-}"; release_lifecycle_lock; hfl_finalize_active_log "$rc"' EXIT
+	upgrade_ws="$(create_upgrade_workspace)" || log_fail "Could not create the private upgrade workspace." 2
+	HFL_UPGRADE_WORKSPACE="${upgrade_ws}"
+	src_root="$(prepare_upgrade_source "${UPGRADE_FROM}" "${upgrade_ws}")"
+	new_ver="$(bundle_version_from "${src_root}")"
+	local installed_role gateway_scope
+	installed_role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
+	verify_upgrade_package "${src_root}" "${installed_role:-agent}" "${new_ver}"
+	stage_upgrade_helper "${src_root}" "${upgrade_ws}" || log_fail "Could not stage the verified upgrade helper." 2
+	local target_commit
+	target_commit="$(grep -E '"agent_commit"[[:space:]]*:' "${src_root}/MANIFEST.json" | head -n1 | sed -n 's/.*"agent_commit"[[:space:]]*:[[:space:]]*"\([0-9A-Fa-f]*\)".*/\1/p')"
+	if [[ "${INSTALLATION_MODE}" != "account" ]] && "${HFL_UPGRADE_HELPER}" help 2>/dev/null | grep -q 'lifecycle ready'; then
+		HFL_UPGRADE_ATTEMPT="$("${HFL_UPGRADE_HELPER}" lifecycle begin --data-dir "${data_dir}" --archive "${UPGRADE_FROM}" --version "${new_ver}" --commit "${target_commit}")" \
+			|| log_fail "Upgrade task identity could not be verified; no service was stopped." 2
+	fi
 	recover_interrupted_upgrade "${data_dir}" "upgrade"
+	if [[ -n "${HFL_PREPARED_ROLLBACK}" ]]; then
+		cleanup_upgrade_workspace "$(dirname "${HFL_PREPARED_ROLLBACK}")"
+		HFL_PREPARED_ROLLBACK=""
+	fi
+	HFL_UPGRADE_ERROR_CODE=""
+	HFL_UPGRADE_FAILED_PHASE=""
+	HFL_UPGRADE_ORIGINAL_EXIT=0
 	prev_ver="unknown"
 	if [[ -f "${INSTALLED_VERSION_FILE}" ]]; then
 		prev_ver="$(tr -d ' \t\r\n' <"${INSTALLED_VERSION_FILE}")"
@@ -2912,9 +3077,7 @@ cmd_upgrade() {
 	UPGRADE_DEPLOYMENT_STARTED=0
 	UPGRADE_STOP_ATTEMPTED=0
 	write_upgrade_state "${data_dir}" "preparing"
-	trap 'rc=$?; if [[ "$rc" -ne 0 && "${UPGRADE_STOP_ATTEMPTED}" -eq 0 ]]; then clear_upgrade_state; cleanup_upgrade_rollback "${data_dir}"; fi; cleanup_upgrade_workspace "${upgrade_ws:-}"; release_lifecycle_lock; hfl_finalize_active_log "$rc"' EXIT
-	src_root="$(prepare_upgrade_source "${UPGRADE_FROM}" "${data_dir}")"
-	new_ver="$(bundle_version_from "${src_root}")"
+	trap 'rc=$?; record_upgrade_failure "$rc"; if [[ "$rc" -ne 0 && "${UPGRADE_STOP_ATTEMPTED}" -eq 0 && "${HFL_KEEP_ROLLBACK}" -eq 0 ]]; then clear_upgrade_state; cleanup_upgrade_rollback "${data_dir}"; fi; cleanup_upgrade_workspace "${upgrade_ws:-}"; release_lifecycle_lock; hfl_finalize_active_log "$rc"' EXIT
 	UPGRADE_TARGET_VERSION="${new_ver}"
 	write_upgrade_state "${data_dir}" "package_resolved"
 
@@ -2927,9 +3090,6 @@ cmd_upgrade() {
 		log_fail "Downgrade is not supported (${new_ver} < ${prev_ver})." 2
 	fi
 
-	local installed_role gateway_scope
-	installed_role="$(read_env_value "${env_file}" "HFL_NODE_ROLE" || true)"
-	verify_upgrade_package "${src_root}" "${installed_role:-agent}" "${new_ver}"
 	check_upgrade_cache_users "${src_root}" "${data_dir}"
 	update_lifecycle_lock_target "${new_ver}" "${src_root}/MANIFEST.json"
 	if [[ $QUIET_FOOTER -eq 0 ]]; then
@@ -2977,6 +3137,11 @@ cmd_upgrade() {
 	# SQLite snapshot for any later deployment failure.
 	upgrade_disk_preflight "${data_dir}" "${src_root}"
 	check_upgrade_cache_users "${src_root}" "${data_dir}"
+	if ! prepare_upgrade_rollback "${data_dir}"; then
+		HFL_KEEP_ROLLBACK=1
+		HFL_UPGRADE_ERROR_CODE="AGENT_UPGRADE_ROLLBACK_SNAPSHOT_UNVERIFIED"
+		log_fail "Rollback snapshot failed preflight verification; the Agent was not stopped." 2
+	fi
 	UPGRADE_STOP_ATTEMPTED=1
 	write_upgrade_state "${data_dir}" "stopping"
 	stop_service
@@ -3002,7 +3167,6 @@ cmd_upgrade() {
 		write_upgrade_state "${data_dir}" "awaiting_restart"
 		UPGRADE_TRANSACTION_ACTIVE=0
 		trap - ERR
-		cleanup_upgrade_workspace "${upgrade_ws}"
 		if [[ $QUIET_FOOTER -eq 0 ]]; then
 			log_skip "Service $(service_display_name) was not restarted (--no-restart)."
 			log_warn "Rollback snapshot retained until the upgraded Agent is started and verified."
@@ -3019,13 +3183,13 @@ cmd_upgrade() {
 	fi
 	write_upgrade_state "${data_dir}" "service_started"
 	if ! upgrade_health_check "${data_dir}" "${new_ver}" "${UPGRADE_SERVICE_WAS_ACTIVE}"; then
+		[[ -n "${HFL_UPGRADE_ERROR_CODE}" ]] || HFL_UPGRADE_ERROR_CODE="AGENT_UPGRADE_STARTUP_FAILED"
 		upgrade_rollback_on_error 1
 		return 1
 	fi
 	UPGRADE_TRANSACTION_ACTIVE=0
 	trap - ERR
 	write_upgrade_state "${data_dir}" "healthy"
-	cleanup_upgrade_workspace "${upgrade_ws}"
 	cleanup_legacy_layout
 	write_upgrade_state "${data_dir}" "committed"
 	cleanup_upgrade_rollback "${data_dir}"
@@ -3388,9 +3552,11 @@ cmd_start() {
 	state_file="$(agent_lifecycle_dir "${data_dir}")/upgrade-state.json"
 	phase="$(upgrade_state_value "${state_file}" phase || true)"
 	if [[ -f "${state_file}" ]]; then
+		resolve_installed_upgrade_account || log_fail "Could not verify the installed Agent service account." 2
 		DATA_DIR="${data_dir}"
 		acquire_lifecycle_lock "${data_dir}" "upgrade-verification"
-		trap 'release_lifecycle_lock' EXIT
+		trap 'cleanup_upgrade_workspace "${HFL_UPGRADE_WORKSPACE}"; release_lifecycle_lock' EXIT
+		HFL_UPGRADE_WORKSPACE="$(create_upgrade_workspace)" || log_fail "Could not create the private rollback workspace." 2
 		local recovery_rc=0
 		if recover_interrupted_upgrade "${data_dir}" "start"; then
 			:
@@ -3403,6 +3569,7 @@ cmd_start() {
 	if [[ "${phase}" == "awaiting_restart" ]]; then
 		[[ -n "${UPGRADE_PREVIOUS_VERSION}" ]] || UPGRADE_PREVIOUS_VERSION="unknown"
 		[[ -n "${UPGRADE_TARGET_VERSION}" ]] || log_fail "Pending upgrade state is missing its target version (${state_file})." 2
+		prepare_upgrade_rollback "${data_dir}" || log_fail "The staged upgrade has no verified rollback snapshot; the new service was not started." 70
 		UPGRADE_DEPLOYMENT_STARTED=1
 		UPGRADE_STOP_ATTEMPTED=1
 		UPGRADE_TRANSACTION_ACTIVE=1
@@ -3420,12 +3587,14 @@ cmd_start() {
 		write_upgrade_state "${data_dir}" "committed"
 		cleanup_upgrade_rollback "${data_dir}"
 		clear_upgrade_state
+		cleanup_upgrade_workspace "${HFL_UPGRADE_WORKSPACE}"
 		release_lifecycle_lock
 		trap - EXIT
 		log_ok "Staged upgrade to ${UPGRADE_TARGET_VERSION} passed local health verification."
 		return 0
 	fi
 	if [[ -n "${phase}" ]]; then
+		cleanup_upgrade_workspace "${HFL_UPGRADE_WORKSPACE}"
 		release_lifecycle_lock
 		trap - EXIT
 	fi
@@ -3434,6 +3603,85 @@ cmd_start() {
 	log_step "Starting $(service_display_name)."
 	start_service_only
 	log_ok "Service $(service_display_name) is $(service_status_line)."
+	release_lifecycle_lock
+	trap - EXIT
+}
+
+fail_rollback_verification() {
+	HFL_UPGRADE_ERROR_CODE="$1"
+	HFL_UPGRADE_FAILED_PHASE="rollback_verification"
+	log_fail "$2 Recovery materials were preserved; no new deployment was started." 2
+}
+
+# Caller holds the same lifecycle lock through verification and any new deployment.
+# This function never restores live files or changes the currently running service.
+verify_saved_upgrade_rollback() {
+	local data_dir="$1" diagnostic service_state require_service="${UPGRADE_SERVICE_WAS_ACTIVE}"
+	log_step "Verifying the previous Agent rollback before proceeding."
+	local -a args=(--data-dir "$data_dir" --version "${UPGRADE_PREVIOUS_VERSION}")
+	if [[ "${INSTALLATION_MODE}" == "account" ]]; then
+		local uid
+		uid="$(id -u "${RUN_AS_USER}")" || fail_rollback_verification AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED "Could not determine restored service UID."
+		args+=(--runtime-uid "$uid")
+	fi
+	if ! diagnostic="$("${HFL_UPGRADE_HELPER}" lifecycle verify-rollback "${args[@]}")"; then
+		case "$diagnostic" in
+			AGENT_UPGRADE_ROLLBACK_FILES_UNVERIFIED|AGENT_UPGRADE_ROLLBACK_SNAPSHOT_UNVERIFIED|AGENT_UPGRADE_ROLLBACK_LIVE_DB_UNVERIFIED|AGENT_UPGRADE_ROLLBACK_SNAPSHOT_DB_UNVERIFIED|AGENT_UPGRADE_ROLLBACK_REFERENCES_UNVERIFIED|AGENT_UPGRADE_ROLLBACK_VERIFICATION_TIMEOUT) ;;
+			*) diagnostic=AGENT_UPGRADE_RECOVERY_REQUIRED ;;
+		esac
+		fail_rollback_verification "$diagnostic" "Previous rollback could not be verified (${diagnostic})."
+	fi
+	local service_dir="$(agent_backup_dir "$data_dir")/rollback/service"
+	if agent_uses_launchd; then
+		if launchctl print "${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}" >/dev/null 2>&1; then require_service=1; fi
+		cmp -s "${service_dir}/launchd.plist" "${LAUNCHD_PLIST}" \
+			|| fail_rollback_verification AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED "Restored launchd definition does not match rollback snapshot."
+	else
+		service_state="$(hfl_systemctl is-active hyperfilelens-agent.service 2>/dev/null)" || true
+		case "$service_state" in
+			active) require_service=1 ;;
+			inactive) ;;
+			*) fail_rollback_verification AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED "The previous Agent service is not in a verifiable state." ;;
+		esac
+		cmp -s "${service_dir}/hyperfilelens-agent.service" "${UNIT_DST}" \
+			|| fail_rollback_verification AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED "Restored service definition does not match rollback snapshot."
+		if [[ -f "${service_dir}/20-gateway-resources.conf" ]]; then
+			cmp -s "${service_dir}/20-gateway-resources.conf" "${GATEWAY_RESOURCE_DROPIN}" \
+				|| fail_rollback_verification AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED "Restored resource policy does not match rollback snapshot."
+		elif [[ -e "${GATEWAY_RESOURCE_DROPIN}" ]]; then
+			fail_rollback_verification AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED "Unexpected restored resource policy."
+		fi
+	fi
+	upgrade_health_check "$data_dir" "${UPGRADE_PREVIOUS_VERSION}" "$require_service" \
+		|| fail_rollback_verification AGENT_UPGRADE_ROLLBACK_SERVICE_UNVERIFIED "Restored service did not pass verification."
+	write_upgrade_state "$data_dir" "rolled_back" \
+		|| fail_rollback_verification AGENT_UPGRADE_RECOVERY_REQUIRED "Could not persist verified rollback state."
+	# Leave snapshot cleanup to the normal upgrade transaction.
+	log_ok "Rollback verification passed. Recovery materials were preserved."
+}
+
+cmd_recover_upgrade() {
+	require_root
+	require_agent_installed
+	resolve_installed_upgrade_account || log_fail "Could not verify the installed Agent service account." 2
+	[[ $# -eq 2 && "$1" == "--from" ]] || log_fail "Usage: install.sh recover-upgrade --from <fixed-package.tar.gz>" 2
+	local data_dir src_root version upgrade_ws=""
+	data_dir="$(resolve_data_dir)"
+	DATA_DIR="$data_dir"
+	acquire_lifecycle_lock "$data_dir" "upgrade-recovery-verification"
+	trap 'cleanup_upgrade_workspace "${upgrade_ws:-}"; release_lifecycle_lock' EXIT
+	load_upgrade_state "$data_dir"
+	case "${UPGRADE_CURRENT_PHASE}" in
+		rollback_failed|rollback_verification_pending) ;;
+		*) log_fail "No rollback transaction is awaiting verification." 2 ;;
+	esac
+	upgrade_ws="$(create_upgrade_workspace)" || log_fail "Could not create the private recovery workspace." 2
+	src_root="$(prepare_upgrade_source "$2" "$upgrade_ws")"
+	version="$(bundle_version_from "$src_root")"
+	verify_upgrade_package "$src_root" "$(read_env_value "$(agent_env_file "$data_dir")" HFL_NODE_ROLE)" "$version"
+	stage_upgrade_helper "${src_root}" "$upgrade_ws" || log_fail "Could not stage the verified recovery helper." 2
+	verify_saved_upgrade_rollback "$data_dir"
+	cleanup_upgrade_workspace "$upgrade_ws"
 	release_lifecycle_lock
 	trap - EXIT
 }
@@ -3488,6 +3736,7 @@ case "$CMD" in
 	reconcile-legacy) cmd_reconcile_legacy "$@" ;;
 	start) cmd_start "$@" ;;
 	stop) cmd_stop "$@" ;;
+ recover-upgrade) cmd_recover_upgrade "$@" ;;
 	restart) cmd_restart "$@" ;;
 	status) cmd_status "$@" ;;
 	upgrade) cmd_upgrade "$@" ;;

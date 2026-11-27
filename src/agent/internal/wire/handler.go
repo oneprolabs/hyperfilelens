@@ -130,6 +130,23 @@ func (h *Handler) acknowledgeResultDelivery(taskID string) {
 	}
 }
 
+func (h *Handler) sendDetachedHandoff(ctx context.Context, sink Sender, kind, taskID string, result map[string]any) error {
+	if engine.NormalizeKind(kind) != "agent.upgrade" {
+		// Uninstall handoff still drives the existing signed-callback watchdog.
+		return h.sendLiveTaskResult(ctx, sink, taskID, "running", result, "")
+	}
+	// A detached upgrade handoff is progress, not a durable result. Older
+	// controllers already project the local_detached progress marker without
+	// issuing a task-id-only ACK for a later terminal outbox entry.
+	progress := make(map[string]any, len(result)+2)
+	for key, value := range result {
+		progress[key] = value
+	}
+	progress["status"] = "running"
+	progress["phase"] = "running"
+	return SendTaskProgress(ctx, sink, taskID, progress)
+}
+
 func (h *Handler) sendLiveTaskResult(
 	ctx context.Context,
 	sink Sender,
@@ -378,6 +395,9 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 		persisted, err := h.tasks.Get(taskCtx, cmd.TaskID)
 		if err != nil {
 			slog.Warn("load accepted task before execution failed", "task_id", cmd.TaskID, "err", err)
+		} else if engine.NormalizeKind(cmd.Kind) == "agent.upgrade" && persisted.Status != model.TaskStatusRunning && persisted.Status != model.TaskStatusPending {
+			// A delayed scheduling goroutine cannot launch a terminal upgrade.
+			return
 		} else if persisted.Status == model.TaskStatusCancelled {
 			// task.cancel can arrive after the durable command acceptance but
 			// before this goroutine registers with the in-memory tracker. Close
@@ -526,8 +546,8 @@ func (h *Handler) runTask(ctx context.Context, sink Sender, cmd *TaskCommand) {
 				slog.Warn("persist running task failed", "task_id", cmd.TaskID, "err", err)
 			}
 		}
-		if err := h.sendLiveTaskResult(taskCtx, sink, cmd.TaskID, status, result, errMsg); err != nil {
-			slog.Warn("send task.result failed", "task_id", cmd.TaskID, "err", err)
+		if err := h.sendDetachedHandoff(taskCtx, sink, cmd.Kind, cmd.TaskID, result); err != nil {
+			slog.Warn("send detached lifecycle handoff failed", "task_id", cmd.TaskID, "err", err)
 		}
 		return
 	}

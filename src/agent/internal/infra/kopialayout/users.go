@@ -2,6 +2,7 @@ package kopialayout
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,19 +35,25 @@ func CheckUsers(ctx context.Context, root string, allowAgent bool) error {
 		if name != "kopia" && name != "hfl-agent" {
 			continue
 		}
+		if inactiveCacheProcess(ctx, p) {
+			continue
+		}
 		if name == "hfl-agent" && allowAgent {
 			continue
 		}
 		exe, exeErr := p.ExeWithContext(ctx)
 		args, argsErr := p.CmdlineSliceWithContext(ctx)
 		if name == "hfl-agent" && len(args) > 1 {
+			if args[1] == "lifecycle" && len(args) > 2 && args[2] == "ready" {
+				continue
+			}
 			switch args[1] {
 			case "version", "help", "--help", "-h", "package", "cache-layout":
 				continue // Read-only verifiers do not use repository state.
 			}
 		}
 		if exeErr != nil && argsErr != nil {
-			if exists, _ := p.IsRunningWithContext(ctx); !exists {
+			if inactiveCacheProcess(ctx, p) {
 				continue
 			}
 			return fmt.Errorf("cannot inspect a possible cache user; migration deferred")
@@ -68,7 +75,10 @@ func CheckUsers(ctx context.Context, root string, allowAgent bool) error {
 			}
 		}
 		if owned {
-			return fmt.Errorf("CACHE_LAYOUT_BUSY: installation still has an active %s process; wait for it to exit", name)
+			if inactiveCacheProcess(ctx, p) {
+				continue
+			}
+			return fmt.Errorf("CACHE_LAYOUT_BUSY: installation still has an active %s process (pid=%d); wait for it to exit", name, p.Pid)
 		}
 		// An externally launched Agent or PATH-installed Kopia may identify its
 		// installation only through environment variables. In particular,
@@ -77,7 +87,7 @@ func CheckUsers(ctx context.Context, root string, allowAgent bool) error {
 		if name == "kopia" || name == "hfl-agent" {
 			env, err := processEnvironment(ctx, p)
 			if err != nil {
-				if exists, _ := p.IsRunningWithContext(ctx); !exists {
+				if inactiveCacheProcess(ctx, p) {
 					continue
 				}
 				return fmt.Errorf("cannot verify repository user's environment; migration deferred")
@@ -88,11 +98,26 @@ func CheckUsers(ctx context.Context, root string, allowAgent bool) error {
 				case "KOPIA_CONFIG_PATH", "KOPIA_CACHE_DIRECTORY", "HFL_DATA_DIR", "HFL_AGENT_ROOT", "HFL_AGENT_HOME", "HOME", "USERPROFILE":
 					resolved, err := physicalPath(value)
 					if err == nil && (samePath(root, resolved) || within(root, resolved)) {
-						return fmt.Errorf("CACHE_LAYOUT_BUSY: installation still has an active %s process", name)
+						return fmt.Errorf("CACHE_LAYOUT_BUSY: installation still has an active %s process (pid=%d)", name, p.Pid)
 					}
 				}
 			}
 		}
 	}
 	return ctx.Err()
+}
+
+// PID existence alone is not evidence of a live cache user: exited probes can
+// remain zombies until their parent reaps them. Recheck after inspection races,
+// but retain the fail-closed behavior for live processes we cannot inspect.
+func inactiveCacheProcess(ctx context.Context, p *gprocess.Process) bool {
+	if states, err := p.StatusWithContext(ctx); err == nil {
+		for _, state := range states {
+			if state == gprocess.Zombie || state == "dead" {
+				return true
+			}
+		}
+	}
+	running, err := p.IsRunningWithContext(ctx)
+	return (err == nil && !running) || errors.Is(err, gprocess.ErrorProcessNotRunning) || os.IsNotExist(err)
 }

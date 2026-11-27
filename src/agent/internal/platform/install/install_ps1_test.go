@@ -710,3 +710,23 @@ func TestInstallPs1PrefersSupportedInstalledDiskChecker(t *testing.T) {
 		t.Fatal("a failed disk check must not fall back to a second checker")
 	}
 }
+
+func TestInstallPs1ValidatesRollbackAndTaskBeforeAnyServiceMutation(t *testing.T) {
+	source := readPackagingInstallScript(t)
+	rollback := source[strings.Index(source, "function Invoke-HflUpgradeRollback {"):]
+	validate := strings.Index(rollback, "Prepare-HflUpgradeRollback -DataRoot $DataRoot")
+	stop := strings.Index(rollback, "Stop-AgentForUpgrade")
+	if validate < 0 || stop < 0 || validate > stop {
+		t.Fatal("rollback must validate and stage everything before stopping the service")
+	}
+	restore := source[strings.Index(source, "function Restore-AgentState {"):strings.Index(source, "function Restore-RollbackServiceDefinition {")]
+	if !strings.Contains(restore, "$script:PreparedUpgradeRollback") || strings.Contains(restore, "Expand-Archive") || strings.Contains(restore, "Remove-Item -Force -LiteralPath $destination") {
+		t.Fatal("restore must use prepared files without reopening the archive or deleting missing members")
+	}
+	upgrade := source[strings.Index(source, "function Invoke-Upgrade {"):]
+	authorize := strings.Index(upgrade, "lifecycle authorize")
+	recover := strings.Index(upgrade, "Restore-HflInterruptedUpgrade")
+	if authorize < 0 || recover < 0 || authorize > recover {
+		t.Fatal("staged package authorization must precede even interrupted recovery")
+	}
+}

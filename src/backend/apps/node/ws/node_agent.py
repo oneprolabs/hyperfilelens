@@ -311,7 +311,14 @@ class NodeAgentConsumer(AsyncWebsocketConsumer):
                 message.task_id,
             )
             return
-        if self.task_result_ack_enabled and handled.acknowledge_agent:
+        # Legacy Agents send the detached handoff as task.result(running).
+        # Commit the handoff, but never ACK it using the terminal outbox's
+        # task-id-only ACK: the installer may already have persisted failure.
+        skip_upgrade_handoff_ack = (
+            (message.status or "success").strip().lower() == "running"
+            and (handled.node_task is None or handled.node_task.kind == "agent.upgrade")
+        )
+        if self.task_result_ack_enabled and handled.acknowledge_agent and not skip_upgrade_handoff_ack:
             try:
                 await self.send(
                     text_data=dumps_wire(

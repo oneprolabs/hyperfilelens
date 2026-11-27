@@ -796,6 +796,7 @@ def _handle_task_result(
         previous_status == NodeTask.Status.CANCELED
         and incoming_status in {"canceled", "cancelled"}
     )
+    persisted_error = message.error
     incoming_result = dict(message.result or {})
     lifecycle_upgrade = (
         task.kind == "agent.upgrade"
@@ -819,12 +820,18 @@ def _handle_task_result(
         "canceled",
         "cancelled",
     }:
+        installer_code = incoming_result.get("error_code")
+        installer_message = (
+            node_conf.UPGRADE_INSTALLER_ERRORS.get(installer_code)
+            if isinstance(installer_code, str) else None
+        )
+        persisted_error = installer_message or message.error
         incoming_result = {
             **dict(task.result or {}),
             **incoming_result,
             "host_upgrade_status": "failed",
-            "failure_code": "HOST_UPGRADE_FAILED",
-            "host_error": message.error or incoming_status,
+            "failure_code": installer_code if installer_message else "HOST_UPGRADE_FAILED",
+            "host_error": installer_message or message.error or incoming_status,
             "host_result_received_at": timezone.now().isoformat(),
         }
     persisted_status = message.status or "success"
@@ -853,7 +860,7 @@ def _handle_task_result(
         node_id=node_id,
         status=persisted_status,
         result=incoming_result,
-        error=message.error,
+        error=persisted_error,
     )
     if (
         lifecycle_upgrade

@@ -175,6 +175,30 @@ class CompleteTaskIdempotencyTests(TestCase):
         self.assertEqual(updated.last_error, "Agent did not reconnect after the upgrade.")
         self.assertTrue(getattr(updated, "_late_result_ignored", False))
 
+    def test_no_reconnect_installer_failure_retains_attempt_and_real_cause(self):
+        task = NodeTask.objects.create(
+            organization=self.org, node=self.node, kind="agent.upgrade",
+            correlation_type=node_conf.LIFECYCLE_CORRELATION_TYPE,
+            correlation_id=f"upgrade:{self.node.id}",
+            status=NodeTask.Status.RUNNING, watchdog_deadline_at=timezone.now(),
+        )
+        message = ParsedUplink(
+            msg_type=WireType.TASK_RESULT, task_id=str(task.id), status="failed",
+            error="AGENT_UPGRADE_RECOVERY_REQUIRED",
+            result={"mode": "local_detached", "attempt_id": "attempt-test",
+                    "phase": "recovery", "rollback_phase": "rollback_failed",
+                    "error_code": "AGENT_UPGRADE_RECOVERY_REQUIRED", "exit_code": 2},
+        )
+        updated = _handle_task_result(node_id=self.node.id, message=message)
+        self.assertEqual(updated.status, NodeTask.Status.FAILED)
+        self.assertEqual(updated.result["failure_code"], "AGENT_UPGRADE_RECOVERY_REQUIRED")
+        self.assertEqual(updated.result["attempt_id"], "attempt-test")
+        self.assertEqual(updated.result["rollback_phase"], "rollback_failed")
+        self.assertIn("rollback verification", updated.last_error)
+        duplicate = _handle_task_result(node_id=self.node.id, message=message)
+        self.assertEqual(duplicate.result["attempt_id"], "attempt-test")
+        self.assertEqual(duplicate.result["failure_code"], "AGENT_UPGRADE_RECOVERY_REQUIRED")
+
     def test_sealed_lifecycle_failure_ignores_duplicate_failure(self):
         task = NodeTask.objects.create(
             organization=self.org,

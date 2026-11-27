@@ -1369,8 +1369,8 @@ def _upgrade_failure_code(
         for error in error_sources
     ):
         return "AGENT_PACKAGE_DOWNLOAD_INTERRUPTED"
-    if code:
-        return str(code)
+    if isinstance(agent_error_code, str) and agent_error_code in node_conf.UPGRADE_INSTALLER_ERRORS:
+        return agent_error_code
     if (
         isinstance(agent_error_code, str)
         and agent_error_code in {
@@ -1378,11 +1378,8 @@ def _upgrade_failure_code(
             "AGENT_UPGRADE_DISK_SPACE_UNAVAILABLE",
         }
     ):
-        code = agent_error_code
-    if code:
-        return str(code)
-
-    return None
+        return agent_error_code
+    return str(code) if code else None
 
 
 def _remove_lifecycle_payload(

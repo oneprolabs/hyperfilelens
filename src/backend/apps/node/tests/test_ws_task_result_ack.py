@@ -283,6 +283,35 @@ class NodeAgentTaskResultAckTests(SimpleTestCase):
         result_truncated.inc.assert_called_once_with()
         ack_latency.observe.assert_called_once()
 
+    async def test_legacy_upgrade_handoff_is_persisted_without_terminal_ack(self):
+        task = SimpleNamespace(id="550e8400-e29b-41d4-a716-446655440000", kind="agent.upgrade")
+        consumer = NodeAgentConsumer()
+        consumer.node_id = 7
+        consumer.task_result_ack_enabled = True
+        consumer.send = AsyncMock()
+        with (
+            patch("apps.node.ws.node_agent.handle_uplink", return_value=TaskResultHandling(
+                task_id=task.id, disposition="accepted", node_task=task,
+            )) as persist,
+            patch("apps.node.ws.node_agent.database_sync_to_async", side_effect=_immediate_database_sync_to_async),
+            patch("apps.node.ws.node_agent.trigger_task_result_followup") as followup,
+        ):
+            await consumer.receive(text_data=json.dumps({
+                "type": "task.result", "task_id": task.id, "status": "running",
+                "result": {"mode": "local_detached"},
+            }))
+            consumer.send.assert_not_awaited()
+            followup.assert_called_once_with(node_task_id=task.id)
+            await consumer.receive(text_data=json.dumps({
+                "type": "task.result", "task_id": task.id, "status": "failed",
+                "error": "installer failed",
+            }))
+        self.assertEqual([call.kwargs["message"].status for call in persist.call_args_list], ["running", "failed"])
+        consumer.send.assert_awaited_once()
+        self.assertEqual(json.loads(consumer.send.await_args.kwargs["text_data"]), {
+            "type": "task.result.ack", "task_id": task.id,
+        })
+
     async def test_database_failure_sends_no_ack(self):
         consumer = NodeAgentConsumer()
         consumer.node_id = 7
