@@ -1,3 +1,5 @@
+import { impersonationContext } from './impersonation'
+
 // A cached document must never adopt a later document's tab context.
 let frozenDocumentOrganization: string | null = null
 
@@ -17,6 +19,7 @@ export function releaseOrganizationContext(): void {
 
 /** Shared tab-scoped context for API headers, drafts, and asynchronous notices. */
 export function readStoredOrganizationKey(): string {
+  if (impersonationContext.value) return impersonationContext.value.org_key || ''
   if (frozenDocumentOrganization !== null) return frozenDocumentOrganization
   try {
     const pinned = sessionStorage.getItem('hfl_org_key')

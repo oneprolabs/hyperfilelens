@@ -8894,7 +8894,8 @@
         "platform_platform_runtime_environment_view": "查看运行环境",
         "platform_platform_runtime_environment_manage": "管理运行环境",
         "platform_platform_release_packages_view": "查看发布包",
-        "platform_platform_release_packages_manage": "管理发布包"
+        "platform_platform_release_packages_manage": "管理发布包",
+        "platform_governance_users_impersonate": "代管用户"
       },
       "permissionSearchPlaceholder": "搜索权限",
       "noPermissionsConfigured": "尚未配置权限。",
@@ -10953,5 +10954,36 @@
     "relocationProgressHelp": "正在安全更换缓存目录，请等待操作完成。",
     "relocationSource": "原缓存目录",
     "destinationValidationFailed": "目标目录校验失败"
+  },
+  "impersonation": {
+    "action": "代管",
+    "title": "代管用户",
+    "user": "用户",
+    "organization": "组织",
+    "reason": "原因",
+    "reasonPlaceholder": "请简要说明代管此用户的原因。",
+    "selectOrganization": "请选择组织",
+    "currentPassword": "当前密码",
+    "verificationHint": "请使用当前密码验证身份，或重新登录。",
+    "confirmDescription": "你将使用此用户的权限操作，所有操作均会被记录。",
+    "startSession": "开始代管",
+    "endSession": "结束代管",
+    "actingAs": "正在代管 {user} · {organization}",
+    "expiresAt": "到期时间 {time}",
+    "activeSession": "你正在代管 {user}，请先结束当前会话。",
+    "noMembership": "此用户没有有效的组织成员关系。",
+    "loadFailed": "无法加载代管选项。",
+    "startFailed": "无法开始代管。",
+    "popupBlocked": "请允许此站点弹出窗口，然后重试。",
+    "starting": "正在开始代管",
+    "entryFailed": "无法开始代管",
+    "entryFailedDescription": "请返回管理控制台，重新开始代管。",
+    "endFailed": "无法结束代管，请重试。",
+    "endedTitle": "代管会话已结束",
+    "endedDescription": "你已不能继续代此用户操作，请返回管理控制台。",
+    "returnToAdmin": "返回管理控制台",
+    "performedBy": "实际操作者",
+    "actedAs": "代管用户",
+    "session": "代管会话"
   }
 }

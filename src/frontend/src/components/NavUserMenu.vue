@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ExternalLink, Globe, LogOut, User } from 'lucide-vue-next'
+import { isImpersonating } from '../lib/impersonation'
 import { confirmSignOut, performLogout } from '../lib/logout'
 import { useAuth } from '../composables/useAuth'
 import { fetchDeployProfile } from '../composables/useDeployProfile'
@@ -41,7 +43,7 @@ const role = computed(() => {
 const displayLabel = computed(() => username.value)
 
 const profileSub = computed(() => t('account.menuProfileSub').trim())
-const signOutSub = computed(() => t('account.menuSignOutSub').trim())
+const signOutSub = computed(() => isImpersonating() ? '' : t('account.menuSignOutSub').trim())
 const editionLabel = computed(() => (
   productEdition.value === 'enterprise'
     ? t('account.editionEnterprise')
@@ -108,8 +110,8 @@ onMounted(() => { void loadProductProfile() })
 
 async function confirmLogout() {
   popoverRef.value?.hide()
-  if (!(await confirmSignOut(t))) return
-  await performLogout(router)
+  if (!isImpersonating() && !(await confirmSignOut(t))) return
+  try { await performLogout(router) } catch { ElMessage.error(t('impersonation.endFailed')) }
 }
 </script>
 
@@ -218,7 +220,7 @@ async function confirmLogout() {
             />
           </span>
           <span class="nav-dropdown-panel__item-text">
-            <span class="nav-dropdown-panel__item-title">{{ t('account.menuSignOut') }}</span>
+            <span class="nav-dropdown-panel__item-title">{{ t(isImpersonating() ? 'impersonation.endSession' : 'account.menuSignOut') }}</span>
             <span
               v-if="signOutSub"
               class="nav-dropdown-panel__item-sub"

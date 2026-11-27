@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 SENSITIVE_FIELDS = {
+    "handoff_code",
+    "verifier",
+    "challenge",
+    "credential_digest",
     "password",
     "password_confirm",
     "current_password",

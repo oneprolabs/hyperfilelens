@@ -146,7 +146,7 @@ class TaskSerializer(serializers.ModelSerializer):
         data["resources"] = [TaskResourceSerializer(row).data for row in instance.resources.all() if _reference(row) in visible]
         data["primary_resource"] = next((TaskResourceSerializer(row).data for row in instance.resources.all()
                                          if row.is_primary and _reference(row) in visible), None)
-        for field in ("request_payload", "result_payload", "error_details", "transfer_progress",
+        for field in ("request_payload", "initiator_context", "result_payload", "error_details", "transfer_progress",
                       "repository_owner", "repository_target", "repository_cleanup", "repository_cancellation"):
             data[field] = None
         for field in ("steps", "recent_events", "dependencies", "execution_history"):
@@ -223,6 +223,7 @@ class TaskSerializer(serializers.ModelSerializer):
             "execution_history_next_cursor",
             "trigger_type",
             "request_payload",
+            "initiator_context",
             "group_uuid",
             "result_payload",
             "transfer_progress",

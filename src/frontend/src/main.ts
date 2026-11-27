@@ -26,7 +26,10 @@ import { initSentry } from './lib/sentry'
 import { activateAppAnalytics, initAppAnalytics } from './lib/analytics'
 import { installOrganizationHistoryGuard } from './lib/organizationHistory'
 
+import { installImpersonationTransport } from './lib/impersonation'
+
 async function bootstrap() {
+  installImpersonationTransport()
   installOrganizationHistoryGuard()
   const app = createApp(App)
   await initSentry(app, router)

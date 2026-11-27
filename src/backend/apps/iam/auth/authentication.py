@@ -52,6 +52,12 @@ class JWTAuthenticationFromCookies(DefaultJWTAuthentication):
     ) -> tuple[AbstractBaseUser, Token] | None:
         from apps.iam.services.request_access import assert_authenticated_request_allowed
 
+        from common.impersonation import authenticate_impersonation
+
+        delegated = authenticate_impersonation(request)
+        if delegated is not None:
+            assert_authenticated_request_allowed(request, delegated[0])
+            return delegated
         result = self._authenticate(request)
         if result is not None:
             assert_authenticated_request_allowed(request, result[0])
@@ -207,4 +213,8 @@ class OptionalJWTAuthenticationFromCookies(JWTAuthenticationFromCookies):
         try:
             return super().authenticate(request)
         except (exceptions.AuthenticationFailed, exceptions.PermissionDenied):
+            from common.impersonation import selector
+
+            if selector(request):
+                raise
             return None

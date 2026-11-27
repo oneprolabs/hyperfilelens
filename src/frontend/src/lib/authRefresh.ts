@@ -1,3 +1,4 @@
+import { isImpersonating } from './impersonation'
 import { unwrapProblemDetails } from './errors'
 import { getCorrelationHeaders } from './requestContext'
 
@@ -248,6 +249,7 @@ async function coordinatedRefresh(): Promise<RefreshTokenResult> {
 }
 
 export function refreshAuthToken(): Promise<RefreshTokenResult> {
+  if (isImpersonating()) return Promise.resolve({ ok: false, status: 403, errorCode: 'IMPERSONATION_ENDED' })
   if (!refreshPromise) {
     refreshPromise = coordinatedRefresh().finally(() => {
       refreshPromise = null

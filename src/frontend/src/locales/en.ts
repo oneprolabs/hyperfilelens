@@ -3,6 +3,24 @@ import { enProtectionPages } from './enProtectionPages'
 import { enManagedStorage } from './enManagedStorage'
 
 export const en = {
+  impersonation: {
+    action: 'Impersonate', title: 'Impersonate User', user: 'User', organization: 'Organization',
+    reason: 'Reason', reasonPlaceholder: 'Describe why you need to access this user’s account.',
+    selectOrganization: 'Select an organization', currentPassword: 'Current Password',
+    verificationHint: 'Verify your identity with your current password, or sign in again.',
+    confirmDescription: 'You will act with this user’s permissions. Your actions will be recorded.',
+    startSession: 'Start Session', endSession: 'End Session',
+    actingAs: 'Acting as {user} · {organization}', expiresAt: 'Expires at {time}',
+    activeSession: 'You are already acting as {user}. End that session before starting another.',
+    noMembership: 'This user has no active organization membership.',
+    loadFailed: 'Unable to load impersonation options.', startFailed: 'Unable to start the impersonation session.',
+    popupBlocked: 'Allow pop-ups for this site, then try again.',
+    starting: 'Starting Impersonation', entryFailed: 'Unable to Start Impersonation',
+    entryFailedDescription: 'Return to the Admin Console and start the session again.',
+    endFailed: 'Unable to end the session. Try again.', endedTitle: 'Impersonation Session Ended',
+    endedDescription: 'You can no longer act as this user. Return to the Admin Console to continue.',
+    returnToAdmin: 'Return to Admin Console', performedBy: 'Performed By', actedAs: 'Acted As', session: 'Impersonation Session',
+  },
   personalUserLimits: {
     backupStopped: "The repository owner's Backup Storage limit has been reached.",
     backupResolution: "Review the repository owner's Resource Usage or contact your administrator. Restore and cleanup remain available. Retry after measured usage falls below the limit or the administrator raises it.",
@@ -6758,6 +6776,7 @@ export const en = {
         "platform_governance_organizations_manage": "Manage Organizations",
         "platform_governance_users_view": "View Users",
         "platform_governance_users_manage": "Manage Users",
+        "platform_governance_users_impersonate": "Impersonate Users",
         "platform_governance_platform_roles_view": "View Platform Roles",
         "platform_governance_platform_roles_manage": "Manage Platform Roles",
         "platform_governance_platform_roles_delete": "Delete Platform Roles",

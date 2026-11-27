@@ -1,3 +1,4 @@
+import { isImpersonating, endImpersonation } from './impersonation'
 import type { Router } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { clearAuth } from '../composables/useAuth'
@@ -33,6 +34,7 @@ export async function confirmSignOut(t: (key: string) => string): Promise<boolea
 }
 
 export async function performLogout(router: Router): Promise<void> {
+  if (isImpersonating()) { await endImpersonation(); return }
   try {
     await fetch('/api/v1/auth/logout', {
       method: 'POST',

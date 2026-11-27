@@ -1,3 +1,4 @@
+import { impersonationHeaders } from './impersonation'
 import { getEffectiveOrgKey } from '../composables/useAuth'
 import { getTraceId } from './logger'
 
@@ -12,5 +13,6 @@ export function getCorrelationHeaders(extra?: Record<string, string>): Record<st
     'X-Request-Id': getRequestTraceId(),
     'X-Org-Key': getEffectiveOrgKey(),
     ...(extra || {}),
+    ...impersonationHeaders(),
   }
 }

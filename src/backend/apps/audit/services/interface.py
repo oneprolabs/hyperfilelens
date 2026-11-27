@@ -47,6 +47,11 @@ def write_audit_log(
     request_id: str = "",
     session_id: str = "",
 ) -> AuditLog:
+    from common.impersonation import attribution
+
+    delegated = attribution.get()
+    if delegated:
+        metadata = {**(metadata or {}), "impersonation": dict(delegated)}
     user_email = ""
     user_name = ""
     if user is not None:
