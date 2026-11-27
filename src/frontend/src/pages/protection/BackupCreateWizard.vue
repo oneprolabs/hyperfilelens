@@ -8067,6 +8067,7 @@ function preserveShallowestPathOrder(paths: string[]) {
             >
               <ElForm
                 label-position="top"
+                require-asterisk-position="right"
                 class="target-batch-form"
               >
                 <TargetRepositoryPicker

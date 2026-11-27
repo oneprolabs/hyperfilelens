@@ -1015,11 +1015,6 @@ html[data-theme='hybrid'] .hfl-flow-action-dialog--delete .hfl-flow-action-dialo
   color: var(--el-text-color-primary, rgb(51 65 85));
 }
 
-.hfl-flow-action-dialog__form :deep(.el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before) {
-  margin-right: 4px;
-  color: var(--el-color-danger);
-}
-
 .hfl-flow-action-dialog__form :deep(.el-input),
 .hfl-flow-action-dialog__form :deep(.el-select) {
   width: 100%;

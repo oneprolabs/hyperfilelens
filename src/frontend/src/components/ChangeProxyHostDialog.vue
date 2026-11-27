@@ -96,6 +96,7 @@ function save() {
 
     <ElForm
       label-position="top"
+      require-asterisk-position="right"
       class="hfl-flow-action-dialog__form"
       @submit.prevent="save"
     >

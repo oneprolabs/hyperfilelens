@@ -827,6 +827,7 @@ watch([quotaRequestPage, quotaRequestPageSize], () => {
     >
       <ElForm
         label-position="top"
+        require-asterisk-position="right"
         class="hfl-flow-action-dialog__form subscription-request-dialog__form"
         @submit.prevent="submitRequest"
       >

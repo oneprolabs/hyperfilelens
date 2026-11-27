@@ -462,7 +462,11 @@ onMounted(load)
       :close-on-press-escape="!saving"
       :show-close="!saving"
     >
-      <el-form label-position="top" @submit.prevent="saveTag">
+      <el-form
+        label-position="top"
+        require-asterisk-position="right"
+        @submit.prevent="saveTag"
+      >
         <el-form-item :label="t('protection.tags.name')" required :error="nameError">
           <el-input
             v-model="form.name"

@@ -108,9 +108,15 @@ export async function endImpersonation(): Promise<void> {
   window.location.replace('/impersonation/ended')
 }
 
-/** Only the inert ended page may discard the tab selector before full navigation. */
+/** Only inert state pages may discard the tab selector before full navigation. */
 export function returnToAdmin(url: string): void {
-  if (window.location.pathname !== '/impersonation/ended') return
+  const path = window.location.pathname
+  const failedEntry = path === '/impersonation/entry'
+    && (!impersonationContext.value || impersonationContext.value.ended)
+  if (path !== '/impersonation/ended' && !failedEntry) return
+  let target: URL
+  try { target = new URL(url) } catch { return }
+  if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) return
   sessionStorage.removeItem(KEY)
-  window.location.assign(url)
+  window.location.assign(target.href)
 }

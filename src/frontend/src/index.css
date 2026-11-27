@@ -180,6 +180,8 @@ html[data-theme='hybrid'] {
   --app-safe-left: env(safe-area-inset-left, 0px);
   --app-header-content-height: 52px;
   --app-header-height: calc(var(--app-header-content-height) + var(--app-safe-top));
+  /* Body-teleported fullscreen pages must also leave room for the session bar. */
+  --topnav-height: calc(var(--app-header-height) + var(--hfl-impersonation-height, 0px));
 
   /* Keep dense Element Plus controls slightly tighter than cards. */
   --el-border-radius-base: 8px !important;

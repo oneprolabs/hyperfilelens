@@ -125,11 +125,6 @@
   color: rgb(51 65 85);
 }
 
-.source-action-dialog__form .el-form-item.is-required:not(.is-no-asterisk) > .el-form-item__label::before {
-  margin-right: 4px;
-  color: var(--el-color-danger);
-}
-
 .source-action-dialog__form .el-input,
 .source-action-dialog__form .el-select {
   width: 100%;
