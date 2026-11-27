@@ -15,8 +15,16 @@ describe('alertApi', () => {
     await listRecords()
     await recordStatistics()
 
-    expect(api).toHaveBeenNthCalledWith(1, '/api/v1/alerts/records/')
+    expect(api).toHaveBeenNthCalledWith(1, '/api/v1/alerts/records/', undefined)
     expect(api).toHaveBeenNthCalledWith(2, '/api/v1/alerts/records/stats/')
+  })
+
+  it('forwards the cancellation signal when listing alert records', async () => {
+    const { signal } = new AbortController()
+
+    await listRecords({ page: 1 }, { signal })
+
+    expect(api).toHaveBeenCalledWith('/api/v1/alerts/records/?page=1', { signal })
   })
 
   it('uses the canonical plural alert API for rules and statistics', async () => {
